@@ -113,12 +113,31 @@ def _get_bedrock_mythos_api_key(
         if (cached["_expires_at"] - now).total_seconds() > _TOKEN_REFRESH_MARGIN_SECONDS:
             return cached["token"]
 
-    # Pick a session that ignores env-var credentials when AWS_PROFILE
-    # is set, so dev environments with minioadmin/etc. baked in don't
-    # poison the STS call. Default chain (EC2 instance role via IMDS)
-    # is used in prod where no profile is set.
-    profile = os.environ.get("AWS_PROFILE")
-    session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+    # Force IMDS first (production). Falls back to default chain in dev
+    # where IMDS is unreachable and AWS_PROFILE-based SSO is expected.
+    # This bypasses the container's AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+    # env vars which are set to MinIO credentials and would otherwise
+    # shadow the EC2 instance role.
+    from botocore.credentials import InstanceMetadataProvider
+    from botocore.utils import InstanceMetadataFetcher
+
+    session = None
+    try:
+        fetcher = InstanceMetadataFetcher(timeout=2, num_attempts=2)
+        provider = InstanceMetadataProvider(iam_role_fetcher=fetcher)
+        imds_creds = provider.load()
+        if imds_creds is not None:
+            session = boto3.Session(
+                aws_access_key_id=imds_creds.access_key,
+                aws_secret_access_key=imds_creds.secret_key,
+                aws_session_token=imds_creds.token,
+            )
+    except Exception:
+        pass  # IMDS unavailable; fall through
+
+    if session is None:
+        profile = os.environ.get("AWS_PROFILE")
+        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
     sts = session.client("sts")
     response = sts.assume_role(
         RoleArn=assume_role_arn,
