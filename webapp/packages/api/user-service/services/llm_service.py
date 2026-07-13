@@ -290,8 +290,7 @@ async def call_llm(
     # bedrock-mythos: mint a short-lived Mantle bearer token at
     # request time, pass it to litellm as api_key. Also pass the
     # region — litellm uses it to construct the Mantle endpoint URL
-    # (bedrock-mantle.{region}.api.aws/v1); without it litellm
-    # defaults to us-east-1 which doesn't host Mythos.
+    # (bedrock-mantle.{region}.api.aws/anthropic/v1/messages).
     # The bearer token overrides any user-specific key above since
     # bedrock-mythos auth is account-scoped, not per-user. See
     # _get_bedrock_mythos_api_key().
@@ -725,8 +724,7 @@ async def stream_llm(
     # bedrock-mythos: mint a short-lived Mantle bearer token at
     # request time, pass it to litellm as api_key. Also pass the
     # region — litellm uses it to construct the Mantle endpoint URL
-    # (bedrock-mantle.{region}.api.aws/v1); without it litellm
-    # defaults to us-east-1 which doesn't host Mythos.
+    # (bedrock-mantle.{region}.api.aws/anthropic/v1/messages).
     # The bearer token overrides any user-specific key above since
     # bedrock-mythos auth is account-scoped, not per-user. See
     # _get_bedrock_mythos_api_key().

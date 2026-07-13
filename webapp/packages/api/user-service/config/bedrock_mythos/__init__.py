@@ -9,7 +9,7 @@ models = {
     # may need updating. Worth verifying when Anthropic's setup email
     # confirms which thinking format Mythos expects.
     # =========================================================================
-    "anthropic.claude-mythos-preview": {
+    "anthropic.claude-mythos-5": {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,

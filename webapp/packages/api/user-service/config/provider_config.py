@@ -38,13 +38,14 @@ PROVIDER_CONFIG = {
     # Config knobs:
     #   aws_region              — region where Mythos is provisioned
     #   assume_role_arn         — cross-account devs role to assume
-    #   litellm_provider_prefix — built as "bedrock_mantle/<model-id>"
+    #   litellm_provider_prefix — built as "bedrock/mantle/<model-id>"
     #                             so litellm routes through its Mantle
-    #                             provider (OpenAI-compatible endpoint)
+    #                             provider (Anthropic Messages endpoint at
+    #                             /anthropic/v1/messages)
     "bedrock-mythos": {
-        "aws_region": "ap-southeast-4",
+        "aws_region": "us-east-1",
         "assume_role_arn": "arn:aws:iam::861792231409:role/bedrock-devs",
-        "litellm_provider_prefix": "bedrock_mantle",
+        "litellm_provider_prefix": "bedrock/mantle",
         "models": bedrock_mythos_models,
     },
     "openrouter": {
