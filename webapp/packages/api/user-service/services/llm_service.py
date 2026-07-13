@@ -39,6 +39,16 @@ MAX_TIMEOUT_RETRIES = int(os.getenv("LLM_TIMEOUT_RETRIES", "0"))
 # ride through most quota refills.
 MAX_RATE_LIMIT_RETRIES = int(os.getenv("LLM_RATE_LIMIT_RETRIES", "5"))
 
+# Max retries on provider overload (HTTP 529 overloaded_error). Distinct from
+# rate-limit: 529 is the provider saying "too busy right now", not a quota
+# bucket. litellm surfaces it as APIConnectionError (or a generic exception
+# with "overloaded" in the body), NOT as RateLimitError, so it would otherwise
+# fall through to the terminal branch and permanently fail the call. It is the
+# MOST retryable error there is; reuse the same exponential-backoff-with-jitter
+# as rate-limit. Especially important on newer or capacity-limited endpoints
+# under stacked concurrency, where transient overloads are more likely.
+MAX_OVERLOADED_RETRIES = int(os.getenv("LLM_OVERLOADED_RETRIES", "5"))
+
 # Cap on individual backoff sleep, regardless of attempt number.
 RATE_LIMIT_BACKOFF_CAP_SECONDS = int(os.getenv("LLM_RATE_LIMIT_BACKOFF_CAP", "60"))
 
@@ -527,9 +537,10 @@ async def call_llm(
         # Other exceptions fall through to the error-classifier branch
         # below (auth, context window, generic). Those are not retryable.
         last_exception = None
-        max_attempts = 1 + MAX_TIMEOUT_RETRIES + MAX_RATE_LIMIT_RETRIES
+        max_attempts = 1 + MAX_TIMEOUT_RETRIES + MAX_RATE_LIMIT_RETRIES + MAX_OVERLOADED_RETRIES
         timeout_attempts_used = 0
         rate_limit_attempts_used = 0
+        overloaded_attempts_used = 0
 
         for attempt in range(max_attempts):
             try:
@@ -589,6 +600,35 @@ async def call_llm(
                 )
                 raise
             except Exception as e:
+                # Provider overload (HTTP 529 / overloaded_error). litellm
+                # surfaces this as APIConnectionError or a generic exception,
+                # NOT RateLimitError, so it is caught here and routed through
+                # the same exponential-backoff-with-jitter as rate-limit before
+                # falling through to the terminal error classifier. 529 means
+                # "provider busy, retry" and is highly likely to succeed on a
+                # backed-off retry.
+                _err_str = str(e).lower()
+                _is_overloaded = (
+                    "overloaded" in _err_str
+                    or "529" in _err_str
+                    or "\"type\":\"overloaded_error\"" in _err_str
+                )
+                if _is_overloaded and overloaded_attempts_used < MAX_OVERLOADED_RETRIES:
+                    last_exception = e
+                    backoff = min(
+                        RATE_LIMIT_BACKOFF_CAP_SECONDS,
+                        (2 ** overloaded_attempts_used)
+                        + random.uniform(0, overloaded_attempts_used + 1),
+                    )
+                    overloaded_attempts_used += 1
+                    print(
+                        f"  Overloaded (529) on attempt {attempt + 1} "
+                        f"for {model_string}; sleeping {backoff:.1f}s "
+                        f"(retry {overloaded_attempts_used}/{MAX_OVERLOADED_RETRIES})",
+                        flush=True,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
                 observability = get_observability_service()
                 
                 # Check for authentication errors and provide user-friendly message
