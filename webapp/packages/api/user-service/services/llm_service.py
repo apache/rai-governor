@@ -25,11 +25,77 @@ ensure_litellm_logging()
 litellm.drop_params = True
 litellm.set_verbose = False
 
+# ---------------------------------------------------------------------------
+# Mythos model registration
+# ---------------------------------------------------------------------------
+# litellm (checked against 1.90.0) ships a registry entry for
+# `anthropic.claude-mythos-preview` but NOT for `anthropic.claude-mythos-5`,
+# so every registry lookup for the model we actually call misses. Three
+# consequences, all silent:
+#
+#   1. supports_output_config -> False, so litellm DROPS reasoning_effort:
+#        "Dropping unsupported `output_config` for model=%s (drop_params=True).
+#         Effort is only supported on Opus 4.5+, Sonnet 4.6+, and Mythos
+#         Preview."
+#      (litellm/llms/anthropic/chat/transformation.py). Note `thinking` is
+#      NOT dropped -- so adaptive thinking runs with NO effort ceiling, which
+#      is not what any caller asked for.
+#   2. supports_reasoning -> False, so reasoning_effort isn't offered as a
+#      supported param in the first place.
+#   3. get_max_tokens() raises, printing litellm's "Provider List / Give
+#      Feedback" banner on EVERY call (one banner per call, including
+#      successful ones). See BerriAI/litellm#7961: the provider prefix is
+#      resolved, stripped, and the bare dotted model name is then re-looked-up
+#      without it -- which never matches for `anthropic.claude-*` names.
+#
+# Registered under BOTH the bare and the prefixed key because the lookup
+# happens at both points. Values are copied verbatim from litellm's own
+# claude-mythos-preview entry rather than invented.
+_MYTHOS_MODEL_INFO = {
+    "input_cost_per_token": 0,
+    "output_cost_per_token": 0,
+    "litellm_provider": "bedrock",
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 128000,
+    "max_tokens": 128000,
+    "mode": "chat",
+    "supports_function_calling": True,
+    "supports_vision": True,
+    "supports_prompt_caching": False,
+    "supports_reasoning": True,
+    "supports_tool_choice": True,
+    "supports_output_config": True,
+}
+
+try:
+    litellm.register_model({
+        "anthropic.claude-mythos-5": _MYTHOS_MODEL_INFO,
+        "bedrock/mantle/anthropic.claude-mythos-5": _MYTHOS_MODEL_INFO,
+    })
+except Exception as _e:  # pragma: no cover - never fail import over metadata
+    print(f"WARNING: could not register Mythos model info with litellm: {_e}",
+          flush=True)
+
+# Silences the "Provider List / Give Feedback" banner litellm prints via
+# print() (not logging) whenever a model-registry lookup misses. Redundant for
+# Mythos once registered above, but covers any other unregistered model string
+# and keeps ~40% of noise out of the agent logs.
+litellm.suppress_debug_info = True
+# ---------------------------------------------------------------------------
+
 # Default timeout (seconds) for LLM calls. Override with LLM_TIMEOUT_SECONDS env var.
 DEFAULT_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "600"))
 
 # Max retries on timeout. Override with LLM_TIMEOUT_RETRIES env var.
-MAX_TIMEOUT_RETRIES = int(os.getenv("LLM_TIMEOUT_RETRIES", "0"))
+#
+# Defaulted to 0 until 2026-07-16, which meant a single hung request killed a
+# whole pipeline run. Bedrock/Mantle intermittently accepts a request and then
+# never responds: the same prompt+params that hangs past a 900s ceiling
+# returns in ~180s on the next attempt (measured, back-to-back, same process).
+# The retry path below is correct and was simply never enabled, so the first
+# bad draw ended a 40-minute, ~$100 run that a 5-second backoff would have
+# survived. 2 retries is the smallest number that covers a single hang.
+MAX_TIMEOUT_RETRIES = int(os.getenv("LLM_TIMEOUT_RETRIES", "2"))
 
 # Max retries on rate-limit / 429. Override with LLM_RATE_LIMIT_RETRIES.
 # Bedrock and OpenAI both throttle on a per-minute token-bucket, so this
