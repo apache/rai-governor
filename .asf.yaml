@@ -23,7 +23,7 @@ github:
     main: {}
 
 notifications:
-  commits:      commits@tooling.apache.org
-  issues:       issues@tooling.apache.org
-  pullrequests: issues@tooling.apache.org
-  discussions:  dev@tooling.apache.org
+  commits:      private-commits@tooling.apache.org
+  issues:       private-commits@tooling.apache.org
+  pullrequests: private-commits@tooling.apache.org
+  discussions:  private-commits@tooling.apache.org
