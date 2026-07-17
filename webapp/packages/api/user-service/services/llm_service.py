@@ -97,6 +97,12 @@ DEFAULT_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "600"))
 # survived. 2 retries is the smallest number that covers a single hang.
 MAX_TIMEOUT_RETRIES = int(os.getenv("LLM_TIMEOUT_RETRIES", "2"))
 
+# Retries specifically for a rejected bedrock-mythos bearer token. One is
+# normally enough: the retry mints a fresh token from fresh STS creds. A
+# second failure means the problem isn't the token (bad trust policy,
+# IMDS down), so don't spin.
+MAX_AUTH_REMINT_RETRIES = int(os.getenv("LLM_AUTH_REMINT_RETRIES", "1"))
+
 # Max retries on rate-limit / 429. Override with LLM_RATE_LIMIT_RETRIES.
 # Bedrock and OpenAI both throttle on a per-minute token-bucket, so this
 # needs real backoff with jitter — an immediate retry just hits the same
@@ -159,10 +165,30 @@ def _is_opus_4_7_or_later(model: str) -> bool:
 _BEDROCK_MYTHOS_TOKEN_CACHE: Dict[str, Dict[str, Any]] = {}
 _TOKEN_REFRESH_MARGIN_SECONDS = 300
 
+# Requested STS session length. AssumeRole defaults to 1h, which is tight
+# against a single 1800s call plus the refresh margin. Bounded by the
+# role's MaxSessionDuration (we fall back to the default if it's lower).
+_STS_SESSION_DURATION_SECONDS = int(
+    os.getenv("BEDROCK_MYTHOS_STS_DURATION_SECONDS", "10800")  # 3h
+)
+
+
+def _invalidate_bedrock_mythos_token(assume_role_arn: str) -> None:
+    """Drop the cached bearer token for a role ARN.
+
+    Called when the provider rejects the token as expired/invalid. The
+    cache is per-process, so without this a poisoned entry keeps being
+    served to every subsequent call on this worker until the STS
+    Expiration finally passes -- turning one dead token into up to an
+    hour of failures on that worker.
+    """
+    _BEDROCK_MYTHOS_TOKEN_CACHE.pop(assume_role_arn, None)
+
 
 def _get_bedrock_mythos_api_key(
     assume_role_arn: str,
     region: str,
+    min_validity_seconds: int = 0,
 ) -> str:
     """Return a Mantle bearer token for the bedrock-mythos provider.
 
@@ -180,13 +206,29 @@ def _get_bedrock_mythos_api_key(
     """
     import boto3
     from botocore.credentials import Credentials
+    from botocore.exceptions import ClientError
     from aws_bedrock_token_generator import BedrockTokenGenerator
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
+
+    # The bearer token is a SigV4 *presigned* request. BedrockTokenGenerator
+    # stamps it with a 12h X-Amz-Expires, but a presigned URL can never
+    # outlive the credentials that signed it: the embedded
+    # X-Amz-Security-Token is the 1h STS session token, and once that lapses
+    # AWS rejects the request no matter what X-Amz-Expires claims. So STS
+    # Expiration -- not the 12h nominal TTL -- is the real clock.
+    #
+    # Crucially the token must stay valid for the DURATION of the call, not
+    # just at dispatch. An 1800s audit call signed by a token with 10 min
+    # left passes a dispatch-time check and then dies mid-flight; Bedrock
+    # stops responding, litellm reports it as a Timeout (not an auth error),
+    # and the call burns its full timeout before failing. Callers pass their
+    # own timeout as min_validity_seconds so we re-mint up front instead.
+    required = _TOKEN_REFRESH_MARGIN_SECONDS + max(0, min_validity_seconds)
     cached = _BEDROCK_MYTHOS_TOKEN_CACHE.get(assume_role_arn)
     if cached:
-        if (cached["_expires_at"] - now).total_seconds() > _TOKEN_REFRESH_MARGIN_SECONDS:
+        if (cached["_expires_at"] - now).total_seconds() > required:
             return cached["token"]
 
     # Force IMDS first (production). Falls back to default chain in dev
@@ -215,10 +257,25 @@ def _get_bedrock_mythos_api_key(
         profile = os.environ.get("AWS_PROFILE")
         session = boto3.Session(profile_name=profile) if profile else boto3.Session()
     sts = session.client("sts")
-    response = sts.assume_role(
-        RoleArn=assume_role_arn,
-        RoleSessionName="gofannon-bedrock-mythos",
-    )
+    # Ask for a longer session than the 1h default. The longest single call
+    # in the ASVS pipeline is 1800s, and a 1h credential leaves little room
+    # once the refresh margin is applied -- every long call would re-mint.
+    # Capped by the role's MaxSessionDuration; if the role doesn't allow it,
+    # AWS raises ValidationError, so fall back to the default rather than
+    # hard-failing.
+    assume_kwargs = {
+        "RoleArn": assume_role_arn,
+        "RoleSessionName": "gofannon-bedrock-mythos",
+    }
+    try:
+        response = sts.assume_role(
+            DurationSeconds=_STS_SESSION_DURATION_SECONDS, **assume_kwargs
+        )
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") != "ValidationError":
+            raise
+        # Role's MaxSessionDuration is below our request; take what it gives.
+        response = sts.assume_role(**assume_kwargs)
     raw = response["Credentials"]
 
     # Wrap the assumed credentials as a botocore Credentials object
@@ -393,6 +450,9 @@ async def call_llm(
         kwargs["api_key"] = _get_bedrock_mythos_api_key(
             assume_role_arn=provider_cfg["assume_role_arn"],
             region=provider_cfg["aws_region"],
+            # Require the token to outlive this call, not merely to be
+            # valid at dispatch -- see _get_bedrock_mythos_api_key.
+            min_validity_seconds=int(effective_timeout or 0),
         )
         kwargs["aws_region_name"] = provider_cfg["aws_region"]
 
@@ -603,15 +663,68 @@ async def call_llm(
         # Other exceptions fall through to the error-classifier branch
         # below (auth, context window, generic). Those are not retryable.
         last_exception = None
-        max_attempts = 1 + MAX_TIMEOUT_RETRIES + MAX_RATE_LIMIT_RETRIES + MAX_OVERLOADED_RETRIES
+        # +MAX_AUTH_REMINT_RETRIES: an expired bearer costs an attempt, and
+        # without its own budget an auth failure would eat into the timeout
+        # or rate-limit allowance.
+        max_attempts = (
+            1
+            + MAX_TIMEOUT_RETRIES
+            + MAX_RATE_LIMIT_RETRIES
+            + MAX_OVERLOADED_RETRIES
+            + MAX_AUTH_REMINT_RETRIES
+        )
         timeout_attempts_used = 0
         rate_limit_attempts_used = 0
         overloaded_attempts_used = 0
+        auth_remint_attempts_used = 0
+
+        def _refresh_mythos_token_if_needed() -> None:
+            """Re-mint the bearer before a retry.
+
+            The token was minted before the loop. A long call (up to 1800s)
+            can outlive the STS credentials that signed it, in which case
+            every retry would replay the SAME dead token and fail
+            identically -- which is exactly what a 3x900s "timeout" cascade
+            looks like from the outside. Invalidate and re-mint so each
+            attempt gets a token good for its own duration.
+            """
+            if not provider_cfg.get("assume_role_arn"):
+                return
+            _invalidate_bedrock_mythos_token(provider_cfg["assume_role_arn"])
+            kwargs["api_key"] = _get_bedrock_mythos_api_key(
+                assume_role_arn=provider_cfg["assume_role_arn"],
+                region=provider_cfg["aws_region"],
+                min_validity_seconds=int(effective_timeout or 0),
+            )
 
         for attempt in range(max_attempts):
             try:
                 response = await litellm.acompletion(**kwargs)
                 break  # Success
+            except litellm.AuthenticationError as e:
+                # Bedrock rejects an expired presigned token as an auth
+                # error. The cached bearer is poisoned for this whole
+                # worker, so drop it and retry with a fresh one --
+                # otherwise every later call on this process inherits it.
+                # Only retry for bedrock-mythos: for a static API key a
+                # re-mint changes nothing and the key is genuinely bad.
+                last_exception = e
+                if (
+                    provider_cfg.get("assume_role_arn")
+                    and auth_remint_attempts_used < MAX_AUTH_REMINT_RETRIES
+                ):
+                    auth_remint_attempts_used += 1
+                    print(
+                        f"  Auth error on attempt {attempt + 1} for "
+                        f"{model_string}; re-minting bearer token and "
+                        f"retrying "
+                        f"({auth_remint_attempts_used}/"
+                        f"{MAX_AUTH_REMINT_RETRIES})...",
+                        flush=True,
+                    )
+                    _refresh_mythos_token_if_needed()
+                    continue
+                raise
             except litellm.Timeout as e:
                 last_exception = e
                 if timeout_attempts_used < MAX_TIMEOUT_RETRIES:
@@ -624,6 +737,9 @@ async def call_llm(
                         flush=True,
                     )
                     await asyncio.sleep(wait_secs)
+                    # A timeout is indistinguishable from an expired-token
+                    # stall at this layer, so refresh before retrying.
+                    _refresh_mythos_token_if_needed()
                     continue
                 raise
             except litellm.RateLimitError as e:
@@ -857,6 +973,9 @@ async def stream_llm(
         kwargs["api_key"] = _get_bedrock_mythos_api_key(
             assume_role_arn=provider_cfg["assume_role_arn"],
             region=provider_cfg["aws_region"],
+            # Streaming has no retry loop, so a token that dies mid-stream
+            # can't be recovered -- require it to cover the whole call.
+            min_validity_seconds=int(kwargs.get("timeout") or 0),
         )
         kwargs["aws_region_name"] = provider_cfg["aws_region"]
 
