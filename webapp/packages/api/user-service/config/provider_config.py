@@ -1,6 +1,7 @@
 from .anthropic import models as anthropic_models
 from .bedrock import models as bedrock_models
 from .bedrock_mythos import models as bedrock_mythos_models
+from .llmao import models as llmao_models
 from .gemini import models as gemini_models
 from .openai import models as openai_models
 from .openrouter import models as openrouter_models
@@ -47,6 +48,25 @@ PROVIDER_CONFIG = {
         "assume_role_arn": "arn:aws:iam::861792231409:role/bedrock-devs",
         "litellm_provider_prefix": "bedrock/mantle",
         "models": bedrock_mythos_models,
+    },
+    # Self-hosted models behind llmao's litellm proxy (vLLM per model).
+    #
+    # Routed as litellm's "openai" provider because the proxy is
+    # OpenAI-compatible; api_base points at the proxy, which then routes by
+    # model_name to the right vLLM server. The proxy is reached directly
+    # rather than through llmao's app: llmao's asfquart PAT token_handler is
+    # a stub returning None, so machine callers cannot authenticate there.
+    # That means this bypasses llmao's identity layer -- use a litellm
+    # virtual key (not the master key) so the traffic is attributable and
+    # revocable in litellm's own spend logs.
+    #
+    # LLMAO_API_BASE must reach the proxy from inside the api container.
+    # api_key comes from LLMAO_API_KEY (a litellm virtual key).
+    "llmao": {
+        "litellm_provider_prefix": "openai",
+        "api_base_env_var": "LLMAO_API_BASE",
+        "api_key_env_var": "LLMAO_API_KEY",
+        "models": llmao_models,
     },
     "openrouter": {
         "api_key_env_var": "OPENROUTER_API_KEY",

@@ -456,6 +456,33 @@ async def call_llm(
         )
         kwargs["aws_region_name"] = provider_cfg["aws_region"]
 
+    # Providers served from a custom OpenAI-compatible endpoint (the llmao
+    # provider -> llmao's litellm proxy). Without api_base, litellm's "openai"
+    # handler would call api.openai.com. Fail loudly on a missing base rather
+    # than silently sending internal prompts to a public endpoint.
+    _api_base_var = provider_cfg.get("api_base_env_var")
+    if _api_base_var:
+        _api_base = os.environ.get(_api_base_var)
+        if not _api_base:
+            raise ValueError(
+                f"provider '{provider}' requires {_api_base_var} to be set "
+                f"(the base URL of its OpenAI-compatible endpoint); refusing "
+                f"to fall back to the default OpenAI endpoint."
+            )
+        kwargs["api_base"] = _api_base
+        # Set the key explicitly too. These providers borrow litellm's
+        # "openai" handler, which would otherwise pick up OPENAI_API_KEY from
+        # the environment and send it to our own proxy.
+        _key_var = provider_cfg.get("api_key_env_var")
+        if _key_var:
+            _key = os.environ.get(_key_var)
+            if not _key:
+                raise ValueError(
+                    f"provider '{provider}' requires {_key_var} to be set "
+                    f"(a litellm virtual key for this caller)."
+                )
+            kwargs["api_key"] = _key
+
 
     # Only use aresponses API when we actually need its features (tools or reasoning)
     # Otherwise use standard acompletion which is more reliable
@@ -978,6 +1005,26 @@ async def stream_llm(
             min_validity_seconds=int(kwargs.get("timeout") or 0),
         )
         kwargs["aws_region_name"] = provider_cfg["aws_region"]
+
+    # Custom OpenAI-compatible endpoint (llmao proxy). Same
+    # reasoning as the non-streaming path: fail loudly rather than defaulting
+    # to api.openai.com with OPENAI_API_KEY.
+    _api_base_var = provider_cfg.get("api_base_env_var")
+    if _api_base_var:
+        _api_base = os.environ.get(_api_base_var)
+        if not _api_base:
+            raise ValueError(
+                f"provider '{provider}' requires {_api_base_var} to be set."
+            )
+        kwargs["api_base"] = _api_base
+        _key_var = provider_cfg.get("api_key_env_var")
+        if _key_var:
+            _key = os.environ.get(_key_var)
+            if not _key:
+                raise ValueError(
+                    f"provider '{provider}' requires {_key_var} to be set."
+                )
+            kwargs["api_key"] = _key
 
     try:
         response = await litellm.acompletion(**kwargs)
