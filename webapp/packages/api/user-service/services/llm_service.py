@@ -822,7 +822,21 @@ async def call_llm(
                     or "529" in _err_str
                     or "\"type\":\"overloaded_error\"" in _err_str
                 )
-                if _is_overloaded and overloaded_attempts_used < MAX_OVERLOADED_RETRIES:
+                # Transient server-side failures from the provider: HTTP 500
+                # with "api_error", and litellm's ServiceUnavailableError. The
+                # Mantle endpoint returns these under load ("The server had an
+                # error while processing your request") and they succeed on a
+                # backed-off retry just like a 529 -- but they are NOT caught by
+                # the overloaded checks above (different type/status), so
+                # without this they fail the work item on the first hit. Routed
+                # through the same backoff budget as overload.
+                _is_transient_5xx = (
+                    "serviceunavailable" in _err_str
+                    or "500 internal server error" in _err_str
+                    or "\"type\":\"api_error\"" in _err_str
+                    or "the server had an error" in _err_str
+                )
+                if (_is_overloaded or _is_transient_5xx) and overloaded_attempts_used < MAX_OVERLOADED_RETRIES:
                     last_exception = e
                     backoff = min(
                         RATE_LIMIT_BACKOFF_CAP_SECONDS,
@@ -830,8 +844,9 @@ async def call_llm(
                         + random.uniform(0, overloaded_attempts_used + 1),
                     )
                     overloaded_attempts_used += 1
+                    _kind = "overloaded (529)" if _is_overloaded else "server error (5xx)"
                     print(
-                        f"  Overloaded (529) on attempt {attempt + 1} "
+                        f"  {_kind} on attempt {attempt + 1} "
                         f"for {model_string}; sleeping {backoff:.1f}s "
                         f"(retry {overloaded_attempts_used}/{MAX_OVERLOADED_RETRIES})",
                         flush=True,
