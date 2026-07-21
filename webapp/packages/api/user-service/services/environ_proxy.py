@@ -141,10 +141,25 @@ def install_environ_proxy() -> None:
 def env_overlay(overlay: Mapping[str, str]) -> Iterator[None]:
     """Bind an overlay for the duration of the ``with`` block.
 
+    The new overlay is LAYERED over any enclosing overlay rather than
+    replacing it, so an agent that calls another agent passes its
+    env_vars down the call chain. Precedence, innermost first::
+
+        callee's own env_vars
+          > caller's env_vars (transitively, up the whole chain)
+            > real process environ
+
+    This lets shared configuration (e.g. model/param tiers) be set once
+    on an orchestrator and inherited by every downstream agent, while an
+    individual agent can still override any single key by defining it on
+    itself — its value wins for its own run and for anything it calls.
+
     Restores the prior overlay (often ``None``) on exit. Safe under
-    concurrent asyncio tasks: each task gets its own contextvar copy.
+    concurrent asyncio tasks: each task gets its own contextvar copy,
+    seeded from the context it was spawned in.
     """
-    token = _overlay.set(dict(overlay))
+    parent = _overlay.get() or {}
+    token = _overlay.set({**parent, **overlay})
     try:
         yield
     finally:
