@@ -415,6 +415,28 @@ async def call_llm(
     }
 
     reasoning_effort = kwargs.pop('reasoning_effort', 'disable')
+    
+    # Self-hosted reasoning models (Qwen3, Gemma 4 via llmao's vLLM proxy)
+    # think by default. They do NOT understand OpenAI's reasoning_effort; the
+    # switch is the chat-template kwarg enable_thinking, passed to vLLM via
+    # extra_body. Translate our reasoning_effort intent into it, but only for
+    # models that declare supports_thinking (so non-thinking models and other
+    # providers are untouched). reasoning_effort == 'disable' -> thinking off.
+    #
+    # NOTE: both llmao's proxy and gofannon run litellm with drop_params=True,
+    # so if this param is malformed or the vLLM server lacks the matching
+    # --reasoning-parser, it is silently dropped and thinking stays ON. Verify
+    # with a probe call: a disabled response must have empty/no reasoning_content
+    # and no <think> block. (llmao serves these with --reasoning-parser gemma4 /
+    # qwen3 and a server-side enable_thinking=false default; this per-call value
+    # overrides that default in either direction.)
+    if model_config.get("supports_thinking"):
+        _enable_thinking = (reasoning_effort != 'disable')
+        _extra = dict(kwargs.get("extra_body", {}))
+        _ctk = dict(_extra.get("chat_template_kwargs", {}))
+        _ctk["enable_thinking"] = _enable_thinking
+        _extra["chat_template_kwargs"] = _ctk
+        kwargs["extra_body"] = _extra
 
     if tools:
         kwargs["tools"] = tools
