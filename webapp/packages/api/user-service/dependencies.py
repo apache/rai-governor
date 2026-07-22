@@ -274,7 +274,28 @@ async def _execute_agent_code(
         # per-model override by exact provider/model, so a Sonnet call
         # gets Sonnet's overrides rather than whatever was set on the
         # first invokable model in the list.
-        override = llm_settings.for_call(provider, model) if llm_settings else None
+        #
+        # OPT-OUT: an agent whose parameters are fully env-driven (the ASVS
+        # tier refactor) sets ASVS_IGNORE_LLM_SETTINGS=true (or
+        # GOFANNON_IGNORE_LLM_SETTINGS=true) in its env_vars. For those agents
+        # the UI/request llm_settings are ignored entirely, so the per-call-site
+        # parameters the agent computed from env flow through untouched.
+        #
+        # This exists because llm_settings is keyed by provider/model ONLY, not
+        # by call site. An agent that legitimately sends different params to the
+        # same model at different call sites (e.g. discover's 32768 classify vs
+        # 16000 domain call, or the relevance filter's score/profile/triage
+        # profiles all on one model) would otherwise have every call flattened
+        # to a single UI value. Env-driven agents cannot express per-call params
+        # any other way, so they opt out of the override mechanism entirely.
+        import os as _os
+        _ignore_llm_settings = (
+            _os.environ.get("ASVS_IGNORE_LLM_SETTINGS", "").lower() in ("1", "true", "yes")
+            or _os.environ.get("GOFANNON_IGNORE_LLM_SETTINGS", "").lower() in ("1", "true", "yes")
+        )
+        override = None if _ignore_llm_settings else (
+            llm_settings.for_call(provider, model) if llm_settings else None
+        )
         if override:
             if override.max_tokens is not None:
                 parameters = {**parameters, "max_tokens": override.max_tokens}
