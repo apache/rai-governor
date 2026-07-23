@@ -66,7 +66,7 @@ models = {
         "returns_thoughts": False,
         "supports_effort": False,
         "supports_thinking": True,   # on by default; disable per-call
-        "context_window": _SERVED_CONTEXT,
+        "context_window": 8192,
         "parameters": dict(_COMMON_PARAMS),
     },
     # Gemma 4 26B-A4B (FP8, MoE ~4B active) — general tier. Candidate
