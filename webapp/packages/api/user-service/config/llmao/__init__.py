@@ -6,21 +6,27 @@ serving limit is what actually rejects a request, and get_context_window()
 feeds the agents' batch-sizing math directly -- so an aspirational number here
 produces batches that vLLM refuses at request time.
 
-The two models DO NOT share a window. Both are co-resident on one L40S
-(~44 GiB, ~98.7% full), and the 8B's KV-cache slice only fits 8k:
+As of 2026-07-23 Gemma is the SOLE resident on the L40S and Qwen is no longer
+served (see the commented-out entry below):
 
-    selfhost/gemma4-26b -> 32768   (FP8, ~28 GB weights, gpu-util 0.68)
-    selfhost/qwen3-8b   ->  8192   (FP8,  ~8 GB weights, gpu-util 0.26)
+    selfhost/gemma4-26b -> 131072  (FP8, ~26 GB weights, gpu-util 0.90,
+                                    CUDA graphs on, --max-num-seqs 16)
 
-Both run --enforce-eager. If llmao raises a model's --max-model-len (VRAM
-permitting), raise that model's number here to match. They must move together,
-per model -- do not reintroduce a single shared constant.
+Earlier co-resident numbers (Gemma 32768 / Qwen 8192, both --enforce-eager)
+no longer apply. If llmao changes a model's --max-model-len, change that
+model's number here to match -- they must move together, per model. Do not
+reintroduce a single shared constant.
+
+Measured on the solo config: ~1200 tok/s prefill, ~45 tok/s single-stream
+generation. KV cache is 58,320 tokens, so max concurrency is ~4x at a full
+131k prompt but far higher at realistic prompt sizes; --max-num-seqs 16 is
+the ceiling.
 
 OUTPUT SHARES THE WINDOW WITH INPUT. max_tokens is an output reservation
 inside max-model-len, so input_tokens + max_tokens must stay under it.
-Observed in practice on the 8B: 4096 output + 4097 input = 8193 -> hard 400
-("maximum context length is 8192 tokens"). Keep max_tokens modest on Qwen
-(1024-2048) so there is room for the prompt.
+Observed in practice on the old 8k Qwen config: 4096 output + 4097 input =
+8193 -> hard 400 ("maximum context length is 8192 tokens"). The same rule
+applies at any window size: keep max_tokens well under it so the prompt fits.
 
 Both are reasoning models that think BY DEFAULT. For the cheap-tier work these
 replace (relevance filtering, code inventory) thinking is not wanted: it was
@@ -46,8 +52,8 @@ it is actually enforced.
 """
 
 # vLLM --max-model-len, per model. These are NOT interchangeable.
-_GEMMA_CONTEXT = 32768
-_QWEN_CONTEXT = 8192
+_GEMMA_CONTEXT = 131072
+# _QWEN_CONTEXT = 8192   # unused: Qwen is no longer served (see below)
 
 
 def _params(window, default_max_tokens):
@@ -91,15 +97,22 @@ def _params(window, default_max_tokens):
 # name is ours, the model id is theirs. Renaming these to llmao/* yields a 400
 # from the proxy.
 models = {
-    # Qwen3 8B (FP8) -- fast tier. Replaces Haiku 4.5 for relevance filtering.
-    # 8k window is TIGHT: keep per-call max_tokens at 1024-2048.
-    "selfhost/qwen3-8b": {
-        "returns_thoughts": False,
-        "supports_effort": False,
-        "supports_thinking": True,   # on by default; disable per-call
-        "context_window": _QWEN_CONTEXT,
-        "parameters": _params(_QWEN_CONTEXT, 1024),
-    },
+    # Qwen3 8B (FP8) -- NOT SERVED as of 2026-07-23. Removed from the GPU once
+    # discovery's per-domain batching made the relevance-filter (LIGHT) tier
+    # redundant: the pipeline stopped calling it, so it was holding ~12 GB of
+    # VRAM for nothing and forcing Gemma into --enforce-eager at gpu-util 0.68.
+    # Gemma now has the whole card. LIGHT is back on Haiku 4.5.
+    # To restore: uncomment this, re-add the vllm-qwen8b docker::run block in
+    # llmao.pp (plus its litellm require + LLMAO_SELFHOST_QWEN8B_URL env), and
+    # re-derive both models' windows for co-residency -- the 131072 below is a
+    # sole-resident number and will NOT fit alongside another model.
+    # "selfhost/qwen3-8b": {
+    #     "returns_thoughts": False,
+    #     "supports_effort": False,
+    #     "supports_thinking": True,
+    #     "context_window": 8192,
+    #     "parameters": _params(8192, 1024),
+    # },
     # Gemma 4 26B-A4B (FP8, MoE ~4B active) -- general tier. Candidate
     # replacement for Sonnet 4.6 on code inventory.
     "selfhost/gemma4-26b": {
@@ -107,6 +120,23 @@ models = {
         "supports_effort": False,
         "supports_thinking": True,
         "context_window": _GEMMA_CONTEXT,
-        "parameters": _params(_GEMMA_CONTEXT, 4096),
+        # max_tokens ceiling is deliberately NOT the full 131k window. Two
+        # reasons: (1) output is reserved out of the SAME window as the input,
+        # so a ceiling equal to the window makes it easy for batch-sizing math
+        # to request more output than the prompt leaves room for -- the
+        # input+output>window 400 we already hit on the old 8k Qwen config;
+        # (2) KV cache is 58,320 tokens shared across --max-num-seqs 16, so one
+        # runaway 100k generation starves every other in-flight request.
+        #
+        # 32k rather than something tighter because the failure modes are not
+        # symmetric: a too-HIGH ceiling risks a hypothetical runaway request,
+        # while a too-LOW one silently TRUNCATES long structured output --
+        # a consolidation emitting 20-30k of merged JSON would come back
+        # unparseable, and that reads as a model-quality problem rather than a
+        # config limit. Current call sites ask for <=8192, so this is ~4x
+        # headroom over real usage while still capping the pathological case.
+        # vLLM's own input+output<=max_model_len check remains the real
+        # backstop; this is a policy cap on top of it.
+        "parameters": _params(32768, 4096),
     },
 }
