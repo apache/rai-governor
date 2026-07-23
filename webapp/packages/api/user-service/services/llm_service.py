@@ -419,18 +419,36 @@ async def call_llm(
     # Self-hosted reasoning models (Qwen3, Gemma 4 via llmao's vLLM proxy)
     # think by default. They do NOT understand OpenAI's reasoning_effort; the
     # switch is the chat-template kwarg enable_thinking, passed to vLLM via
-    # extra_body. Translate our reasoning_effort intent into it, but only for
-    # models that declare supports_thinking (so non-thinking models and other
-    # providers are untouched). reasoning_effort == 'disable' -> thinking off.
+    # extra_body. Translate our reasoning_effort intent into it.
+    # reasoning_effort == 'disable' -> thinking off.
+    #
+    # GATE: this applies ONLY to providers served from a custom
+    # OpenAI-compatible endpoint (llmao -> vLLM), identified by the provider
+    # declaring api_base_env_var. chat_template_kwargs is a vLLM concept, and
+    # Bedrock's Converse API rejects any unknown top-level field with
+    # 400 "extra_body: Extra inputs are not permitted".
+    #
+    # Do NOT gate on supports_thinking alone. That flag is True on the Bedrock
+    # Anthropic models as well -- it means "this model can do extended
+    # thinking", NOT "this model accepts enable_thinking". Gating on it alone
+    # attached extra_body to Sonnet and failed every architecture
+    # classification batch on 2026-07-23. api_base_env_var is the real
+    # discriminator (llmao is the only provider that sets it), so Bedrock is
+    # excluded by construction rather than by an explicit denylist.
+    #
+    # reasoning_effort is popped above and re-applied per-provider further
+    # down (the Anthropic/Bedrock paths re-add it, and the Opus 4.7+ path
+    # translates it into thinking + output_config), so popping it here does
+    # not strip thinking from the Bedrock tiers.
     #
     # NOTE: both llmao's proxy and gofannon run litellm with drop_params=True,
     # so if this param is malformed or the vLLM server lacks the matching
     # --reasoning-parser, it is silently dropped and thinking stays ON. Verify
     # with a probe call: a disabled response must have empty/no reasoning_content
     # and no <think> block. (llmao serves these with --reasoning-parser gemma4 /
-    # qwen3 and a server-side enable_thinking=false default; this per-call value
-    # overrides that default in either direction.)
-    if model_config.get("supports_thinking"):
+    # qwen3; this per-call value is explicit in both directions, so it does not
+    # depend on a server-side default.)
+    if provider_cfg.get("api_base_env_var") and model_config.get("supports_thinking"):
         _enable_thinking = (reasoning_effort != 'disable')
         _extra = dict(kwargs.get("extra_body", {}))
         _ctk = dict(_extra.get("chat_template_kwargs", {}))
