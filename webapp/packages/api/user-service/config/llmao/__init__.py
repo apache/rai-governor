@@ -115,7 +115,7 @@ models = {
     # },
     # Gemma 4 26B-A4B (FP8, MoE ~4B active) -- general tier. Candidate
     # replacement for Sonnet 4.6 on code inventory.
-    "selfhost/gemma4-26b": {
+    "gemma4-26b": {
         "returns_thoughts": False,
         "supports_effort": False,
         "supports_thinking": True,
