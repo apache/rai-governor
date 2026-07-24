@@ -118,7 +118,7 @@ models = {
     "gemma4-26b": {
         "returns_thoughts": False,
         "supports_effort": False,
-        "supports_thinking": True,
+        "supports_thinking": False,
         "context_window": _GEMMA_CONTEXT,
         # max_tokens ceiling is deliberately NOT the full 131k window. Two
         # reasons: (1) output is reserved out of the SAME window as the input,
