@@ -52,7 +52,7 @@ it is actually enforced.
 """
 
 # vLLM --max-model-len, per model. These are NOT interchangeable.
-_GEMMA_CONTEXT = 131072
+_GEMMA_CONTEXT = 114688
 # _QWEN_CONTEXT = 8192   # unused: Qwen is no longer served (see below)
 
 
