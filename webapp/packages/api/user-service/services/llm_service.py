@@ -155,7 +155,9 @@ def _is_opus_4_7_or_later(model: str) -> bool:
     _supports_adaptive_thinking."""
     if "claude-mythos" in model:
         return True
-    return any(tag in model for tag in ("claude-opus-4-7", "claude-opus-4-8"))
+    return any(tag in model for tag in (
+        "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5"
+    ))
 
 
 # In-process cache of Mantle bearer tokens, keyed by role ARN.
