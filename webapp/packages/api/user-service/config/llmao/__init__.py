@@ -69,18 +69,6 @@ one-to-one -- it is bounded by the max_tokens ceiling in _params, not by any
 single tier's default. Do not reintroduce a single shared constant across
 models.
 
-THINKING / enable_thinking -- DO NOT SEND THE KWARG TO GEMMA.
-Earlier revisions injected extra_body={"chat_template_kwargs":
-{"enable_thinking": False}} to suppress reasoning. For Gemma on this vLLM
-build that kwarg HANGS the request (vLLM accepts it and never responds). Gemma
-also does not need it: with --reasoning-parser gemma4 its thinking is already
-off by default (verified by probe -- clean JSON, reasoning_content is None,
-no <think> block). The kwarg was both unnecessary and harmful. This is why the
-gemma entry sets supports_thinking = False: that flag gates the kwarg
-injection in llm_service.py, and False keeps it from ever being sent. Do not
-set it True for Gemma. (Possibly related to vLLM issue #39130, Gemma +
-thinking-off + xgrammar.)
-
 Both llmao's proxy and gofannon run litellm with drop_params=True, so a param
 neither layer recognises is silently discarded -- a thinking-disable that does
 not land fails quietly, not loudly. Re-probe after any serving change rather
@@ -153,12 +141,7 @@ models = {
     "gemma4-26b": {
         "returns_thoughts": False,
         "supports_effort": False,
-        # Leave False. Gemma's thinking is already off by default because the
-        # server runs --reasoning-parser gemma4, and this flag is what gates
-        # the chat_template_kwargs injection in llm_service.py. The kwarg was
-        # observed to HANG this model on vLLM 0.19.1; that has not been
-        # retested on 0.25.1 and there is no reason to find out.
-        "supports_thinking": False,
+        "supports_thinking": True,
         "context_window": _GEMMA_CONTEXT,
         # max_tokens ceiling is deliberately NOT the full serving window.
         #
@@ -190,6 +173,6 @@ models = {
         #
         # vLLM's own input+output<=max_model_len check remains the real
         # backstop; this is a policy cap on top of it.
-        "parameters": _params(32768, 4096),
+        "parameters": _params(32768, 16384),
     },
 }
