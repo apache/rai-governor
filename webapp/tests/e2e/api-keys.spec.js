@@ -89,7 +89,7 @@ test.describe('API Key Management', () => {
     await page.waitForLoadState('domcontentloaded');
 
     // Click the first "Add Key" button
-    await page.locator('button:has-text("Add Key")').first().click();
+    await page.getByRole('button', { name: /^add key$/i }).first().click();
 
     // An editable API Key input should now be present. Use the
     // placeholder that's specific to the editing state ("Enter your X

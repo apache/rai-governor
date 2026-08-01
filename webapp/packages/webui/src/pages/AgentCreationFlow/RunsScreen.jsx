@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAgentFlow } from './AgentCreationFlowContextValue';
 import agentService from '../../services/agentService';
 import runService from '../../services/runService';
+import useRun from '../../hooks/useRun';
 import {
   Box,
   Typography,
@@ -183,6 +184,22 @@ const RunsScreen = () => {
   // so fetch it from the registry to pre-fill the form. null until
   // resolved; set to the fetched record on success or null on failure.
   const [fetchedRun, setFetchedRun] = useState(null);
+  // Re-attach to an in-flight run when the URL carries a runId that was not
+  // started in this session — page refresh, direct link, or a run picked from
+  // the past-runs list. useRun does its own pre-flight auth check against
+  // /runs/{run_id} (which goes through fetchInterceptor, so a 401 raises
+  // AuthExpiryModal — EventSource cannot), then opens the SSE stream, which
+  // replays the whole trace before going live.
+  //
+  // With backend persistent-runs shipped, `disconnected` means "your live view
+  // is stale", NOT "your run died" — the run keeps going either way. That is
+  // why the banner offers Reconnect rather than reporting a failure.
+  const {
+    events: streamedEvents,
+    status: streamStatus,
+    final: streamFinal,
+    reconnect: reconnectStream,
+  } = useRun(runId);
   // Local 'stop is in flight' flag flipped on Stop click and cleared
   // when the backend confirms the run has actually moved off
   // 'running'. Gives the button immediate visual feedback
@@ -439,6 +456,18 @@ const RunsScreen = () => {
       // final response — it sets the run's outcome and any leftover
       // fields (ops_log, schema warnings).
       const onTraceEvent = (event) => {
+        // Never let a per-event render error kill the stream. A malformed
+        // or unexpected-shape event must log-and-continue, not tear down
+        // the ReadableStream reader -- that closes the SSE, which the
+        // backend reads as a client disconnect. Historically a single
+        // TypeError here killed 61 of 64 batches mid-flight.
+        //
+        // NOTE: this try/catch covers code that runs SYNCHRONOUSLY in the
+        // handler. The setRuns updater below is a functional update, which
+        // React invokes later during the render phase -- an exception in
+        // there is raised outside this block and is NOT caught here. That
+        // updater has its own guard for exactly that reason.
+        try {
         // ISSUE-007 follow-up: capture runId from the first 'run_id' event
         // so the Stop button becomes enabled.
         if (event && event.type === 'run_id' && event.data && event.data.runId) {
@@ -468,15 +497,48 @@ const RunsScreen = () => {
           return;
         }
         setRuns((prev) => {
-          const next = [...prev];
-          const idx = next.length - 1;
-          if (idx < 0 || next[idx].outcome !== 'running') return prev;
-          next[idx] = {
-            ...next[idx],
-            events: [...(next[idx].events || []), event],
-          };
-          return next;
+          // Guarded independently of the outer try/catch: React runs this
+          // closure during render, not at setRuns() call time, so a throw
+          // in here escapes the handler's try block entirely. An uncaught
+          // throw during render unmounts the tree and takes the SSE reader
+          // with it -- the exact failure this whole patch exists to stop.
+          try {
+            const next = [...prev];
+            const idx = next.length - 1;
+            // `!next[idx]` added: the original dereferenced .outcome on a
+            // possibly-undefined element.
+            if (idx < 0 || !next[idx] || next[idx].outcome !== 'running') return prev;
+            next[idx] = {
+              ...next[idx],
+              events: [...(next[idx].events || []), event],
+            };
+            return next;
+          } catch {
+            return prev;
+          }
         });
+        } catch (renderErr) {
+          // Log the failing event so the underlying bug stays traceable,
+          // but do NOT rethrow. One event's UI update is lost; the stream
+          // and the run continue.
+          //
+          // This is deliberately a silent-degradation trade: watch
+          // /log/client for these. A boundary nobody monitors is a
+          // bug-hiding machine.
+          try {
+            observabilityService.logError(renderErr, {
+              context: 'onTraceEvent',
+              eventType: event?.type ?? 'unknown',
+              eventPreview: (() => {
+                try { return JSON.stringify(event).slice(0, 500); }
+                catch { return '<unserialisable>'; }
+              })(),
+            });
+          } catch {
+            // Even the logger failed. Nothing to do -- keeping the stream
+            // alive outranks recording why we couldn't.
+          }
+        }
       };
 
       // ISSUE-007 follow-up: AbortController for the streaming fetch.
@@ -852,6 +914,38 @@ const RunsScreen = () => {
     );
   };
 
+  // A streamed run reaching a terminal state carries the same payload the
+  // in-session handleRun path sets directly. Mirror it so a deep-linked or
+  // refreshed run populates the output panel rather than showing an empty one.
+  useEffect(() => {
+    if (!streamFinal) return;
+    if (streamFinal.result !== undefined && streamFinal.result !== null) {
+      setOutput(streamFinal.result);
+    }
+    if (streamFinal.error) setError(streamFinal.error);
+    if (streamFinal.schemaWarnings?.length) setSchemaWarnings(streamFinal.schemaWarnings);
+    if (streamFinal.opsLog?.length) setOpsLog(streamFinal.opsLog);
+  }, [streamFinal]);
+
+  // RunProgressLog takes an array of run objects, not a flat event list, so
+  // wrap the streamed events in one synthetic record when local `runs` is
+  // empty. `runs` is only populated by handleRun during this session — the
+  // deep-link and refresh cases have nothing in it, which is exactly when the
+  // stream is the only source of truth. When both exist, handleRun wins: it is
+  // the run the user just started and its record carries timing the stream
+  // does not.
+  const displayRuns = useMemo(() => {
+    if (runs.length > 0) return runs;
+    if (streamedEvents.length === 0) return runs;
+    const terminal = ['success', 'error', 'stopped'];
+    return [{
+      started_at: fetchedRun?.startedAt ?? fetchedRun?.started_at ?? null,
+      duration_ms: null,
+      outcome: terminal.includes(streamStatus) ? streamStatus : 'running',
+      events: streamedEvents,
+    }];
+  }, [runs, streamedEvents, streamStatus, fetchedRun]);
+
   return (
     <Box sx={{
       maxWidth: 1400,
@@ -1030,7 +1124,27 @@ const RunsScreen = () => {
           layout doesn't jump when a run completes. Collapses below the
           main panel on narrow screens. */}
       <Box sx={{ width: { xs: '100%', lg: 380 }, flexShrink: 0, mt: { xs: 2, lg: 0 }, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <RunProgressLog runs={runs} />
+        {streamStatus === 'disconnected' && (
+          <Alert
+            severity="warning"
+            action={
+              <Button color="inherit" size="small" onClick={reconnectStream}>
+                Reconnect
+              </Button>
+            }
+          >
+            <AlertTitle>Connection to run lost</AlertTitle>
+            The run is still going on the server — losing this stream does not
+            stop it. Reconnect to replay the trace and catch up on anything that
+            happened while you were disconnected.
+          </Alert>
+        )}
+        {streamStatus === 'not_found' && (
+          <Alert severity="info">
+            No run with that ID exists, or it belongs to someone else.
+          </Alert>
+        )}
+        <RunProgressLog runs={displayRuns} />
         <RunDataPanel opsLog={opsLog} />
       </Box>
     </Box>

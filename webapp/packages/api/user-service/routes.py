@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import traceback
 import uuid
@@ -900,6 +901,18 @@ async def run_agent_code_stream(
         # Kick off the agent. The task runs concurrently with this
         # generator; events flow through the queue.
         agent_task = asyncio.create_task(run_agent_task())
+        # Give the registry a STRONG reference to the task. This is required
+        # now that the finally block below no longer awaits or cancels it:
+        # once this generator's frame is gone, the registry is the only thing
+        # keeping the task reachable, and asyncio holds only weak references
+        # ("Save a reference to the result of create_task, to avoid a task
+        # disappearing mid-execution" -- asyncio docs).
+        #
+        # The non-streaming /agents/run-code/start handler already does this;
+        # the streaming path never did, because it always awaited or cancelled
+        # before returning. Detaching without binding would leave an
+        # hours-long pipeline eligible for GC.
+        _registry.bind_task(_run_record, agent_task)
 
         try:
             while True:
@@ -934,13 +947,29 @@ async def run_agent_code_stream(
                     payload = json.dumps(item, default=str)
                     yield f"event: trace\ndata: {payload}\n\n"
         finally:
-            # If the client disconnects mid-run, the generator gets
-            # closed; await the agent so we don't leak the task.
+            # Client disconnect DETACHES from the run; it does not kill it.
+            #
+            # The previous behaviour (await up to 5s, then cancel) meant a tab
+            # close, a browser crash, a network glitch, or a render error in
+            # the SSE reader all killed an in-flight run. For LLM pipelines
+            # that run for minutes to hours, the 5s branch was always the kill
+            # path -- it cost 61 of 64 batches on one run and a full scan on
+            # another.
+            #
+            # The task continues; the registry holds a strong reference to it
+            # (bound above) and tracks completion via mark_complete in
+            # run_agent_task's handlers. A new SSE connection to
+            # /runs/{run_id}/stream re-attaches with replay-then-live.
+            # POST /runs/{run_id}/stop is now the ONLY way to cancel work --
+            # implicit cancellation is gone by design.
             if not agent_task.done():
-                try:
-                    await asyncio.wait_for(agent_task, timeout=5.0)
-                except (asyncio.TimeoutError, Exception):
-                    agent_task.cancel()
+                logger.log(
+                    "INFO",
+                    "sse_disconnect_run_continues",
+                    f"SSE closed for run {_run_record.run_id}; run continues "
+                    f"in background (detached)",
+                    metadata={"run_id": _run_record.run_id},
+                )
 
     return StreamingResponse(
         event_generator(),
@@ -1023,6 +1052,51 @@ async def start_agent_run(
     registry.bind_task(record, task)
 
     return {"runId": record.run_id, "status": record.status}
+
+
+# A run that has appended no trace event for this long is treated as
+# abandoned by force_complete_run. Long enough that a slow LLM call
+# (the ASVS pipeline routinely runs 300-600s per call) is never
+# mistaken for a dead worker; short enough to be useful.
+STALE_RUN_SECONDS = 900
+
+
+class ForceCompleteRequest(BaseModel):
+    """Body for POST /runs/{run_id}/force-complete."""
+
+    force: bool = False
+
+
+def _run_idle_seconds(record) -> Optional[float]:
+    """Seconds since this run last appended a trace event.
+
+    Falls back to time since start when the run has produced no events
+    at all. Returns None if neither timestamp is usable, in which case
+    the caller treats staleness as unknown and allows the clear.
+    """
+    from datetime import datetime, timezone
+
+    def _age(ts):
+        if not ts:
+            return None
+        try:
+            if isinstance(ts, str):
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - ts).total_seconds()
+        except Exception:
+            return None
+
+    events = list(getattr(record.trace, "events", []) or [])
+    for ev in reversed(events):
+        if isinstance(ev, dict):
+            age = _age(ev.get("timestamp") or ev.get("ts"))
+            if age is not None:
+                return age
+        break
+
+    return _age(getattr(record, "started_at", None))
 
 
 @router.get("/runs")
@@ -1172,6 +1246,95 @@ async def stop_run(
     return {"runId": run_id, "status": "stopping", "via": outcome}
 
 
+@router.post("/runs/{run_id}/force-complete", status_code=200)
+async def force_complete_run(
+    run_id: str,
+    request: ForceCompleteRequest = None,
+    user: dict = Depends(get_current_user),
+    logger: ObservabilityService = Depends(get_logger),
+):
+    """Manually clear a run that is stuck in 'running'.
+
+    This is the escape hatch for orphaned records: a run whose owning
+    worker died (api container restart, OOM kill) leaves a row that says
+    'running' forever, because the task that would have called
+    mark_complete no longer exists. POST /stop cannot help -- it flips a
+    cancel token that nothing is left to observe.
+
+    SAFETY: refuses by default unless the run has been silent for at
+    least STALE_RUN_SECONDS. A healthy run appends trace events
+    continuously, so a recent event is strong evidence the pipeline is
+    alive and this is a misclick. Pass {"force": true} to override --
+    the UI does that only behind a second confirmation.
+
+    Marks the run 'error' rather than 'success': we do not know what the
+    pipeline produced, and recording an unverified success would poison
+    any downstream consumer that trusts the status field.
+    """
+    from services.run_registry import get_run_registry
+
+    registry = get_run_registry()
+    record = registry.get(run_id)
+    if record is None or record.user_id != (user.get("uid") or ""):
+        # Same 404-for-forbidden policy as stop_run: don't leak the
+        # existence of other users' runs.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if record.status != "running":
+        # Already terminal. Idempotent success so a double-click from the
+        # UI doesn't surface an error.
+        return {
+            "runId": run_id,
+            "status": record.status,
+            "changed": False,
+            "detail": "Run was already complete.",
+        }
+
+    force = bool(request.force) if request is not None else False
+    idle_seconds = _run_idle_seconds(record)
+
+    if not force and idle_seconds is not None and idle_seconds < STALE_RUN_SECONDS:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Run produced an event {int(idle_seconds)}s ago and looks "
+                f"alive. Use /runs/{run_id}/stop to cancel it, or retry with "
+                f'{{"force": true}} to clear it anyway.'
+            ),
+        )
+
+    # A live local task means this worker still owns a running pipeline.
+    # Clearing the record without cancelling would orphan real work that
+    # keeps consuming tokens, so cancel it too.
+    if record.task is not None and not record.task.done():
+        record.task.cancel()
+        logger.log(
+            "WARNING",
+            "force_complete_cancelled_live_task",
+            f"force-complete cancelled a still-live task for run {run_id}",
+            metadata={"run_id": run_id, "idle_seconds": idle_seconds},
+        )
+
+    registry.mark_complete(
+        record,
+        status="error",
+        error=(
+            "Manually cleared by user. The run was stuck in 'running' with "
+            f"no activity for {int(idle_seconds) if idle_seconds is not None else 'an unknown number of'} seconds; "
+            "its owning worker had most likely exited. Any work it completed "
+            "before being cleared is not reflected here."
+        ),
+    )
+    logger.log(
+        "user_action",
+        "run_force_completed",
+        f"Run {run_id} force-completed by user",
+        user_id=user.get("uid"),
+        metadata={"run_id": run_id, "idle_seconds": idle_seconds, "forced": force},
+    )
+    return {"runId": run_id, "status": "error", "changed": True}
+
+
 @router.post("/agents/run-code", response_model=RunCodeResponse)
 async def run_agent_code(
     request: RunCodeRequest,
@@ -1271,6 +1434,146 @@ async def run_deployed_agent_route(
         user_id=user.get("uid"),
         user_basic_info=user_basic_info,
     )
+
+
+@router.post("/rest/{friendly_name}/start", status_code=202)
+async def start_deployed_agent_run(
+    friendly_name: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    db: DatabaseService = Depends(get_db),
+    logger: ObservabilityService = Depends(get_logger),
+):
+    """Run a DEPLOYED agent by friendly_name, detached. Returns ``{runId}``.
+
+    This is the pairing of the two halves that already existed separately:
+
+      * ``POST /rest/{friendly_name}`` has the right STATE model -- it loads
+        code, tools, gofannon_agents and env_vars from the stored agent
+        record, so the caller sends only inputs. But it awaits the result
+        inline, which for a multi-hour pipeline means holding one HTTP
+        connection open with no runId, no trace, and no way to stop it.
+
+      * ``POST /agents/run-code/start`` has the right EXECUTION model --
+        registry record, background task, replay-then-live streaming,
+        stoppable -- but takes code and env_vars as a request payload, so
+        every caller re-sends the agent (and its secrets) on every run.
+
+    This endpoint loads from the record AND registers the run, so
+    /runs/{runId}/stream and /runs/{runId}/stop work on it for free.
+
+    Body is the agent's input_dict, exactly as for the synchronous route:
+
+        POST /rest/asvs_orchestrate/start
+        {"sourceRepo": "apache/apisix", "level": "L3", ...}
+
+    Secrets that are genuinely per-run (source/output tokens) still travel
+    in the body. Everything configured on the agent -- API keys, model
+    tiers, timeouts -- does not.
+    """
+    from services.log_redaction import redact_in_place
+    from services.run_registry import get_run_registry
+
+    input_dict = await request.json()
+    if not isinstance(input_dict, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    # Resolve the deployment BEFORE registering a run, so an unknown
+    # friendly_name is a clean 404 rather than a run that instantly fails.
+    try:
+        deployment_doc = db.get("deployments", friendly_name)
+        agent_id = deployment_doc["agentId"]
+        agent_data = db.get("agents", agent_id)
+        agent = Agent(**agent_data)
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No deployed agent named '{friendly_name}'. "
+                       f"Deploy it first via POST /agents/{{agent_id}}/deploy.",
+            )
+        raise
+    except KeyError:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Deployment '{friendly_name}' has no agentId; record is malformed.",
+        )
+
+    registry = get_run_registry()
+    record = registry.new_record(
+        user_id=user.get("uid") or "anonymous",
+        agent_name=friendly_name,
+        agent_id=agent_id,
+        # The registry persists input_dict to CouchDB verbatim and returns it
+        # from GET /runs/{run_id}, so the raw dict would write live tokens to
+        # the database. redact_in_place() is the same filter agent_trace and
+        # observability_service already use -- it matches on token SHAPE
+        # (github_pat_, sk-ant-, AKIA..., JWT triplets, secret-shaped k=v)
+        # rather than on key name, so it catches a credential wherever it sits.
+        # copy.deepcopy first: the function mutates dicts in place, and the
+        # agent below needs the unredacted inputs.
+        input_dict=redact_in_place(copy.deepcopy(input_dict)),
+    )
+
+    user_basic_info = {
+        "email": user.get("email"),
+        "name": user.get("name") or user.get("displayName"),
+    }
+
+    async def runner():
+        try:
+            result, ops_log = await _execute_agent_code(
+                code=agent.code,
+                input_dict=input_dict,
+                tools=agent.tools,
+                gofannon_agents=agent.gofannon_agents,
+                db=db,
+                user_id=user.get("uid"),
+                user_basic_info=user_basic_info,
+                env_vars=getattr(agent, "env_vars", []),
+                agent_name=friendly_name,
+                trace=record.trace,
+            )
+            warnings = validate_output_against_schema(
+                result, getattr(agent, "output_schema", None)
+            )
+            registry.mark_complete(
+                record,
+                status="success",
+                result=result,
+                schema_warnings=warnings or None,
+                ops_log=ops_log or None,
+            )
+        except Exception as e:
+            logger.log(
+                "ERROR",
+                "deployed_run_failure",
+                f"Deployed run {record.run_id} ({friendly_name}) failed: {type(e).__name__}",
+                metadata={"traceback": traceback.format_exc(),
+                          "run_id": record.run_id,
+                          "friendly_name": friendly_name},
+            )
+            registry.mark_complete(
+                record,
+                status="error",
+                error=f"{type(e).__name__}: {e}",
+            )
+
+    task = asyncio.create_task(runner())
+    # Strong reference; see the note at the streaming endpoint. Without this
+    # the task is GC-eligible as soon as this handler returns.
+    registry.bind_task(record, task)
+
+    logger.log(
+        "user_action",
+        "deployed_run_started",
+        f"Started deployed agent '{friendly_name}' as run {record.run_id}",
+        user_id=user.get("uid"),
+        metadata={"run_id": record.run_id, "friendly_name": friendly_name,
+                  "agent_id": agent_id},
+    )
+    return {"runId": record.run_id, "status": record.status,
+            "agentId": agent_id, "friendlyName": friendly_name}
 
 
 @router.post("/demos/generate-code", response_model=GenerateDemoCodeResponse)

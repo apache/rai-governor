@@ -21,6 +21,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import { listRuns } from '../services/runService';
+import { parseServerDate, formatTimeAgo } from '../utils/serverTime';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -39,19 +40,18 @@ const FILTERS = [
   { id: 'stopped', label: 'Stopped' },
 ];
 
-function relativeTime(iso) {
-  if (!iso) return '';
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return `${Math.round(diff)}s ago`;
-  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
-  return `${Math.round(diff / 86400)}d ago`;
-}
+// Delegates to serverTime.formatTimeAgo, which treats an offset-less
+// timestamp as UTC. The API emits NAIVE UTC, so a raw `new Date(iso)` read
+// it as local time and every age was wrong by the viewer's UTC offset.
+const relativeTime = formatTimeAgo;
 
 function durationOf(run) {
   if (!run.startedAt) return '';
-  const end = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
-  const ms = end - new Date(run.startedAt).getTime();
+  const completed = parseServerDate(run.completedAt);
+  const started = parseServerDate(run.startedAt);
+  if (!started) return '';
+  const end = completed ? completed.getTime() : Date.now();
+  const ms = end - started.getTime();
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;

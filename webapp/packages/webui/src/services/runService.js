@@ -53,4 +53,38 @@ export async function stopRun(runId) {
   throw new Error(`stopRun failed: ${resp.status} ${text}`);
 }
 
-export default { startRun, listRuns, getRun, stopRun };
+/** POST /runs/{runId}/force-complete — clear a run stuck in 'running'.
+ *
+ * For orphaned records: a run whose owning worker died leaves a row
+ * saying 'running' forever, and /stop cannot help because it flips a
+ * cancel token nothing is left to observe.
+ *
+ * The server refuses (409) when the run produced a trace event
+ * recently, on the grounds that it is probably alive and this is a
+ * misclick. Pass force=true to override — the UI does that only behind
+ * a second confirmation.
+ *
+ * Returns {runId, status, changed, detail?}. `changed: false` means the
+ * run was already terminal (idempotent, not an error).
+ */
+export async function forceCompleteRun(runId, { force = false } = {}) {
+  const resp = await fetch(
+    `${BASE}/runs/${encodeURIComponent(runId)}/force-complete`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    },
+  );
+  if (resp.status === 409) {
+    // Distinguishable so the caller can offer "clear anyway" rather
+    // than surfacing a raw error string.
+    const body = await resp.json().catch(() => ({}));
+    const err = new Error(body.detail || 'Run appears to still be active.');
+    err.code = 'RUN_LOOKS_ACTIVE';
+    throw err;
+  }
+  return jsonOrThrow(resp, 'forceCompleteRun');
+}
+
+export default { startRun, listRuns, getRun, stopRun, forceCompleteRun };
