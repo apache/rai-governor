@@ -50,8 +50,13 @@ class Settings:
 
     # S3/MinIO Settings
     S3_ENDPOINT_URL: str | None = os.getenv("S3_ENDPOINT_URL")
-    AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
+    # Renamed from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. Those are the
+    # STANDARD AWS credential env vars, so boto3 read them before reaching
+    # the EC2 instance role -- meaning any SDK call meant to use the
+    # instance role silently got MinIO credentials instead. The S3_ prefix
+    # says what they actually are and unshadows the instance role.
+    S3_ACCESS_KEY_ID: str | None = os.getenv("S3_ACCESS_KEY_ID")
+    S3_SECRET_ACCESS_KEY: str | None = os.getenv("S3_SECRET_ACCESS_KEY")
     AWS_DEFAULT_REGION: str | None = os.getenv("AWS_DEFAULT_REGION")
     S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", "local-bucket")
 

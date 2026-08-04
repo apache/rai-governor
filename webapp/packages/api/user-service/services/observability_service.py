@@ -163,12 +163,15 @@ class ObservabilityService:
                 print(f"Skipping Google Cloud Logging provider due to initialization error: {e}")
 
         # AWS CloudWatch Logs
-        if all([settings.AWS_ACCESS_KEY_ID, settings.AWS_SECRET_ACCESS_KEY, settings.AWS_DEFAULT_REGION, settings.CLOUDWATCH_LOG_GROUP_NAME]):
+        # NOTE: CloudWatch is REAL AWS and should use the instance role, not
+        # the S3/MinIO credentials. This branch is dead in production
+        # (CLOUDWATCH_LOG_GROUP_NAME is unset); fix properly if enabled.
+        if all([settings.S3_ACCESS_KEY_ID, settings.S3_SECRET_ACCESS_KEY, settings.AWS_DEFAULT_REGION, settings.CLOUDWATCH_LOG_GROUP_NAME]):
             try:
                 self.providers.append(AWSCloudWatchLogsProvider(
                     region_name=settings.AWS_DEFAULT_REGION,
-                    access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    access_key_id=settings.S3_ACCESS_KEY_ID,
+                    secret_access_key=settings.S3_SECRET_ACCESS_KEY,
                     log_group_name=settings.CLOUDWATCH_LOG_GROUP_NAME
                 ))
             except Exception as e:
