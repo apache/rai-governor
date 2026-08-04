@@ -62,9 +62,16 @@ class ChatService:
             if "/" in model:
                 provider, model_name = model.split("/", 1)
             else:
-                # Default to openai if no provider specified
-                provider = "openai"
-                model_name = model
+                # No silent default. A bare model name used to fall through to
+                # "openai", which meant a typo or a dropped prefix quietly ran
+                # on a different provider than intended -- and after the
+                # provider cleanup it would fail deep in litellm with an
+                # unrelated-looking error. Fail here, where the cause is
+                # obvious.
+                raise ValueError(
+                    f"Model '{model}' has no provider prefix. Use "
+                    f"'provider/model', e.g. 'bedrock/us.anthropic.claude-opus-5'."
+                )
 
             # Call LLM through the centralized service
             content, thoughts = await call_llm(
@@ -133,9 +140,16 @@ class ChatService:
             if "/" in model:
                 provider, model_name = model.split("/", 1)
             else:
-                # Default to openai if no provider specified
-                provider = "openai"
-                model_name = model
+                # No silent default. A bare model name used to fall through to
+                # "openai", which meant a typo or a dropped prefix quietly ran
+                # on a different provider than intended -- and after the
+                # provider cleanup it would fail deep in litellm with an
+                # unrelated-looking error. Fail here, where the cause is
+                # obvious.
+                raise ValueError(
+                    f"Model '{model}' has no provider prefix. Use "
+                    f"'provider/model', e.g. 'bedrock/us.anthropic.claude-opus-5'."
+                )
 
             # Stream through the centralized service
             async for chunk in stream_llm(

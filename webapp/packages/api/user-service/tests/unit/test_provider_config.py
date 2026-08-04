@@ -18,7 +18,6 @@ class TestProviderConfig:
 
     @pytest.mark.parametrize("provider,api_key_env_var,sample_model", [
         ("openai", "OPENAI_API_KEY", "gpt-5.2"),
-        ("anthropic", "ANTHROPIC_API_KEY", "claude-opus-4-20250514"),
         ("gemini", "GEMINI_API_KEY", None),
         ("bedrock", "AWS_BEARER_TOKEN_BEDROCK", "us.anthropic.claude-opus-4-5-20251101-v1:0"),
         ("perplexity", "PERPLEXITYAI_API_KEY", None),

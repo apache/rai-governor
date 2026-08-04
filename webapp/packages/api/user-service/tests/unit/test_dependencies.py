@@ -350,7 +350,7 @@ class TestGetAvailableProviders:
             # User has keys for openai and anthropic only
             keys = {
                 "openai": "user-openai-key",
-                "anthropic": "user-anthropic-key",
+                "bedrock": "user-bedrock-key",
                 "gemini": None,
                 "perplexity": None,
             }
@@ -362,7 +362,7 @@ class TestGetAvailableProviders:
         providers = get_available_providers(user_id="user-1")
 
         assert "openai" in providers
-        assert "anthropic" in providers
+        assert "bedrock" in providers
         assert "gemini" not in providers
         assert "perplexity" not in providers
         assert "ollama" in providers  # Always available

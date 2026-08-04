@@ -1,6 +1,5 @@
-from .anthropic import models as anthropic_models
 from .bedrock import models as bedrock_models
-from .bedrock_mythos import models as bedrock_mythos_models
+from .anthropic_1p import models as anthropic_1p_models
 from .llmao import models as llmao_models
 from .gemini import models as gemini_models
 from .openai import models as openai_models
@@ -15,10 +14,6 @@ PROVIDER_CONFIG = {
         "api_key_env_var": "GEMINI_API_KEY",
         "models":  gemini_models,
     },
-    "anthropic": {
-        "api_key_env_var": "ANTHROPIC_API_KEY",
-        "models": anthropic_models,
-    },
     "perplexity": {
         "api_key_env_var": "PERPLEXITYAI_API_KEY",
         "models": perplexity_models,
@@ -27,27 +22,30 @@ PROVIDER_CONFIG = {
         "api_key_env_var": "AWS_BEARER_TOKEN_BEDROCK",
         "models": bedrock_models
     },
-    # Mythos preview — Bedrock Mantle endpoint in Anthropic's preview
-    # AWS account, accessed via cross-account STS AssumeRole + a SigV4-
-    # derived bearer token. No static credentials anywhere; the bearer
-    # token is minted from short-lived assumed-role credentials at
-    # request time, then passed to litellm as api_key. The region is
-    # also injected so litellm constructs the right Mantle endpoint
-    # URL (bedrock-mantle.{region}.api.aws/v1) — without it litellm
-    # defaults to us-east-1.
+    # Anthropic first-party API via Workload Identity Federation.
     #
-    # Config knobs:
-    #   aws_region              — region where Mythos is provisioned
-    #   assume_role_arn         — cross-account devs role to assume
-    #   litellm_provider_prefix — built as "bedrock/mantle/<model-id>"
-    #                             so litellm routes through its Mantle
-    #                             provider (Anthropic Messages endpoint at
-    #                             /anthropic/v1/messages)
-    "bedrock-mythos": {
-        "aws_region": "us-east-1",
-        "assume_role_arn": "arn:aws:iam::861792231409:role/bedrock-devs",
-        "litellm_provider_prefix": "bedrock/mantle",
-        "models": bedrock_mythos_models,
+    # Replaces the former "bedrock-mythos" provider, which reached Mythos
+    # through Bedrock Mantle in Anthropic's preview AWS account via
+    # cross-account STS AssumeRole. That path is being decommissioned.
+    #
+    # No static key: an AWS STS web identity JWT is exchanged with
+    # Anthropic's /v1/oauth/token endpoint for a short-lived bearer token,
+    # minted per request in llm_service.
+    #
+    # ANTHROPIC_API_KEY MUST NOT be set in this container. litellm prefers a
+    # static key over an injected one, so its presence silently bypasses the
+    # WIF path entirely -- you would get working calls on the wrong auth and
+    # no signal. services/anthropic_wif.py raises if it finds one. This is
+    # also why the static "anthropic" provider was removed rather than kept
+    # alongside: the two cannot coexist in one container.
+    #
+    # auth_mechanism is the dispatch key. llm_service branches on config
+    # keys rather than provider names -- see the assume_role_arn pattern it
+    # replaced -- so this follows the same shape.
+    "anthropic-1p": {
+        "auth_mechanism": "wif",
+        "litellm_provider_prefix": "anthropic",
+        "models": anthropic_1p_models,
     },
     # Self-hosted models behind llmao's litellm proxy (vLLM per model).
     #

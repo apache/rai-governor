@@ -5,8 +5,8 @@ import random
 from config import settings
 from config.provider_config import PROVIDER_CONFIG
 # boto3 and aws-bedrock-token-generator are imported lazily inside
-# _get_bedrock_mythos_api_key to avoid forcing those deps onto module
-# load when the bedrock-mythos provider isn't configured. boto3 is
+# the token-minting path to avoid forcing those deps onto module
+# load when no federated provider is configured. boto3 is
 # already transitively present via storage_service / dynamodb /
 # observability_service.
 from services.database_service import get_database_service
@@ -97,7 +97,7 @@ DEFAULT_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "600"))
 # survived. 2 retries is the smallest number that covers a single hang.
 MAX_TIMEOUT_RETRIES = int(os.getenv("LLM_TIMEOUT_RETRIES", "2"))
 
-# Retries specifically for a rejected bedrock-mythos bearer token. One is
+# Retries specifically for a rejected minted bearer token. One is
 # normally enough: the retry mints a fresh token from fresh STS creds. A
 # second failure means the problem isn't the token (bad trust policy,
 # IMDS down), so don't spin.
@@ -173,129 +173,6 @@ _TOKEN_REFRESH_MARGIN_SECONDS = 300
 _STS_SESSION_DURATION_SECONDS = int(
     os.getenv("BEDROCK_MYTHOS_STS_DURATION_SECONDS", "10800")  # 3h
 )
-
-
-def _invalidate_bedrock_mythos_token(assume_role_arn: str) -> None:
-    """Drop the cached bearer token for a role ARN.
-
-    Called when the provider rejects the token as expired/invalid. The
-    cache is per-process, so without this a poisoned entry keeps being
-    served to every subsequent call on this worker until the STS
-    Expiration finally passes -- turning one dead token into up to an
-    hour of failures on that worker.
-    """
-    _BEDROCK_MYTHOS_TOKEN_CACHE.pop(assume_role_arn, None)
-
-
-def _get_bedrock_mythos_api_key(
-    assume_role_arn: str,
-    region: str,
-    min_validity_seconds: int = 0,
-) -> str:
-    """Return a Mantle bearer token for the bedrock-mythos provider.
-
-    Performs an STS AssumeRole into the cross-account devs role in
-    Anthropic's preview AWS account, then derives a SigV4 bearer token
-    from those short-lived credentials. The bearer token is what
-    litellm passes to the bedrock-mantle endpoint as the Authorization
-    header.
-
-    Cached in-process per role ARN; refreshes when within
-    `_TOKEN_REFRESH_MARGIN_SECONDS` of credentials expiry.
-
-    Returns the bearer token string, suitable for passing to litellm
-    as the api_key kwarg on a bedrock_mantle/* request.
-    """
-    import boto3
-    from botocore.credentials import Credentials
-    from botocore.exceptions import ClientError
-    from aws_bedrock_token_generator import BedrockTokenGenerator
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
-
-    # The bearer token is a SigV4 *presigned* request. BedrockTokenGenerator
-    # stamps it with a 12h X-Amz-Expires, but a presigned URL can never
-    # outlive the credentials that signed it: the embedded
-    # X-Amz-Security-Token is the 1h STS session token, and once that lapses
-    # AWS rejects the request no matter what X-Amz-Expires claims. So STS
-    # Expiration -- not the 12h nominal TTL -- is the real clock.
-    #
-    # Crucially the token must stay valid for the DURATION of the call, not
-    # just at dispatch. An 1800s audit call signed by a token with 10 min
-    # left passes a dispatch-time check and then dies mid-flight; Bedrock
-    # stops responding, litellm reports it as a Timeout (not an auth error),
-    # and the call burns its full timeout before failing. Callers pass their
-    # own timeout as min_validity_seconds so we re-mint up front instead.
-    required = _TOKEN_REFRESH_MARGIN_SECONDS + max(0, min_validity_seconds)
-    cached = _BEDROCK_MYTHOS_TOKEN_CACHE.get(assume_role_arn)
-    if cached:
-        if (cached["_expires_at"] - now).total_seconds() > required:
-            return cached["token"]
-
-    # Force IMDS first (production). Falls back to default chain in dev
-    # where IMDS is unreachable and AWS_PROFILE-based SSO is expected.
-    # This bypasses the container's AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-    # env vars which are set to MinIO credentials and would otherwise
-    # shadow the EC2 instance role.
-    from botocore.credentials import InstanceMetadataProvider
-    from botocore.utils import InstanceMetadataFetcher
-
-    session = None
-    try:
-        fetcher = InstanceMetadataFetcher(timeout=2, num_attempts=2)
-        provider = InstanceMetadataProvider(iam_role_fetcher=fetcher)
-        imds_creds = provider.load()
-        if imds_creds is not None:
-            session = boto3.Session(
-                aws_access_key_id=imds_creds.access_key,
-                aws_secret_access_key=imds_creds.secret_key,
-                aws_session_token=imds_creds.token,
-            )
-    except Exception:
-        pass  # IMDS unavailable; fall through
-
-    if session is None:
-        profile = os.environ.get("AWS_PROFILE")
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    sts = session.client("sts")
-    # Ask for a longer session than the 1h default. The longest single call
-    # in the ASVS pipeline is 1800s, and a 1h credential leaves little room
-    # once the refresh margin is applied -- every long call would re-mint.
-    # Capped by the role's MaxSessionDuration; if the role doesn't allow it,
-    # AWS raises ValidationError, so fall back to the default rather than
-    # hard-failing.
-    assume_kwargs = {
-        "RoleArn": assume_role_arn,
-        "RoleSessionName": "gofannon-bedrock-mythos",
-    }
-    try:
-        response = sts.assume_role(
-            DurationSeconds=_STS_SESSION_DURATION_SECONDS, **assume_kwargs
-        )
-    except ClientError as e:
-        if e.response.get("Error", {}).get("Code") != "ValidationError":
-            raise
-        # Role's MaxSessionDuration is below our request; take what it gives.
-        response = sts.assume_role(**assume_kwargs)
-    raw = response["Credentials"]
-
-    # Wrap the assumed credentials as a botocore Credentials object
-    # so we can pass them explicitly to BedrockTokenGenerator without
-    # mutating environment variables (which would not be thread-safe
-    # under the asyncio worker pool).
-    creds = Credentials(
-        access_key=raw["AccessKeyId"],
-        secret_key=raw["SecretAccessKey"],
-        token=raw["SessionToken"],
-    )
-    token = BedrockTokenGenerator().get_token(creds, region=region)
-
-    _BEDROCK_MYTHOS_TOKEN_CACHE[assume_role_arn] = {
-        "token": token,
-        "_expires_at": raw["Expiration"],
-    }
-    return token
 
 
 def _supports_prompt_caching(provider: str, model: str) -> bool:
@@ -389,7 +266,7 @@ async def call_llm(
     api_style = model_config.get("api_style")
 
     # If the provider config supplies an explicit litellm prefix (e.g.
-    # bedrock-mythos -> "bedrock_mantle"), use it so litellm routes
+    # anthropic-1p -> "anthropic"), use it so litellm routes
     # through its native handler for that backend. Defaults to the
     # gofannon provider key for backwards compatibility.
     provider_cfg = PROVIDER_CONFIG.get(provider, {})
@@ -481,22 +358,19 @@ async def call_llm(
     if api_key:
         kwargs["api_key"] = api_key
 
-    # bedrock-mythos: mint a short-lived Mantle bearer token at
-    # request time, pass it to litellm as api_key. Also pass the
-    # region — litellm uses it to construct the Mantle endpoint URL
-    # (bedrock-mantle.{region}.api.aws/anthropic/v1/messages).
-    # The bearer token overrides any user-specific key above since
-    # bedrock-mythos auth is account-scoped, not per-user. See
-    # _get_bedrock_mythos_api_key().
-    if provider_cfg.get("assume_role_arn"):
-        kwargs["api_key"] = _get_bedrock_mythos_api_key(
-            assume_role_arn=provider_cfg["assume_role_arn"],
-            region=provider_cfg["aws_region"],
-            # Require the token to outlive this call, not merely to be
-            # valid at dispatch -- see _get_bedrock_mythos_api_key.
+    # Anthropic 1P: mint a bearer token by exchanging an AWS STS web identity
+    # JWT. Dispatched on a config key rather than a provider name, matching
+    # the pattern the removed bedrock-mythos branch used.
+    if provider_cfg.get("auth_mechanism") == "wif":
+        from services.anthropic_wif import get_anthropic_1p_bearer_token
+        kwargs["api_key"] = get_anthropic_1p_bearer_token(
+            # Require the token to outlive this call, not merely to be valid
+            # at dispatch. 1P tokens last ~600s and HEAVY-tier calls run to
+            # 1800s, so a token valid at dispatch can die mid-flight -- and
+            # the retry would then replay it and fail identically, which
+            # looks like a timeout cascade rather than an auth failure.
             min_validity_seconds=int(effective_timeout or 0),
         )
-        kwargs["aws_region_name"] = provider_cfg["aws_region"]
 
     # Providers served from a custom OpenAI-compatible endpoint (the llmao
     # provider -> llmao's litellm proxy). Without api_base, litellm's "openai"
@@ -757,12 +631,14 @@ async def call_llm(
             looks like from the outside. Invalidate and re-mint so each
             attempt gets a token good for its own duration.
             """
-            if not provider_cfg.get("assume_role_arn"):
+            if provider_cfg.get("auth_mechanism") != "wif":
                 return
-            _invalidate_bedrock_mythos_token(provider_cfg["assume_role_arn"])
-            kwargs["api_key"] = _get_bedrock_mythos_api_key(
-                assume_role_arn=provider_cfg["assume_role_arn"],
-                region=provider_cfg["aws_region"],
+            from services.anthropic_wif import (
+                invalidate_anthropic_1p_token,
+                get_anthropic_1p_bearer_token,
+            )
+            invalidate_anthropic_1p_token()
+            kwargs["api_key"] = get_anthropic_1p_bearer_token(
                 min_validity_seconds=int(effective_timeout or 0),
             )
 
@@ -775,11 +651,11 @@ async def call_llm(
                 # error. The cached bearer is poisoned for this whole
                 # worker, so drop it and retry with a fresh one --
                 # otherwise every later call on this process inherits it.
-                # Only retry for bedrock-mythos: for a static API key a
+                # Only retry for minted tokens: for a static API key a
                 # re-mint changes nothing and the key is genuinely bad.
                 last_exception = e
                 if (
-                    provider_cfg.get("assume_role_arn")
+                    provider_cfg.get("auth_mechanism") == "wif"
                     and auth_remint_attempts_used < MAX_AUTH_REMINT_RETRIES
                 ):
                     auth_remint_attempts_used += 1
@@ -1009,7 +885,7 @@ async def stream_llm(
     Note: Cost tracking is not available for streaming responses.
     """
     # If the provider config supplies an explicit litellm prefix (e.g.
-    # bedrock-mythos -> "bedrock_mantle"), use it so litellm routes
+    # anthropic-1p -> "anthropic"), use it so litellm routes
     # through its native handler for that backend. Defaults to the
     # gofannon provider key for backwards compatibility.
     provider_cfg = PROVIDER_CONFIG.get(provider, {})
@@ -1046,22 +922,16 @@ async def stream_llm(
     if api_key:
         kwargs["api_key"] = api_key
 
-    # bedrock-mythos: mint a short-lived Mantle bearer token at
-    # request time, pass it to litellm as api_key. Also pass the
-    # region — litellm uses it to construct the Mantle endpoint URL
-    # (bedrock-mantle.{region}.api.aws/anthropic/v1/messages).
-    # The bearer token overrides any user-specific key above since
-    # bedrock-mythos auth is account-scoped, not per-user. See
-    # _get_bedrock_mythos_api_key().
-    if provider_cfg.get("assume_role_arn"):
-        kwargs["api_key"] = _get_bedrock_mythos_api_key(
-            assume_role_arn=provider_cfg["assume_role_arn"],
-            region=provider_cfg["aws_region"],
+    # Anthropic 1P: mint a short-lived bearer token at request time. The
+    # token overrides any user-specific key above, since WIF auth is
+    # account-scoped rather than per-user.
+    if provider_cfg.get("auth_mechanism") == "wif":
+        from services.anthropic_wif import get_anthropic_1p_bearer_token
+        kwargs["api_key"] = get_anthropic_1p_bearer_token(
             # Streaming has no retry loop, so a token that dies mid-stream
             # can't be recovered -- require it to cover the whole call.
             min_validity_seconds=int(kwargs.get("timeout") or 0),
         )
-        kwargs["aws_region_name"] = provider_cfg["aws_region"]
 
     # Custom OpenAI-compatible endpoint (llmao proxy). Same
     # reasoning as the non-streaming path: fail loudly rather than defaulting

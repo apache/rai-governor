@@ -139,15 +139,13 @@ async def test_process_chat_failure(chat_service, temp_storage):
 
 @pytest.mark.asyncio
 async def test_process_chat_no_provider_prefix(chat_service, temp_storage):
-    """Test chat processing when model has no provider prefix (defaults to openai)."""
+    """A model with no provider prefix is rejected, not silently defaulted."""
     messages = [{"role": "user", "content": "Test message"}]
     model = "gpt-4"  # No provider prefix
     config = {}
     session_id = "test-session"
 
     with patch("services.chat_service.call_llm", new_callable=AsyncMock) as mock_call_llm:
-        mock_call_llm.return_value = ("Response", None)
-
         ticket_id = await chat_service.create_chat_ticket(
             session_id=session_id,
             messages=messages,
@@ -159,10 +157,14 @@ async def test_process_chat_no_provider_prefix(chat_service, temp_storage):
         if ticket_id in chat_service.active_tasks:
             await chat_service.active_tasks[ticket_id]
 
-    # Verify call_llm was called with openai as default provider
-    call_kwargs = mock_call_llm.call_args[1]
-    assert call_kwargs["provider"] == "openai"
-    assert call_kwargs["model"] == "gpt-4"
+        # The LLM is never reached — the prefix check fails first.
+        mock_call_llm.assert_not_called()
+
+    import json
+    with open(chat_service.storage_dir / f"{ticket_id}.json") as f:
+        ticket = json.load(f)
+    assert ticket["status"] == "failed"
+    assert "no provider prefix" in ticket["error"]
 
 
 @pytest.mark.asyncio

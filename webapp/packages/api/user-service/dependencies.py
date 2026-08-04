@@ -638,11 +638,14 @@ def get_available_providers(user_id: Optional[str] = None, user_basic_info: Opti
         # If no user key, check environment variable
         if not is_available and (not api_key_env_var or os.getenv(api_key_env_var)):
             is_available = True
-        
-        # Ollama doesn't require an API key
-        if not api_key_env_var:
-            is_available = True
-        
+
+        # Federated providers have no api_key_env_var -- they mint tokens at
+        # request time -- so the check above would show them unconditionally.
+        # Require the federation config instead, or the dropdown offers a
+        # provider whose every call fails at token-mint time.
+        if config.get("auth_mechanism") == "wif":
+            is_available = bool(os.getenv("ANTHROPIC_FEDERATION_RULE_ID"))
+
         if is_available:
             available_providers[provider] = config
 
