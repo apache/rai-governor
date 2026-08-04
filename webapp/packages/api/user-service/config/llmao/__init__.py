@@ -15,30 +15,47 @@ timeout, the engine just never schedules it. Real batches land in that dead
 zone; small probes do not, which makes it look intermittent and network-like.
 It is neither. Keep max-model-len at or below the KV cache token count.
 
-As of 2026-07-29 Gemma is served from the Vast.ai box, not the AWS L40S. Both
-geometries are recorded because AWS remains the rollback target:
+As of 2026-08-04 the two models live on DIFFERENT hosts, and both are reached
+through llmao's litellm proxy rather than direct to vLLM:
 
-    CURRENT -- Vast.ai (google/gemma-4-26B-A4B-it, BF16)
+    GEMMA -- off-host (google/gemma-4-26B-A4B-it, BF16), fronted by Fastly
       vLLM                     : 0.25.1
       --max-model-len          : 131,072
-      KV cache                 : ~855,000 tokens -- far above max-model-len,
+      KV cache                 : 855,962 tokens -- far above max-model-len,
                                  so the hang condition above cannot be reached
       --gpu-memory-utilization : 0.90
       prefix caching           : ON (flag absent; vLLM default)
       --reasoning-parser       : gemma4
+      measured                 : ~100 tok/s sustained single-stream,
+                                 ~492 tok/s aggregate at concurrency 8
 
-    ROLLBACK -- AWS L40S (RedHatAI/gemma-4-26B-A4B-it-FP8-Dynamic, FP8)
-      vLLM                     : 0.19.1
-      --max-model-len          : 65,536  (fits under the ~68k-token KV cache)
-      KV cache                 : ~68,016 tokens at gpu-util 0.95
-      prefix caching           : OFF (--no-enable-prefix-caching)
+    QWEN -- AWS L40S, SOLE resident (Qwen/Qwen3-8B-FP8)
+      vLLM                     : 0.25.1
+      --max-model-len          : 40,960  (Qwen3-8B's max_position_embeddings;
+                                 NOT raisable -- vLLM refuses at startup, and
+                                 VLLM_ALLOW_LONG_MAX_MODEL_LEN produces NaN on
+                                 this RoPE model)
+      KV cache                 : 216,864 tokens (29.78 GiB at gpu-util 0.90)
+      max concurrency          : 5.29x at full context, far more at realistic
+                                 prompt sizes
+      prefix caching           : ON
+      --reasoning-parser       : qwen3
+      attention                : FLASH_ATTN
 
-The throughput figures that used to be here were measured on the AWS config and
-have NOT been re-measured on Vast: ~5000+ tok/s prefill, ~80 tok/s single-stream
-generation, requests effectively serial (concurrency >1 deadlocked the 0.19.1 v1
-build; ASVS_MEDIUM_CONCURRENCY is 1). The 0.25.1 build may not have that
-deadlock, and an ~855k-token KV cache has room for real concurrency. Treat all
-of these as stale until re-measured.
+The 0.19.1 concurrency deadlock that forced ASVS_MEDIUM_CONCURRENCY=1 does NOT
+reproduce on 0.25.1: 8 concurrent sustained, zero queueing, 2.55x aggregate
+throughput for a 36% per-request slowdown. Both hosts now run 0.25.1.
+
+THINKING DEFAULTS DIFFER BETWEEN THESE TWO MODELS, and it is not guessable.
+Measured 2026-08-04 through the proxy, same prompt, no kwarg sent:
+
+    qwen3-8b    -> 893 chars of reasoning   (thinks by DEFAULT)
+    gemma4-26b  -> 0 chars                  (thinks only when ASKED)
+
+Gemma is quiet because the server runs --reasoning-parser gemma4. Qwen reasons
+unless told not to. A tier that leaves reasoning unset therefore gets opposite
+behaviour from the two models -- and Qwen at a low max_tokens returns
+content=None with the whole budget spent in reasoning_content.
 
 OUTPUT SHARES THE WINDOW WITH INPUT. max_tokens is an output reservation inside
 max-model-len, so input_tokens + max_tokens must stay under it. A request whose
@@ -79,6 +96,13 @@ than assuming.
 # the INPUT budget (serving --max-model-len minus that tier's output
 # reservation), NOT the raw --max-model-len. See the module docstring.
 _GEMMA_CONTEXT = 97000
+
+# Qwen3-8B serves 40,960 (its max_position_embeddings). Subtracting the 8,192
+# max_tokens ceiling below leaves 32,768 of input budget with ~0 slack, so this
+# is set at 30,000 to keep a real margin. The 8,192 this model ran under while
+# it SHARED the L40S with Gemma was a co-residency artifact, not a model limit
+# -- but 40,960 is a hard architectural ceiling and will not rise.
+_QWEN_CONTEXT = 30000
 
 
 def _params(window, default_max_tokens):
@@ -174,5 +198,35 @@ models = {
         # vLLM's own input+output<=max_model_len check remains the real
         # backstop; this is a policy cap on top of it.
         "parameters": _params(32768, 16384),
+    },
+
+    # Qwen3 8B FP8 -- fast/LIGHT tier. Sole resident on the AWS L40S.
+    "qwen3-8b": {
+        # The vLLM qwen3 parser splits thinking out of content, so a caller
+        # that leaves reasoning unset gets an answer with the thinking block
+        # already removed -- but the tokens were still SPENT producing it.
+        "returns_thoughts": True,
+        # Binary on/off only. vLLM's enable_thinking is a boolean; there is no
+        # graded scale underneath it, and offering low/medium/high would imply
+        # gradation this transport cannot express.
+        "supports_effort": False,
+        # True so llm_service's gate fires and enable_thinking is SENT. That
+        # matters in the false direction here: unlike Gemma, Qwen reasons by
+        # default, so a LIGHT tier that wants a fast direct answer needs
+        # enable_thinking=false actively sent -- which only happens when this
+        # is True and the tier's reasoning_effort is 'disable'/omitted.
+        "supports_thinking": True,
+        "context_window": _QWEN_CONTEXT,
+        # Ceiling 8,192 rather than the 32k Gemma gets. Two reasons, and the
+        # first is the binding one: 40,960 serving minus this ceiling leaves
+        # 32,768 for input, and _QWEN_CONTEXT is 30,000 -- a bigger ceiling
+        # eats the input budget on a model with a quarter of Gemma's window.
+        #
+        # Second, the default of 2,048 is deliberately well above a one-line
+        # answer. Thinking consumes the SAME budget as the response, so a
+        # LIGHT-tier default sized for the answer alone returns content=None
+        # whenever reasoning is on -- observed at max_tokens=5, where all 5
+        # went to reasoning_content.
+        "parameters": _params(8192, 2048),
     },
 }
