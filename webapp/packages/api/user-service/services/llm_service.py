@@ -363,7 +363,7 @@ async def call_llm(
     # the pattern the removed bedrock-mythos branch used.
     if provider_cfg.get("auth_mechanism") == "wif":
         from services.anthropic_wif import get_anthropic_1p_bearer_token
-        kwargs["api_key"] = get_anthropic_1p_bearer_token(
+        kwargs["api_key"] = await get_anthropic_1p_bearer_token(
             # Require the token to outlive this call, not merely to be valid
             # at dispatch. 1P tokens last ~600s and HEAVY-tier calls run to
             # 1800s, so a token valid at dispatch can die mid-flight -- and
@@ -621,7 +621,7 @@ async def call_llm(
         overloaded_attempts_used = 0
         auth_remint_attempts_used = 0
 
-        def _refresh_mythos_token_if_needed() -> None:
+        async def _refresh_bearer_token_if_needed() -> None:
             """Re-mint the bearer before a retry.
 
             The token was minted before the loop. A long call (up to 1800s)
@@ -638,7 +638,7 @@ async def call_llm(
                 get_anthropic_1p_bearer_token,
             )
             invalidate_anthropic_1p_token()
-            kwargs["api_key"] = get_anthropic_1p_bearer_token(
+            kwargs["api_key"] = await get_anthropic_1p_bearer_token(
                 min_validity_seconds=int(effective_timeout or 0),
             )
 
@@ -667,7 +667,7 @@ async def call_llm(
                         f"{MAX_AUTH_REMINT_RETRIES})...",
                         flush=True,
                     )
-                    _refresh_mythos_token_if_needed()
+                    await _refresh_bearer_token_if_needed()
                     continue
                 raise
             except litellm.Timeout as e:
@@ -684,7 +684,7 @@ async def call_llm(
                     await asyncio.sleep(wait_secs)
                     # A timeout is indistinguishable from an expired-token
                     # stall at this layer, so refresh before retrying.
-                    _refresh_mythos_token_if_needed()
+                    await _refresh_bearer_token_if_needed()
                     continue
                 raise
             except litellm.RateLimitError as e:
@@ -927,7 +927,7 @@ async def stream_llm(
     # account-scoped rather than per-user.
     if provider_cfg.get("auth_mechanism") == "wif":
         from services.anthropic_wif import get_anthropic_1p_bearer_token
-        kwargs["api_key"] = get_anthropic_1p_bearer_token(
+        kwargs["api_key"] = await get_anthropic_1p_bearer_token(
             # Streaming has no retry loop, so a token that dies mid-stream
             # can't be recovered -- require it to cover the whole call.
             min_validity_seconds=int(kwargs.get("timeout") or 0),
