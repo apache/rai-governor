@@ -25,6 +25,28 @@ ensure_litellm_logging()
 litellm.drop_params = True
 litellm.set_verbose = False
 
+# litellm's model map knows Mythos only as "anthropic.claude-mythos-preview".
+# Our 1P model string is "claude-mythos-5", which misses the lookup entirely,
+# so _model_supports_effort_param() returns False and output_config.effort is
+# silently dropped under drop_params -- ASVS_HEAVY_REASONING has no effect.
+#
+# thinking={"type":"adaptive"} still gets through, so the model does reason;
+# it just picks its own effort rather than the one the tier asked for. The
+# same miss also zeroes cost tracking and defeats the prompt-caching check
+# below.
+#
+# Copy the existing entry rather than hand-writing one, so we inherit whatever
+# capability flags and costs litellm already knows. Guarded on the source
+# existing so a litellm upgrade that renames it cannot break startup.
+_MYTHOS_MAP_SRC = "anthropic.claude-mythos-preview"
+if _MYTHOS_MAP_SRC in litellm.model_cost:
+    litellm.register_model({
+        "claude-mythos-5": {
+            **litellm.model_cost[_MYTHOS_MAP_SRC],
+            "litellm_provider": "anthropic",
+        }
+    })
+
 # ---------------------------------------------------------------------------
 # Mythos model registration
 # ---------------------------------------------------------------------------
@@ -181,8 +203,19 @@ def _supports_prompt_caching(provider: str, model: str) -> bool:
     marker is never injected into a provider that would reject or
     mishandle it. (litellm ignores cache_control for non-Anthropic
     providers, but being explicit keeps the block-form transform off the
-    OpenAI 'responses' path too.)"""
-    return "claude" in model.lower()
+    OpenAI 'responses' path too.)
+
+    The name test alone is not sufficient: Mythos is a Claude model but
+    litellm reports supports_prompt_caching=false for it. Injecting the
+    marker anyway converts the first message to block form to carry a
+    cache_control the model ignores -- no cache hit, and asvs_audit passes
+    a large inventory prefix on EVERY heavy batch expecting it to be cached
+    across the pass. Consult the model map, defaulting to today's behaviour
+    when the model is absent from it.
+    """
+    if "claude" not in model.lower():
+        return False
+    return litellm.model_cost.get(model, {}).get("supports_prompt_caching", True)
 
 
 def _inject_cache_prefix(
