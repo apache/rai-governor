@@ -1,4 +1,4 @@
-"""Self-hosted models served by llmao (vLLM behind litellm, or vLLM direct).
+"""Self-hosted models served by llmao (vLLM behind litellm).
 
 Context windows here are the vLLM SERVING limit (--max-model-len), NOT the
 architectural maximum the model cards or llmao's own catalog advertise. The
@@ -15,94 +15,138 @@ timeout, the engine just never schedules it. Real batches land in that dead
 zone; small probes do not, which makes it look intermittent and network-like.
 It is neither. Keep max-model-len at or below the KV cache token count.
 
-As of 2026-08-04 the two models live on DIFFERENT hosts, and both are reached
-through llmao's litellm proxy rather than direct to vLLM:
+As of 2026-09-16 there are THREE models on three hosts, all reached through
+llmao's gateway at https://llm.apache.org/v1 (not a box, not the proxy port):
 
-    GEMMA -- off-host (google/gemma-4-26B-A4B-it, BF16), fronted by Fastly
+    GEMMA -- A100 SXM4 80GB, Vast Secure (google/gemma-4-26B-A4B-it, BF16)
       vLLM                     : 0.25.1
       --max-model-len          : 131,072
-      KV cache                 : 855,962 tokens -- far above max-model-len,
-                                 so the hang condition above cannot be reached
+      KV cache                 : 434,195 tokens -- above max-model-len, so
+                                 the hang condition above cannot be reached
       --gpu-memory-utilization : 0.90
-      prefix caching           : ON (flag absent; vLLM default)
+      --kv-cache-dtype         : NOT AVAILABLE. Ampere is compute capability
+                                 8.0 and native FP8 requires SM89+; vLLM
+                                 refuses at startup. This is why Gemma has
+                                 half the cache of a smaller card.
+      --max-num-batched-tokens : 16384
       --reasoning-parser       : gemma4
-      measured                 : ~100 tok/s sustained single-stream,
-                                 ~492 tok/s aggregate at concurrency 8
+      measured                 : ~128 tok/s sustained on long generations,
+                                 ~60 on short ones. Reaches ~4 concurrent
+                                 before queueing -- the weakest of the three
+                                 under load, and that is the card, not config.
 
-    QWEN -- AWS L40S, SOLE resident (Qwen/Qwen3-8B-FP8)
+    QWEN 27B -- RTX PRO 6000 96GB, RunPod Secure Cloud (Qwen3.8-27B-FP8)
+      vLLM                     : 0.25.1
+      --max-model-len          : 131,072  (native max is 262,144; served at
+                                 half because the cache is otherwise spent on
+                                 fewer, longer requests -- ~13x concurrency
+                                 against ~6.5x)
+      KV cache                 : 1,750,539 tokens
+      --gpu-memory-utilization : 0.95
+      --kv-cache-dtype         : fp8
+      --max-num-batched-tokens : 16384
+      --reasoning-parser       : qwen3
+      measured                 : ~46 tok/s single-stream, 20+ concurrent
+                                 under load. Best of the three under
+                                 concurrency; slowest per request.
+
+    QWEN 8B -- RTX 4090 24GB, RunPod Secure Cloud (Qwen/Qwen3-8B-FP8)
       vLLM                     : 0.25.1
       --max-model-len          : 40,960  (Qwen3-8B's max_position_embeddings;
                                  NOT raisable -- vLLM refuses at startup, and
                                  VLLM_ALLOW_LONG_MAX_MODEL_LEN produces NaN on
                                  this RoPE model)
-      KV cache                 : 216,864 tokens (29.78 GiB at gpu-util 0.90)
-      max concurrency          : 5.29x at full context, far more at realistic
-                                 prompt sizes
-      prefix caching           : ON
+      KV cache                 : 160,288 tokens
+      --max-num-batched-tokens : 4096 -- NOT the 16384 the bigger boxes use.
+                                 That value scales with the card's headroom,
+                                 not the model: 16384 OOM'd this 24GB card
+                                 during an FP8 matmul at 4 concurrent 16k
+                                 prompts and killed EngineCore outright. vLLM
+                                 does not degrade on OOM, it dies.
       --reasoning-parser       : qwen3
-      attention                : FLASH_ATTN
+      measured                 : ~54 tok/s
 
-The 0.19.1 concurrency deadlock that forced ASVS_MEDIUM_CONCURRENCY=1 does NOT
-reproduce on 0.25.1: 8 concurrent sustained, zero queueing, 2.55x aggregate
-throughput for a 36% per-request slowdown. Both hosts now run 0.25.1.
+THINKING DEFAULTS DIFFER BETWEEN THESE MODELS, and it is not guessable.
+Measured through the gateway, same prompt ("what is 17 x 23"), no kwarg sent:
 
-THINKING DEFAULTS DIFFER BETWEEN THESE TWO MODELS, and it is not guessable.
-Measured 2026-08-04 through the proxy, same prompt, no kwarg sent:
+    gemma4-26b   ->     0 chars of reasoning   (thinks only when ASKED)
+    qwen3.8-27b  ->   ~110 chars               (thinks by DEFAULT)
+    qwen3-8b     -> 3,481 chars                (thinks by DEFAULT, heavily)
 
-    qwen3-8b    -> 893 chars of reasoning   (thinks by DEFAULT)
-    gemma4-26b  -> 0 chars                  (thinks only when ASKED)
+The 8B's number is not a typo and it is the important one. At default
+settings that model spent its entire token budget reasoning and returned NO
+CONTENT AT ALL -- streaming showed 400 chunks carrying zero usable output. It
+is the fast tier and it is unusable with reasoning on. A LIGHT tier that
+leaves reasoning unset gets nothing back.
 
-Gemma is quiet because the server runs --reasoning-parser gemma4. Qwen reasons
-unless told not to. A tier that leaves reasoning unset therefore gets opposite
-behaviour from the two models -- and Qwen at a low max_tokens returns
-content=None with the whole budget spent in reasoning_content.
+THERE IS NO SERVER-SIDE DEFAULT TO RELY ON. llmao's catalog can carry extra
+keys in litellm_params, and LiteLLM accepts them at /model/new with a 200 --
+and then silently drops everything it does not recognise. /model/info reads
+back with only `model` and `api_base`. Both a reasoning_effort and a
+chat_template_kwargs default were set there and neither reached the route.
 
-OUTPUT SHARES THE WINDOW WITH INPUT. max_tokens is an output reservation inside
-max-model-len, so input_tokens + max_tokens must stay under it. A request whose
-input + max_tokens exceeds the serving limit gets a clean 400. The value below
-is therefore the INPUT budget only, set below the serving limit to leave room
-for output:
+So the caller decides, every time. That is why reasoning_effort is declared
+in _params below: without it the gate in llm_service.py falls back to
+'disable' and no tier can ever turn reasoning ON. With it, a tier chooses.
 
-    _GEMMA_CONTEXT (input) + max_tokens (output) + margin  <=  131,072
+A genuine server-side default would have to come from vLLM's own launch
+arguments, not from LiteLLM's route table.
 
-The max_tokens CEILING for this model is 32,768 (see _params below), so the
-input budget must leave that much room even though current call sites ask for
-<= 8,192. 131,072 - 32,768 = 98,304; _GEMMA_CONTEXT is 97,000, leaving ~1,300
-tokens of margin at the ceiling. Sizing against actual usage instead would
-allow a bigger input budget, but converts the ceiling into a latent 400 for the
-next caller who raises max_tokens.
+REASONING_EFFORT IS NOT SENT TO THESE MODELS and must not be. The gate in
+llm_service.py translates reasoning_effort into chat_template_kwargs
+.enable_thinking for any provider declaring api_base_env_var, so OpenAI's
+scale never reaches vLLM. That matters: qwen3.8-27b accepts only xhigh,
+medium and low, and 400s on "high" -- which is what several clients send by
+default. Keep supports_effort False on all three so the translation stays the
+only path.
 
-Gemma's usable window is now genuinely ~131k, not the ~65k the L40S allowed.
-The old note that it "cannot be raised to the 114k the model card advertises
-without a bigger GPU" was true of the L40S and is no longer the constraint.
+OUTPUT SHARES THE WINDOW WITH INPUT. max_tokens is an output reservation
+inside max-model-len, so input_tokens + max_tokens must stay under it. A
+request whose input + max_tokens exceeds the serving limit gets a clean 400.
+The values below are therefore the INPUT budget only, set below the serving
+limit to leave room for output:
 
-ON ROLLBACK to the AWS host this constant MUST come back down to 61,000. A
-97,000-token input budget against a 65,536 serving limit fails on every large
-request.
+    _CONTEXT (input) + max_tokens (output) + margin  <=  --max-model-len
 
-If the serving --max-model-len changes, change _GEMMA_CONTEXT here to match
-(minus the output reservation). They must move together, and the mapping is NOT
-one-to-one -- it is bounded by the max_tokens ceiling in _params, not by any
-single tier's default. Do not reintroduce a single shared constant across
+If a serving --max-model-len changes, change the matching constant here
+(minus the output reservation). They must move together, and the mapping is
+NOT one-to-one -- it is bounded by the max_tokens ceiling in _params, not by
+any single tier's default. Do not reintroduce a single shared constant across
 models.
 
 Both llmao's proxy and gofannon run litellm with drop_params=True, so a param
 neither layer recognises is silently discarded -- a thinking-disable that does
 not land fails quietly, not loudly. Re-probe after any serving change rather
 than assuming.
+
+WHEN PROBING, READ THE RIGHT FIELD. litellm returns reasoning as
+`reasoning_content`, and duplicates it under
+`provider_specific_fields.reasoning`. Reading `message.reasoning` reports
+zero every time and looks exactly like a successfully disabled model. An
+llmao bug was filed on that mistake against a proxy that was working
+correctly. Check all three names.
 """
 
 # vLLM serving limits, per model. These are NOT interchangeable, and each is
 # the INPUT budget (serving --max-model-len minus that tier's output
 # reservation), NOT the raw --max-model-len. See the module docstring.
+#
+# Gemma serves 131,072. Minus the 32,768 max_tokens ceiling below leaves
+# 98,304; 97,000 keeps ~1,300 tokens of margin at that ceiling.
 _GEMMA_CONTEXT = 97000
 
+# Qwen3.8-27B serves 131,072 as well, and takes the same 32,768 ceiling, so
+# the arithmetic is identical. Kept as a separate constant deliberately: the
+# two models are on different hosts with different cards, and a shared
+# constant would couple them the next time one is re-served at a different
+# window.
+_QWEN27_CONTEXT = 97000
+
 # Qwen3-8B serves 40,960 (its max_position_embeddings). Subtracting the 8,192
-# max_tokens ceiling below leaves 32,768 of input budget with ~0 slack, so this
-# is set at 30,000 to keep a real margin. The 8,192 this model ran under while
-# it SHARED the L40S with Gemma was a co-residency artifact, not a model limit
-# -- but 40,960 is a hard architectural ceiling and will not rise.
-_QWEN_CONTEXT = 30000
+# max_tokens ceiling below leaves 32,768 of input budget with ~0 slack, so
+# this is set at 30,000 to keep a real margin. 40,960 is a hard architectural
+# ceiling and will not rise.
+_QWEN8_CONTEXT = 30000
 
 
 def _params(window, default_max_tokens):
@@ -128,6 +172,39 @@ def _params(window, default_max_tokens):
             "max": 1.0,
             "description": "Nucleus sampling",
         },
+        # Declared so a tier can CHOOSE. Without this key in the params
+        # dict, the gate in llm_service.py pops it with a fallback of
+        # 'disable' -- which means every call sends enable_thinking=false and
+        # no tier can ever turn reasoning on.
+        #
+        # Binary, deliberately. vLLM's enable_thinking is a boolean and the
+        # gate translates anything non-'disable' into true. Offering
+        # low/medium/high would imply gradation this transport cannot
+        # express. (qwen3.8-27b does have a native graded reasoning_effort,
+        # but that is not the parameter being sent here -- see the docstring.)
+        #
+        # Default 'disable' rather than deferring to the model, because there
+        # is nothing to defer TO. LiteLLM drops extra keys from
+        # litellm_params at /model/new, so llmao's catalog cannot set a
+        # per-model default; /model/info reads back with only `model` and
+        # `api_base`. Deferring would mean each model's own behaviour, and
+        # two of three are unusable that way. Measured, "what is 17 x 23":
+        #
+        #     gemma4-26b    thinks only when asked  ->  fine
+        #     qwen3.8-27b   thinks by default       ->    5c of content
+        #     qwen3-8b      thinks by default       ->    0c of content
+        #
+        "reasoning_effort": {
+            "type": "choice",
+            "default": "disable",
+            "choices": ["disable", "enable"],
+            "description": (
+                "Reasoning. 'enable' sends "
+                "chat_template_kwargs.enable_thinking=true, 'disable' sends "
+                "false. No middle setting -- the underlying switch is a "
+                "boolean."
+            ),
+        },
         "max_tokens": {
             "type": "integer",
             "default": default_max_tokens,
@@ -141,27 +218,27 @@ def _params(window, default_max_tokens):
 
 
 # The key below is the model name that ends up in the JSON body sent to
-# whatever LLMAO_API_BASE points at. llm_service.py builds
-# f"{litellm_provider_prefix}/{model}" -> "openai/gemma4-26b", and the litellm
-# SDK strips the "openai/" provider prefix client-side before the request goes
-# out, so the endpoint receives the bare key.
+# LLMAO_API_BASE. llm_service.py builds f"{litellm_provider_prefix}/{model}"
+# -> "openai/gemma4-26b", and the litellm SDK strips the "openai/" provider
+# prefix client-side before the request goes out, so the endpoint receives the
+# bare key.
 #
-# That means the correct value DEPENDS ON WHAT LLMAO_API_BASE POINTS AT:
-#   - vLLM directly (current setup): must equal vLLM's --served-model-name,
-#     i.e. "gemma4-26b".
-#   - llmao's litellm proxy: must equal a model_name in that proxy's config,
-#     which is generated from llmao's catalog.py and is currently
-#     "selfhost/gemma4-26b".
+# These bare names are what llmao's gateway advertises. Confirm against the
+# endpoint rather than assuming, since the SDK's prefix handling is version
+# dependent:
 #
-# The two paths want DIFFERENT strings here. Do not "normalise" this key
-# without changing LLMAO_API_BASE to match, and re-verify with one call
-# through the target endpoint -- the SDK's prefix handling is version
-# dependent, so confirm rather than assume.
+#   curl -sS "$LLMAO_API_BASE/models" -H "Authorization: Bearer $LLMAO_API_KEY"
+#
+# (llmao routes internally with a hosted_vllm/ prefix rather than openai/,
+# because litellm's openai provider translates /v1/messages to vLLM's
+# /v1/responses and breaks Anthropic-shaped tool calls. That is internal to
+# llmao and does not change what we send here.)
 models = {
-    # Gemma 4 26B-A4B (MoE, ~4B active) -- general/MEDIUM tier. Candidate
-    # replacement for Sonnet 4.6 on code inventory. Currently served BF16 on
-    # the Vast.ai box; was FP8 on the AWS L40S. See the module docstring for
-    # both serving geometries.
+    # Gemma 4 26B-A4B (MoE, ~4B active) -- general/MEDIUM tier and the default
+    # for interactive work. Reasoning off by default means tokens start
+    # immediately, which is why this is the model that works with agents: a
+    # reasoning model emits nothing for a minute while it thinks, and
+    # impatient clients abandon the stream and retry.
     "gemma4-26b": {
         "returns_thoughts": False,
         "supports_effort": False,
@@ -172,61 +249,71 @@ models = {
         # (1) Output is reserved out of the SAME window as the input, so a
         #     ceiling equal to the window makes it easy for batch-sizing math
         #     to request more output than the prompt leaves room for -- the
-        #     input+output>window 400 this pipeline already hit once, on the
-        #     8k Qwen config that used to live in this dict.
+        #     input+output>window 400 this pipeline already hit once.
         # (2) A runaway generation holds KV cache that other in-flight
-        #     requests are competing for. NOTE: this argument was sized when
-        #     the cache was ~58k tokens across --max-num-seqs 16 on the L40S.
-        #     At the Vast box's ~855k-token cache it is much weaker, so (1)
-        #     and the asymmetry below are what actually carry this decision
-        #     now. Do not recompute the cap from cache size alone.
+        #     requests are competing for.
         #
         # 32k rather than something tighter because the failure modes are not
         # symmetric: a too-HIGH ceiling risks a hypothetical runaway request,
-        # while a too-LOW one silently TRUNCATES long structured output --
-        # a consolidation emitting 20-30k of merged JSON would come back
+        # while a too-LOW one silently TRUNCATES long structured output -- a
+        # consolidation emitting 20-30k of merged JSON would come back
         # unparseable, and that reads as a model-quality problem rather than a
-        # config limit. Current call sites ask for <=8192, so this is ~4x
-        # headroom over real usage while still capping the pathological case.
+        # config limit.
         #
-        # THIS VALUE IS THE BINDING TERM FOR _GEMMA_CONTEXT. The input budget
-        # is sized as (serving --max-model-len) - (this ceiling) - margin, so
-        # raising it here SHRINKS the usable input window. At 131,072 serving
-        # and 32,768 here, the input budget is 97,000. The two move together;
-        # see the module docstring.
-        #
-        # vLLM's own input+output<=max_model_len check remains the real
-        # backstop; this is a policy cap on top of it.
+        # THIS VALUE IS THE BINDING TERM FOR _GEMMA_CONTEXT. Raising it here
+        # SHRINKS the usable input window. The two move together.
         "parameters": _params(32768, 16384),
     },
 
-    # Qwen3 8B FP8 -- fast/LIGHT tier. Sole resident on the AWS L40S.
-    "qwen3-8b": {
-        # The vLLM qwen3 parser splits thinking out of content, so a caller
-        # that leaves reasoning unset gets an answer with the thinking block
+    # Qwen3.8 27B FP8 -- capable/HEAVY tier. Dense 27B, hybrid GatedDeltaNet
+    # plus periodic full attention. Multimodal.
+    #
+    # Best of the three under concurrent load and the slowest per request.
+    # Markedly more verbose than Gemma: 15,561 tokens on a code-generation
+    # task Gemma finished in 5,277, so a ceiling that is generous for Gemma
+    # can still truncate this model.
+    "qwen3.8-27b": {
+        # vLLM's qwen3 reasoning parser splits thinking out of content, so a
+        # caller that leaves reasoning unset gets an answer with the thinking
         # already removed -- but the tokens were still SPENT producing it.
+        "returns_thoughts": True,
+        # False so the gate translates to enable_thinking rather than sending
+        # OpenAI's scale. This model rejects "high" outright; see the
+        # docstring.
+        "supports_effort": False,
+        # True so the gate fires and enable_thinking is SENT. Matters in the
+        # false direction: this model reasons by default.
+        "supports_thinking": True,
+        "context_window": _QWEN27_CONTEXT,
+        "parameters": _params(32768, 16384),
+    },
+
+    # Qwen3 8B FP8 -- fast/LIGHT tier.
+    "qwen3-8b": {
         "returns_thoughts": True,
         # Binary on/off only. vLLM's enable_thinking is a boolean; there is no
         # graded scale underneath it, and offering low/medium/high would imply
         # gradation this transport cannot express.
         "supports_effort": False,
-        # True so llm_service's gate fires and enable_thinking is SENT. That
-        # matters in the false direction here: unlike Gemma, Qwen reasons by
-        # default, so a LIGHT tier that wants a fast direct answer needs
-        # enable_thinking=false actively sent -- which only happens when this
-        # is True and the tier's reasoning_effort is 'disable'/omitted.
+        # True so llm_service's gate fires and enable_thinking is SENT.
+        #
+        # This is the model where it matters most. At default settings it
+        # spends the entire budget reasoning and returns NO CONTENT -- 3,481
+        # characters of thinking for "what is 17 x 23". A LIGHT tier MUST send
+        # enable_thinking=false, which only happens when this is True and the
+        # tier's reasoning_effort is 'disable' or omitted.
         "supports_thinking": True,
-        "context_window": _QWEN_CONTEXT,
-        # Ceiling 8,192 rather than the 32k Gemma gets. Two reasons, and the
-        # first is the binding one: 40,960 serving minus this ceiling leaves
-        # 32,768 for input, and _QWEN_CONTEXT is 30,000 -- a bigger ceiling
-        # eats the input budget on a model with a quarter of Gemma's window.
+        "context_window": _QWEN8_CONTEXT,
+        # Ceiling 8,192 rather than the 32k the bigger models get. Two
+        # reasons, and the first is binding: 40,960 serving minus this ceiling
+        # leaves 32,768 for input, and _QWEN8_CONTEXT is 30,000 -- a bigger
+        # ceiling eats the input budget on a model with a quarter of Gemma's
+        # window.
         #
         # Second, the default of 2,048 is deliberately well above a one-line
         # answer. Thinking consumes the SAME budget as the response, so a
         # LIGHT-tier default sized for the answer alone returns content=None
-        # whenever reasoning is on -- observed at max_tokens=5, where all 5
-        # went to reasoning_content.
+        # whenever reasoning is on.
         "parameters": _params(8192, 2048),
     },
 }

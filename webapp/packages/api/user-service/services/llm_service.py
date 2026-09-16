@@ -327,6 +327,9 @@ async def call_llm(
     }
 
     reasoning_effort = kwargs.pop('reasoning_effort', 'disable')
+    # Set when the llmao gate below consumes reasoning_effort into
+    # extra_body, so the per-provider re-adds further down leave it alone.
+    _llmao_thinking_handled = False
     
     # Self-hosted reasoning models (Qwen3, Gemma 4 via llmao's vLLM proxy)
     # think by default. They do NOT understand OpenAI's reasoning_effort; the
@@ -367,6 +370,10 @@ async def call_llm(
         _ctk["enable_thinking"] = _enable_thinking
         _extra["chat_template_kwargs"] = _ctk
         kwargs["extra_body"] = _extra
+        # These models do not accept OpenAI's reasoning_effort: qwen3.8-27b
+        # takes only xhigh/medium/low, the others reject it outright, and
+        # 'enable' is not a value any of them take.
+        _llmao_thinking_handled = True
 
     if tools:
         kwargs["tools"] = tools
@@ -619,7 +626,7 @@ async def call_llm(
             raise
     else:
         # Standard acompletion call for most models
-        if reasoning_effort != 'disable':
+        if reasoning_effort != 'disable' and not _llmao_thinking_handled:
             if _is_opus_4_7_or_later(model):
                 # Opus 4.7+ rejects the old thinking.type.enabled format
                 # that litellm's reasoning_effort translation produces.
@@ -922,6 +929,7 @@ async def stream_llm(
     # through its native handler for that backend. Defaults to the
     # gofannon provider key for backwards compatibility.
     provider_cfg = PROVIDER_CONFIG.get(provider, {})
+    model_config = PROVIDER_CONFIG.get(provider, {}).get("models", {}).get(model, {})
     litellm_prefix = provider_cfg.get("litellm_provider_prefix", provider)
     model_string = f"{litellm_prefix}/{model}"
 
@@ -935,8 +943,37 @@ async def stream_llm(
         **filtered_params,
     }
 
-    # Remove reasoning_effort from kwargs if present (not typically used in streaming)
-    kwargs.pop('reasoning_effort', None)
+    # Reasoning, mirroring the gate in call_llm.
+    #
+    # This previously read `kwargs.pop('reasoning_effort', None)` with the
+    # note "not typically used in streaming", which discarded the caller's
+    # intent without acting on it. For Bedrock that was harmless -- the
+    # parameter simply went unused. For the llmao provider it was not: those
+    # models are reached through a vLLM endpoint where reasoning is
+    # controlled by chat_template_kwargs.enable_thinking, and sending nothing
+    # leaves each model at ITS OWN default. Two of the three think by
+    # default, and on qwen3-8b that means the whole token budget is spent
+    # reasoning and the stream carries no content at all -- measured, 400
+    # chunks and zero output.
+    #
+    # So the pop is kept (reasoning_effort must never reach vLLM: it accepts
+    # that parameter on one of the three models and rejects it on the
+    # others), but the value is now translated first.
+    #
+    # GATE: api_base_env_var, not supports_thinking alone. That flag is also
+    # True on the Bedrock Anthropic models, where it means "can do extended
+    # thinking", NOT "accepts enable_thinking" -- Converse rejects unknown
+    # top-level fields with 400 "extra_body: Extra inputs are not permitted".
+    # Only the llmao provider sets api_base_env_var, so Bedrock is excluded
+    # by construction rather than by a denylist.
+    _reasoning_effort = kwargs.pop('reasoning_effort', 'disable')
+
+    if provider_cfg.get("api_base_env_var") and model_config.get("supports_thinking"):
+        _extra = dict(kwargs.get("extra_body", {}))
+        _ctk = dict(_extra.get("chat_template_kwargs", {}))
+        _ctk["enable_thinking"] = (_reasoning_effort != 'disable')
+        _extra["chat_template_kwargs"] = _ctk
+        kwargs["extra_body"] = _extra
 
     if user_service is None:
         user_service = get_user_service(get_database_service(settings))
@@ -950,7 +987,7 @@ async def stream_llm(
     api_key = None
     if user_service and user_id:
         api_key = user_service.get_effective_api_key(user_id, provider, basic_info=user_basic_info)
-    
+
     # If no user-specific key, litellm will use environment variables
     if api_key:
         kwargs["api_key"] = api_key
