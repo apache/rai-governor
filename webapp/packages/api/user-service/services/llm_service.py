@@ -218,6 +218,49 @@ def _supports_prompt_caching(provider: str, model: str) -> bool:
     return litellm.model_cost.get(model, {}).get("supports_prompt_caching", True)
 
 
+def _prepend_prefix_to_message(
+    messages: List[Dict[str, Any]], cache_prefix: str
+) -> List[Dict[str, Any]]:
+    """Prepend `cache_prefix` to the first message so it ALWAYS reaches the
+    model, on providers that cannot carry it as a cache_control block.
+
+    Without this, a caller passing cache_prefix= to a non-caching provider
+    has the content silently discarded. asvs_audit did exactly that: it built
+    the analysis system prompt and code inventory as a cache_prefix and passed
+    nothing else, so every self-hosted HEAVY call analysed raw source with no
+    auditor role, no ASVS rubric and no severity guidance. It looked like the
+    model finding less; it was the model being asked less.
+
+    Returns a NEW list; the caller's is not mutated.
+    """
+    if not messages:
+        return [{"role": "user", "content": cache_prefix}]
+
+    new_messages = [dict(m) for m in messages]
+    first = new_messages[0]
+    content = first.get("content", "")
+
+    # Guard against double delivery. A caller that both inlines the prefix
+    # AND passes it as cache_prefix would otherwise send it twice -- doubling
+    # an already-large prompt and handing the model its instructions two
+    # times over, with nothing raising.
+    if isinstance(content, str):
+        if content.startswith(cache_prefix):
+            return new_messages
+        first["content"] = f"{cache_prefix}\n\n{content}" if content else cache_prefix
+    elif isinstance(content, list):
+        blocks = list(content)
+        if blocks and blocks[0].get("type") == "text" \
+                and (blocks[0].get("text") or "").startswith(cache_prefix):
+            return new_messages
+        first["content"] = [{"type": "text", "text": cache_prefix}] + blocks
+    else:
+        first["content"] = cache_prefix
+
+    new_messages[0] = first
+    return new_messages
+
+
 def _inject_cache_prefix(
     messages: List[Dict[str, Any]], cache_prefix: str
 ) -> List[Dict[str, Any]]:
@@ -312,13 +355,22 @@ async def call_llm(
     # Filter out None values from parameters (e.g., top_p with default None)
     filtered_params = {k: v for k, v in parameters.items() if v is not None}
 
-    # Inject a cacheable prefix block when requested and supported. Claude
-    # models only; the OpenAI 'responses' path below builds its own input
-    # from the original `messages`, so leaving effective_messages in
-    # block-form does not affect it.
+    # cache_prefix is a GUARANTEED-DELIVERED input whose transport varies by
+    # capability: a cache_control block where the provider supports one,
+    # prepended text where it does not. It is never dropped.
+    #
+    # Callers pass it ONCE and must not also inline it into the message --
+    # the prepend path would then send it twice.
+    #
+    # The OpenAI 'responses' path below builds its own input from the
+    # original `messages`, so leaving effective_messages in block-form does
+    # not affect it.
     effective_messages = messages
-    if cache_prefix and _supports_prompt_caching(provider, model):
-        effective_messages = _inject_cache_prefix(messages, cache_prefix)
+    if cache_prefix:
+        if _supports_prompt_caching(provider, model):
+            effective_messages = _inject_cache_prefix(messages, cache_prefix)
+        else:
+            effective_messages = _prepend_prefix_to_message(messages, cache_prefix)
 
     kwargs = {
         "model": model_string,
