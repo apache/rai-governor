@@ -103,6 +103,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 1000000,
         "parameters": _params(128000, 16384, _FULL_EFFORT, temperature=False),
     },

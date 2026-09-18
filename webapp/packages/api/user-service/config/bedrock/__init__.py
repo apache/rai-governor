@@ -18,6 +18,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 1000000,
         "parameters": {
             "temperature": {
@@ -62,6 +63,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 1000000,
         "parameters": {
             "temperature": {
@@ -103,6 +105,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 1000000,
         "parameters": {
             "temperature": {
@@ -143,6 +146,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -183,6 +187,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -220,6 +225,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 1000000,
         "parameters": {
             "temperature": {
@@ -257,6 +263,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -294,6 +301,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -337,6 +345,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -374,6 +383,7 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -415,6 +425,7 @@ models = {
         "returns_thoughts": False,
         "supports_effort": False,
         "supports_thinking": False,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
@@ -446,6 +457,7 @@ models = {
         "returns_thoughts": False,
         "supports_effort": False,
         "supports_thinking": False,
+        "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
             "temperature": {
