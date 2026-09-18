@@ -428,6 +428,29 @@ async def call_llm(
         _extra = dict(kwargs.get("extra_body", {}))
         _ctk = dict(_extra.get("chat_template_kwargs", {}))
         _ctk["enable_thinking"] = _enable_thinking
+
+        # Some models grade their reasoning as well as switching it on, and
+        # take the level in the same chat_template_kwargs. Send it when the
+        # model declares the value as one it accepts; otherwise the level is
+        # our internal intent and stops here, translated into the boolean
+        # above.
+        #
+        # This matters more than it looks. Qwen3.8-27B's levels are
+        # low/medium/xhigh and ITS DEFAULT IS XHIGH -- the maximum -- so a
+        # call that turns thinking on without naming a level asks for maximum
+        # deliberation. Measured on a 38k audit prompt, 8,000 budget, three
+        # repeats, medians:
+        #
+        #     low      58s    3,726c thinking    6,438c content
+        #     medium   78s    4,192c thinking    9,397c content
+        #     xhigh   147s   23,110c thinking    4,976c content
+        #
+        # xhigh costs 1.9x the wall time to produce HALF the answer: it
+        # spends the budget reasoning rather than answering. Without this
+        # branch every self-hosted call runs there, and the tier's setting is
+        # discarded.
+        if reasoning_effort in (model_config.get("thinking_levels") or ()):
+            _ctk["reasoning_effort"] = reasoning_effort
         _extra["chat_template_kwargs"] = _ctk
         kwargs["extra_body"] = _extra
         # These models do not accept OpenAI's reasoning_effort: qwen3.8-27b
@@ -1032,6 +1055,12 @@ async def stream_llm(
         _extra = dict(kwargs.get("extra_body", {}))
         _ctk = dict(_extra.get("chat_template_kwargs", {}))
         _ctk["enable_thinking"] = (_reasoning_effort != 'disable')
+        # Models that grade their reasoning take the level in the same place.
+        # See the equivalent branch in call_llm for the measurements: on
+        # qwen3.8-27b the default is xhigh, its maximum, and it costs 1.9x the
+        # wall time of medium to produce half the content.
+        if _reasoning_effort in (model_config.get("thinking_levels") or ()):
+            _ctk["reasoning_effort"] = _reasoning_effort
         _extra["chat_template_kwargs"] = _ctk
         kwargs["extra_body"] = _extra
 
