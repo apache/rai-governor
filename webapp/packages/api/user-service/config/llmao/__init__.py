@@ -149,7 +149,7 @@ _QWEN27_CONTEXT = 97000
 _QWEN8_CONTEXT = 30000
 
 
-def _params(window, default_max_tokens):
+def _params(window, default_max_tokens, thinking_levels=()):
     """Parameter spec for one model.
 
     max_tokens' ceiling is that model's own served window -- a shared ceiling
@@ -180,9 +180,6 @@ def _params(window, default_max_tokens):
         # Binary, deliberately. vLLM's enable_thinking is a boolean and the
         # gate translates anything non-'disable' into true. Offering
         # low/medium/high would imply gradation this transport cannot
-        # express. (qwen3.8-27b does have a native graded reasoning_effort,
-        # but that is not the parameter being sent here -- see the docstring.)
-        #
         # Default 'disable' rather than deferring to the model, because there
         # is nothing to defer TO. LiteLLM drops extra keys from
         # litellm_params at /model/new, so llmao's catalog cannot set a
@@ -194,15 +191,20 @@ def _params(window, default_max_tokens):
         #     qwen3.8-27b   thinks by default       ->    5c of content
         #     qwen3-8b      thinks by default       ->    0c of content
         #
+        # A model that grades its reasoning offers those levels here too.
+        # 'enable' means "on, at the model's own default" -- which on
+        # qwen3.8-27b is xhigh, its MAXIMUM, so naming a level is usually
+        # what you want. See that model's thinking_levels for the numbers.
         "reasoning_effort": {
             "type": "choice",
             "default": "disable",
-            "choices": ["disable", "enable"],
+            "choices": ["disable", "enable", *thinking_levels],
             "description": (
-                "Reasoning. 'enable' sends "
-                "chat_template_kwargs.enable_thinking=true, 'disable' sends "
-                "false. No middle setting -- the underlying switch is a "
-                "boolean."
+                "Reasoning. 'disable' sends "
+                "chat_template_kwargs.enable_thinking=false; 'enable' sends "
+                "true at the model's own default level. A named level is "
+                "sent as chat_template_kwargs.reasoning_effort alongside it, "
+                "on models that grade it."
             ),
         },
         "max_tokens": {
@@ -240,6 +242,10 @@ models = {
     # reasoning model emits nothing for a minute while it thinks, and
     # impatient clients abandon the stream and retry.
     "gemma4-26b": {
+        # No thinking_levels: measured at low/medium/xhigh on a 38k audit
+        # prompt and it ignores them -- 28-32s and ~2,500-3,000c of content at
+        # every setting. enable_thinking on/off is the only control that does
+        # anything here.
         "returns_thoughts": False,
         "supports_effort": False,
         "supports_thinking": True,
@@ -264,7 +270,6 @@ models = {
         # SHRINKS the usable input window. The two move together.
         "parameters": _params(32768, 16384),
     },
-
     # Qwen3.8 27B FP8 -- capable/HEAVY tier. Dense 27B, hybrid GatedDeltaNet
     # plus periodic full attention. Multimodal.
     #
@@ -284,10 +289,29 @@ models = {
         # True so the gate fires and enable_thinking is SENT. Matters in the
         # false direction: this model reasons by default.
         "supports_thinking": True,
+        # Graded reasoning, sent inside chat_template_kwargs alongside
+        # enable_thinking. THE DEFAULT IS XHIGH -- this model's maximum -- so
+        # a call that turns thinking on without naming a level asks for
+        # maximum deliberation, and that is what the pipeline has been doing.
+        #
+        # Measured, 38k audit prompt, 8,000 budget, three repeats, medians:
+        #
+        #     low      58s    3,726c thinking    6,438c content
+        #     medium   78s    4,192c thinking    9,397c content
+        #     xhigh   147s   23,110c thinking    4,976c content
+        #
+        # xhigh costs 1.9x the wall time to produce HALF the answer -- it
+        # spends the budget reasoning rather than answering. medium is the
+        # setting for analysis; low for latency-sensitive work.
+        #
+        # Requires llm_service to send the level: the gate collapses any
+        # non-'disable' value into enable_thinking=true and drops the level
+        # unless it checks thinking_levels. Without that change this
+        # declaration is inert.
+        "thinking_levels": ["low", "medium", "xhigh"],
         "context_window": _QWEN27_CONTEXT,
-        "parameters": _params(32768, 16384),
+        "parameters": _params(32768, 16384, ["low", "medium", "xhigh"]),
     },
-
     # Qwen3 8B FP8 -- fast/LIGHT tier.
     "qwen3-8b": {
         "returns_thoughts": True,
