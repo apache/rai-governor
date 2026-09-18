@@ -198,22 +198,30 @@ _STS_SESSION_DURATION_SECONDS = int(
 
 
 def _supports_prompt_caching(provider: str, model: str) -> bool:
-    """Prompt caching via cache_control content blocks is an
-    Anthropic/Bedrock-Claude feature. Restrict to Claude models so the
-    marker is never injected into a provider that would reject or
-    mishandle it. (litellm ignores cache_control for non-Anthropic
-    providers, but being explicit keeps the block-form transform off the
-    OpenAI 'responses' path too.)
+    """Whether this model honours cache_control ephemeral blocks.
 
-    The name test alone is not sufficient: Mythos is a Claude model but
-    litellm reports supports_prompt_caching=false for it. Injecting the
-    marker anyway converts the first message to block form to carry a
-    cache_control the model ignores -- no cache hit, and asvs_audit passes
-    a large inventory prefix on EVERY heavy batch expecting it to be cached
-    across the pass. Consult the model map, defaulting to today's behaviour
-    when the model is absent from it.
+    Declared per model in the provider config, not inferred from the name.
+    The previous implementation was `"claude" in model.lower()`, which is how
+    every self-hosted model came to have its cache_prefix silently discarded
+    -- a name match cannot know what a model supports, and the one place that
+    knowledge belongs is the config.
+
+    litellm's own model map is still consulted as a second gate for models
+    that declare support, because it knows about cases the config should not
+    have to track: Mythos is a Claude model but litellm reports
+    supports_prompt_caching=false for it, and injecting the marker anyway
+    converts the first message to block form to carry a cache_control the
+    model ignores -- no cache hit, and a large inventory prefix re-sent on
+    every batch expecting to be cached across the pass.
+
+    Defaults to False: a model that has not declared the capability does not
+    get the marker, and llm_service delivers its cache_prefix as prepended
+    text instead. Nothing is lost either way.
     """
-    if "claude" not in model.lower():
+    model_config = (
+        PROVIDER_CONFIG.get(provider, {}).get("models", {}).get(model, {})
+    )
+    if not model_config.get("supports_prompt_caching", False):
         return False
     return litellm.model_cost.get(model, {}).get("supports_prompt_caching", True)
 
