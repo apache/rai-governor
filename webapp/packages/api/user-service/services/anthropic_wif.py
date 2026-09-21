@@ -245,8 +245,7 @@ def invalidate_anthropic_1p_token() -> None:
 
     Needed on the retry path. A 401/403 mid-run means the cached token is
     dead; without this the retry replays it and fails identically, turning
-    an auth problem into what looks like a timeout cascade. Mirrors
-    _invalidate_bedrock_mythos_token in llm_service.
+    an auth problem into what looks like a timeout cascade.
     """
     _ANTHROPIC_1P_TOKEN_CACHE.clear()
     logger.info("Invalidated cached Anthropic 1P token; next call will re-mint")
@@ -298,8 +297,8 @@ async def get_anthropic_1p_bearer_token(min_validity_seconds: int = 0) -> str:
     the outside looks like a timeout cascade, not an auth failure. Pass the
     call's own timeout here so the token is guaranteed to outlive it.
 
-    This mirrors _get_bedrock_mythos_api_key's parameter of the same name,
-    which exists because that exact cascade was observed in production.
+    The removed bedrock-mythos token path needed the same parameter, after
+    that exact cascade was observed in production.
     """
     _assert_no_static_api_key()
 

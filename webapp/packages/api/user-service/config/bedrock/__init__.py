@@ -18,6 +18,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         # Adaptive thinking: thinking={"type":"adaptive"} + output_config.effort.
         # This model rejects the legacy thinking.type.enabled shape.
@@ -66,6 +68,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         # Adaptive thinking: thinking={"type":"adaptive"} + output_config.effort.
         # This model rejects the legacy thinking.type.enabled shape.
@@ -111,6 +115,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         # Adaptive thinking: thinking={"type":"adaptive"} + output_config.effort.
         # This model rejects the legacy thinking.type.enabled shape.
@@ -155,6 +161,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
@@ -196,6 +204,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
@@ -234,6 +244,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 1000000,
         "parameters": {
@@ -272,6 +284,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
@@ -310,6 +324,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
@@ -354,6 +370,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {
@@ -392,6 +410,8 @@ models = {
         "returns_thoughts": True,
         "supports_effort": False,
         "supports_thinking": True,
+        # Anthropic rejects temperature + thinking (HTTP 400) except 1.0.
+        "rejects_temperature_with_thinking": True,
         "supports_prompt_caching": True,
         "context_window": 200000,
         "parameters": {

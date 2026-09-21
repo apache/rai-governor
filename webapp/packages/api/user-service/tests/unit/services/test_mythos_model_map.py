@@ -102,6 +102,16 @@ class TestRegisterLitellmModels:
         assert llm_service._register_litellm_models(cfg) == ["m"]
         assert registered == {"m": {"mode": "chat"}}
 
+    def test_registration_is_idempotent(self):
+        """A second import or config reload must not change the map: entries
+        are keyed by model string and overwritten, never stacked."""
+        import copy
+        before = copy.deepcopy(litellm.model_cost)
+        llm_service._register_litellm_models(PROVIDER_CONFIG)
+        llm_service._register_litellm_models(PROVIDER_CONFIG)
+        assert litellm.model_cost.keys() == before.keys()
+        assert litellm.model_cost.get("claude-mythos-5") == before.get("claude-mythos-5")
+
     def test_models_without_registration_are_ignored(self, monkeypatch):
         monkeypatch.setattr(litellm, "register_model", lambda d: pytest.fail("should not register"))
         assert llm_service._register_litellm_models({"p": {"models": {"m": {}}}}) == []

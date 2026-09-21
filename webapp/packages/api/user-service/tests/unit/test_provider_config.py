@@ -237,3 +237,50 @@ class TestThinkingStyleDeclarations:
                 continue
             assert reg.get("copy_from") or reg.get("overrides"), (p, m)
             assert set(reg) <= {"copy_from", "overrides", "aliases"}, (p, m, set(reg))
+
+
+class TestTemperatureDeclarations:
+    """Temperature flags that llm_service reconciles against. These guard
+    against the silent failures: a flag lost, or two that contradict."""
+
+    FLAGS = ("rejects_temperature", "rejects_temperature_with_thinking",
+             "requires_nonzero_temperature_with_thinking")
+
+    @staticmethod
+    def _all_models():
+        for p, cfg in provider_config.PROVIDER_CONFIG.items():
+            for m, mc in cfg.get("models", {}).items():
+                yield p, m, mc
+
+    def test_thinking_temperature_flags_are_exclusive(self):
+        """One says drop, the other says keep-nonzero. Both set is a contradiction."""
+        bad = [(p, m) for p, m, mc in self._all_models()
+               if mc.get("rejects_temperature_with_thinking")
+               and mc.get("requires_nonzero_temperature_with_thinking")]
+        assert not bad, bad
+
+    def test_flags_are_booleans(self):
+        bad = [(p, m, f) for p, m, mc in self._all_models() for f in self.FLAGS
+               if f in mc and not isinstance(mc[f], bool)]
+        assert not bad, bad
+
+    def test_every_llmao_model_requires_nonzero_with_thinking(self):
+        """This knowledge lived only in comments in the ASVS agents. Losing
+        it means 0.0 + thinking and a model looping inside its think block."""
+        models = provider_config.PROVIDER_CONFIG["llmao"]["models"]
+        missing = [m for m, mc in models.items()
+                   if mc.get("supports_thinking")
+                   and not mc.get("requires_nonzero_temperature_with_thinking")]
+        assert not missing, missing
+
+    def test_every_thinking_claude_rejects_temperature_with_thinking(self):
+        """Bedrock and OpenRouter Claude: HTTP 400 for temperature + thinking."""
+        missing = [(p, m) for p, m, mc in self._all_models()
+                   if p in ("bedrock", "openrouter") and "claude" in m
+                   and mc.get("supports_thinking")
+                   and not mc.get("rejects_temperature_with_thinking")]
+        assert not missing, missing
+
+    def test_mythos_rejects_temperature_outright(self):
+        mc = provider_config.PROVIDER_CONFIG["anthropic-1p"]["models"]["claude-mythos-5"]
+        assert mc["rejects_temperature"] is True

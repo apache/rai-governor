@@ -163,7 +163,10 @@ def _params(window, default_max_tokens, thinking_levels=()):
             "default": 0.0,
             "min": 0.0,
             "max": 2.0,
-            "description": "Randomness. 0 for deterministic classification work.",
+            # 0.0 is right with thinking OFF. With thinking ON it causes
+            # repetition loops, so llm_service drops an explicit 0.0 then
+            # (requires_nonzero_temperature_with_thinking).
+            "description": "Randomness. 0 for deterministic classification work (ignored when thinking is on).",
         },
         "top_p": {
             "type": "float",
@@ -249,6 +252,9 @@ models = {
         "returns_thoughts": False,
         "supports_effort": False,
         "supports_thinking": True,
+        # temperature 0.0 + thinking -> repetition loops in the thinking
+        # block. llm_service drops an explicit 0.0 so the model default applies.
+        "requires_nonzero_temperature_with_thinking": True,
         "context_window": _GEMMA_CONTEXT,
         # max_tokens ceiling is deliberately NOT the full serving window.
         #
@@ -289,6 +295,9 @@ models = {
         # True so the gate fires and enable_thinking is SENT. Matters in the
         # false direction: this model reasons by default.
         "supports_thinking": True,
+        # temperature 0.0 + thinking -> repetition loops in the thinking
+        # block. llm_service drops an explicit 0.0 so the model default applies.
+        "requires_nonzero_temperature_with_thinking": True,
         # Graded reasoning, sent inside chat_template_kwargs alongside
         # enable_thinking. THE DEFAULT IS XHIGH -- this model's maximum -- so
         # a call that turns thinking on without naming a level asks for
@@ -327,6 +336,9 @@ models = {
         # enable_thinking=false, which only happens when this is True and the
         # tier's reasoning_effort is 'disable' or omitted.
         "supports_thinking": True,
+        # temperature 0.0 + thinking -> repetition loops in the thinking
+        # block. llm_service drops an explicit 0.0 so the model default applies.
+        "requires_nonzero_temperature_with_thinking": True,
         "context_window": _QWEN8_CONTEXT,
         # Ceiling 8,192 rather than the 32k the bigger models get. Two
         # reasons, and the first is binding: 40,960 serving minus this ceiling

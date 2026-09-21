@@ -113,6 +113,10 @@ models = {
         "supports_thinking": True,
         "supports_prompt_caching": True,
         "thinking_style": "adaptive",
+        # See note 1 above: rejected outright, thinking or not. Omitting it
+        # from parameters keeps it out of the UI; this drops it in
+        # llm_service for any caller that sends one anyway.
+        "rejects_temperature": True,
         "litellm_registration": {
             "copy_from": "anthropic.claude-mythos-preview",
             "overrides": {"litellm_provider": "anthropic"},

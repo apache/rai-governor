@@ -4,11 +4,10 @@ import os
 import random
 from config import settings
 from config.provider_config import PROVIDER_CONFIG
-# boto3 and aws-bedrock-token-generator are imported lazily inside
-# the token-minting path to avoid forcing those deps onto module
-# load when no federated provider is configured. boto3 is
-# already transitively present via storage_service / dynamodb /
-# observability_service.
+# services.anthropic_wif (which imports boto3) is imported lazily inside the
+# auth_mechanism == "wif" branches below, so a deployment without a WIF
+# provider never loads it. boto3 is transitively present anyway via
+# storage_service / dynamodb / observability_service.
 from services.database_service import get_database_service
 from services.user_service import get_user_service
 from typing import Any, AsyncGenerator, Dict, List, Tuple, Optional
@@ -220,19 +219,74 @@ def _thinking_style(provider_cfg: Dict[str, Any], model_config: Dict[str, Any]) 
     return "reasoning_effort"
 
 
-# In-process cache of Mantle bearer tokens, keyed by role ARN.
-# STS AssumeRole defaults to 1-hour sessions and bearer-token validity
-# is bounded by the credentials' lifetime, so we refresh ~5 min before
-# expiry to avoid mid-request expiration.
-_BEDROCK_MYTHOS_TOKEN_CACHE: Dict[str, Dict[str, Any]] = {}
-_TOKEN_REFRESH_MARGIN_SECONDS = 300
+# Temperature, reconciled against what the model accepts. Three config flags,
+# checked in this order; at most one of the last two may be set on a model:
+#
+#   rejects_temperature
+#       The model rejects the parameter outright, thinking or not. Mythos:
+#       HTTP 400 "`temperature` is deprecated for this model". Always dropped.
+#
+#   rejects_temperature_with_thinking
+#       Rejected while thinking is on, except 1.0. Anthropic on Bedrock and
+#       via OpenRouter: HTTP 400 for temperature + thinking, documented as
+#       "Locked to 1.0 when thinking enabled", so 1.0 itself is accepted and
+#       kept.
+#
+#   requires_nonzero_temperature_with_thinking
+#       0.0 with thinking on drives the model into repetition loops inside the
+#       thinking block. Self-hosted llmao models. An explicit 0.0 is DROPPED,
+#       not raised to some chosen value: vLLM then applies the model's own
+#       generation_config, which is the vendor-tuned value (Gemma 4 publishes
+#       1.0; the Qwen family 0.6-1.0 depending on version and mode), and
+#       failing that vLLM's own default of 1.0 -- never 0. An ABSENT
+#       temperature is left alone for the same reason. This matters because
+#       llmao's config default is 0.0 ("deterministic classification"), so any
+#       caller taking defaults and turning thinking on lands exactly here.
+#
+# This replaces a copy of the same rule in each ASVS agent's _make_tier, keyed
+# on provider NAME: {"bedrock", "bedrock_mythos", "anthropic"}. Two of those
+# providers no longer exist, and the one Mythos now runs on, "anthropic-1p",
+# was never in the set -- the agents were safe only because the Mythos tier's
+# env omits temperature. The non-zero rule existed there only as a comment;
+# nothing enforced it.
+_NONZERO_TEMP_WARNED: set = set()
 
-# Requested STS session length. AssumeRole defaults to 1h, which is tight
-# against a single 1800s call plus the refresh margin. Bounded by the
-# role's MaxSessionDuration (we fall back to the default if it's lower).
-_STS_SESSION_DURATION_SECONDS = int(
-    os.getenv("BEDROCK_MYTHOS_STS_DURATION_SECONDS", "10800")  # 3h
-)
+
+def _reconcile_temperature(
+    kwargs: Dict[str, Any],
+    model_config: Dict[str, Any],
+    thinking_active: bool,
+    model_label: str = "",
+) -> None:
+    """Adjust kwargs["temperature"] in place per the model's declared flags."""
+    if "temperature" not in kwargs:
+        return
+    if model_config.get("rejects_temperature"):
+        kwargs.pop("temperature", None)
+        return
+    if not thinking_active:
+        return
+    temperature = kwargs["temperature"]
+    if model_config.get("rejects_temperature_with_thinking"):
+        if temperature != 1.0:
+            kwargs.pop("temperature", None)
+        return
+    if model_config.get("requires_nonzero_temperature_with_thinking"):
+        try:
+            is_zero = float(temperature) == 0.0
+        except (TypeError, ValueError):
+            is_zero = False
+        if is_zero:
+            kwargs.pop("temperature", None)
+            if model_label not in _NONZERO_TEMP_WARNED:
+                _NONZERO_TEMP_WARNED.add(model_label)
+                print(
+                    f"WARNING: {model_label}: temperature=0.0 with thinking on "
+                    f"causes repetition loops on this model; dropped so the "
+                    f"model's own default applies. Set a non-zero temperature "
+                    f"for this tier to silence this. (Logged once per model.)",
+                    flush=True,
+                )
 
 
 def _supports_prompt_caching(provider: str, model: str) -> bool:
@@ -499,6 +553,14 @@ async def call_llm(
         # takes only xhigh/medium/low, the others reject it outright, and
         # 'enable' is not a value any of them take. The standard-completion
         # branch below therefore sends nothing further for this style.
+
+    # Thinking is on when the caller asked for it and the model's style
+    # actually sends it. Applies to every branch below, responses API included.
+    _reconcile_temperature(
+        kwargs, model_config,
+        thinking_active=(reasoning_effort != 'disable' and thinking_style != "none"),
+        model_label=f"{provider}/{model}",
+    )
 
     if tools:
         kwargs["tools"] = tools
@@ -1112,6 +1174,18 @@ async def stream_llm(
             _ctk["reasoning_effort"] = _reasoning_effort
         _extra["chat_template_kwargs"] = _ctk
         kwargs["extra_body"] = _extra
+
+    # Streaming only ever sends reasoning for enable_thinking models (see the
+    # gate above), so that is the only case where thinking is on here.
+    # rejects_temperature still applies to every model.
+    _reconcile_temperature(
+        kwargs, model_config,
+        thinking_active=(
+            _reasoning_effort != 'disable'
+            and _thinking_style(provider_cfg, model_config) == "enable_thinking"
+        ),
+        model_label=f"{provider}/{model}",
+    )
 
     if user_service is None:
         user_service = get_user_service(get_database_service(settings))
