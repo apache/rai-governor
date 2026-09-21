@@ -92,18 +92,31 @@ models = {
     #      model is not fully in litellm's registry) and it reached the API.
     #      Omitting it is the only reliable guard.
     #
-    #   2. adaptive thinking. llm_service._is_opus_4_7_or_later() matches on
-    #      "claude-mythos" in the model string, so reasoning_effort becomes
-    #      thinking={"type":"adaptive"} + output_config={"effort":...}
-    #      rather than the legacy thinking.type.enabled shape. That match is
-    #      on the model NAME, so it should still fire -- but the 1P string
-    #      drops the "anthropic." prefix, so VERIFY it after migrating.
+    #   2. adaptive thinking: reasoning_effort becomes
+    #      thinking={"type":"adaptive"} + output_config={"effort":...} rather
+    #      than the legacy thinking.type.enabled shape. Declared below as
+    #      thinking_style. (Previously inferred from "claude-mythos" in the
+    #      model NAME by llm_service._is_opus_4_7_or_later(), now removed.)
+    #
+    # litellm_registration: litellm's model map knows Mythos only as
+    # "anthropic.claude-mythos-preview". Our 1P string "claude-mythos-5" misses
+    # the lookup, so _model_supports_effort_param() returns False and
+    # output_config.effort is silently DROPPED under drop_params --
+    # ASVS_HEAVY_REASONING has no effect, cost tracking reads zero, and the
+    # prompt-caching gate has nothing to consult. Copying the preview entry
+    # inherits whatever capability flags and costs litellm already knows.
+    # Previously a hard-coded block at the top of llm_service.
     # =====================================================================
     "claude-mythos-5": {
         "returns_thoughts": True,
         "supports_effort": True,
         "supports_thinking": True,
         "supports_prompt_caching": True,
+        "thinking_style": "adaptive",
+        "litellm_registration": {
+            "copy_from": "anthropic.claude-mythos-preview",
+            "overrides": {"litellm_provider": "anthropic"},
+        },
         "context_window": 1000000,
         "parameters": _params(128000, 16384, _FULL_EFFORT, temperature=False),
     },

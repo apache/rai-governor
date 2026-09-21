@@ -19,6 +19,9 @@ models = {
         "supports_effort": True,
         "supports_thinking": True,
         "supports_prompt_caching": True,
+        # Adaptive thinking: thinking={"type":"adaptive"} + output_config.effort.
+        # This model rejects the legacy thinking.type.enabled shape.
+        "thinking_style": "adaptive",
         "context_window": 1000000,
         "parameters": {
             "temperature": {
@@ -64,6 +67,9 @@ models = {
         "supports_effort": True,
         "supports_thinking": True,
         "supports_prompt_caching": True,
+        # Adaptive thinking: thinking={"type":"adaptive"} + output_config.effort.
+        # This model rejects the legacy thinking.type.enabled shape.
+        "thinking_style": "adaptive",
         "context_window": 1000000,
         "parameters": {
             "temperature": {
@@ -106,6 +112,9 @@ models = {
         "supports_effort": True,
         "supports_thinking": True,
         "supports_prompt_caching": True,
+        # Adaptive thinking: thinking={"type":"adaptive"} + output_config.effort.
+        # This model rejects the legacy thinking.type.enabled shape.
+        "thinking_style": "adaptive",
         "context_window": 1000000,
         "parameters": {
             "temperature": {

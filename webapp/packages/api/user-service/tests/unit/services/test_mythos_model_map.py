@@ -1,4 +1,4 @@
-"""Tests for the Mythos model-map registration and the prompt-caching gate.
+"""Tests for litellm model-map registration and the prompt-caching gate.
 
 Both exist because litellm's model map does not know our 1P model string.
 The map is keyed "anthropic.claude-mythos-preview"; we send
@@ -28,7 +28,18 @@ from services import llm_service
 pytestmark = pytest.mark.unit
 
 
+MYTHOS_REG = PROVIDER_CONFIG["anthropic-1p"]["models"]["claude-mythos-5"]["litellm_registration"]
+
+
 class TestMythosModelRegistration:
+    def test_registration_is_declared_in_config(self):
+        """The registration lives on the model's config entry now, not in a
+        hard-coded block at the top of llm_service."""
+        assert MYTHOS_REG["copy_from"] == "anthropic.claude-mythos-preview"
+        assert MYTHOS_REG["overrides"]["litellm_provider"] == "anthropic"
+        assert not hasattr(llm_service, "_MYTHOS_MAP_SRC")
+        assert not hasattr(llm_service, "_MYTHOS_MODEL_INFO")
+
     def test_mythos_1p_name_is_registered(self):
         """The 1P model string must resolve in litellm's map.
 
@@ -36,11 +47,12 @@ class TestMythosModelRegistration:
         that is an upstream change to investigate, not a regression in our
         code, and the registration is guarded on the source existing.
         """
-        if llm_service._MYTHOS_MAP_SRC not in litellm.model_cost:
+        if MYTHOS_REG["copy_from"] not in litellm.model_cost:
             pytest.skip(
-                f"litellm no longer ships {llm_service._MYTHOS_MAP_SRC}; the registration source has changed upstream"
+                f"litellm no longer ships {MYTHOS_REG['copy_from']}; the registration source has changed upstream"
             )
         assert "claude-mythos-5" in litellm.model_cost
+        assert litellm.model_cost["claude-mythos-5"]["litellm_provider"] == "anthropic"
 
     def test_registered_entry_advertises_output_config(self):
         """This is the flag that stops effort being dropped.
@@ -55,20 +67,44 @@ class TestMythosModelRegistration:
         entry = litellm.model_cost["claude-mythos-5"]
         assert entry.get("supports_output_config") is True
 
-    def test_registration_does_not_crash_without_the_source(self, monkeypatch):
-        """A litellm upgrade that renames the entry must not break startup.
 
-        Re-runs the guarded registration with the source absent. The point
-        is the `if ... in litellm.model_cost` guard: without it this raises
-        KeyError at import time and the whole service fails to start.
-        """
-        fake_map = {k: v for k, v in litellm.model_cost.items() if k != llm_service._MYTHOS_MAP_SRC}
+class TestRegisterLitellmModels:
+    """The generic loop that replaced the hard-coded Mythos blocks."""
+
+    def test_registration_does_not_crash_without_the_source(self, monkeypatch, capsys):
+        """A litellm upgrade that renames the source entry must not break
+        startup. The entry is skipped with a warning instead."""
+        fake_map = {k: v for k, v in litellm.model_cost.items() if k != "some-source"}
         monkeypatch.setattr(litellm, "model_cost", fake_map)
+        cfg = {"p": {"models": {"m": {"litellm_registration": {"copy_from": "some-source"}}}}}
+        assert llm_service._register_litellm_models(cfg) == []
+        assert "no 'some-source' to copy from" in capsys.readouterr().out
 
-        src = llm_service._MYTHOS_MAP_SRC
-        if src in litellm.model_cost:  # exercises the guard
-            litellm.register_model({"claude-mythos-5": litellm.model_cost[src]})
-        # reaching here without raising is the assertion
+    def test_copy_from_merges_overrides_and_registers_aliases(self, monkeypatch):
+        registered = {}
+        monkeypatch.setattr(litellm, "model_cost", {"src": {"a": 1, "litellm_provider": "x"}})
+        monkeypatch.setattr(litellm, "register_model", lambda d: registered.update(d))
+        cfg = {"p": {"models": {"m": {"litellm_registration": {
+            "copy_from": "src",
+            "overrides": {"litellm_provider": "anthropic"},
+            "aliases": ["m-alias"],
+        }}}}}
+        assert llm_service._register_litellm_models(cfg) == ["m", "m-alias"]
+        assert registered == {
+            "m": {"a": 1, "litellm_provider": "anthropic"},
+            "m-alias": {"a": 1, "litellm_provider": "anthropic"},
+        }
+
+    def test_literal_entry_without_copy_from(self, monkeypatch):
+        registered = {}
+        monkeypatch.setattr(litellm, "register_model", lambda d: registered.update(d))
+        cfg = {"p": {"models": {"m": {"litellm_registration": {"overrides": {"mode": "chat"}}}}}}
+        assert llm_service._register_litellm_models(cfg) == ["m"]
+        assert registered == {"m": {"mode": "chat"}}
+
+    def test_models_without_registration_are_ignored(self, monkeypatch):
+        monkeypatch.setattr(litellm, "register_model", lambda d: pytest.fail("should not register"))
+        assert llm_service._register_litellm_models({"p": {"models": {"m": {}}}}) == []
 
 
 class TestPromptCachingGate:

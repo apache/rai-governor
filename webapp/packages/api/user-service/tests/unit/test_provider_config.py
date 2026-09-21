@@ -94,6 +94,8 @@ class TestBedrockModels:
         assert entry["supports_effort"] is True
         assert entry["returns_thoughts"] is True
         assert entry["context_window"] >= 200000
+        # llm_service routes on this, not on the model name.
+        assert entry["thinking_style"] == "adaptive"
 
     @pytest.mark.parametrize("model_id", [
         "us.anthropic.claude-opus-4-7",
@@ -186,3 +188,52 @@ class TestBedrockModels:
     def test_mistral_models_exist(self, bedrock_models, model_id):
         """Test that Mistral models are configured."""
         assert model_id in bedrock_models
+
+class TestThinkingStyleDeclarations:
+    """thinking_style is how llm_service decides the reasoning shape.
+    These guard the config against the mistakes that fail silently or 400."""
+
+    @staticmethod
+    def _all_models():
+        for p, cfg in provider_config.PROVIDER_CONFIG.items():
+            for m, mc in cfg.get("models", {}).items():
+                yield p, cfg, m, mc
+
+    def test_every_declared_style_is_valid(self):
+        from services.llm_service import THINKING_STYLES
+        bad = [(p, m, mc["thinking_style"]) for p, _, m, mc in self._all_models()
+               if "thinking_style" in mc and mc["thinking_style"] not in THINKING_STYLES]
+        assert not bad, bad
+
+    def test_enable_thinking_only_on_custom_endpoint_providers(self):
+        """chat_template_kwargs is a vLLM concept. Declaring enable_thinking
+        on a provider without api_base_env_var would attach extra_body to
+        e.g. Bedrock, which rejects it: 400 "extra_body: Extra inputs are not
+        permitted" (2026-07-23)."""
+        bad = [(p, m) for p, cfg, m, mc in self._all_models()
+               if mc.get("thinking_style") == "enable_thinking" and not cfg.get("api_base_env_var")]
+        assert not bad, bad
+
+    def test_adaptive_models_support_effort_and_thinking(self):
+        """adaptive sends output_config.effort; declaring it on a model that
+        cannot take effort would send a parameter it does not understand."""
+        bad = [(p, m) for p, _, m, mc in self._all_models()
+               if mc.get("thinking_style") == "adaptive"
+               and not (mc.get("supports_effort") and mc.get("supports_thinking"))]
+        assert not bad, bad
+
+    def test_mythos_declares_adaptive(self):
+        mc = provider_config.PROVIDER_CONFIG["anthropic-1p"]["models"]["claude-mythos-5"]
+        assert mc["thinking_style"] == "adaptive"
+
+    def test_opus_5_declares_adaptive(self):
+        mc = provider_config.PROVIDER_CONFIG["bedrock"]["models"]["us.anthropic.claude-opus-5"]
+        assert mc["thinking_style"] == "adaptive"
+
+    def test_litellm_registrations_are_well_formed(self):
+        for p, _, m, mc in self._all_models():
+            reg = mc.get("litellm_registration")
+            if reg is None:
+                continue
+            assert reg.get("copy_from") or reg.get("overrides"), (p, m)
+            assert set(reg) <= {"copy_from", "overrides", "aliases"}, (p, m, set(reg))

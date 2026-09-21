@@ -25,82 +25,81 @@ ensure_litellm_logging()
 litellm.drop_params = True
 litellm.set_verbose = False
 
-# litellm's model map knows Mythos only as "anthropic.claude-mythos-preview".
-# Our 1P model string is "claude-mythos-5", which misses the lookup entirely,
-# so _model_supports_effort_param() returns False and output_config.effort is
-# silently dropped under drop_params -- ASVS_HEAVY_REASONING has no effect.
-#
-# thinking={"type":"adaptive"} still gets through, so the model does reason;
-# it just picks its own effort rather than the one the tier asked for. The
-# same miss also zeroes cost tracking and defeats the prompt-caching check
-# below.
-#
-# Copy the existing entry rather than hand-writing one, so we inherit whatever
-# capability flags and costs litellm already knows. Guarded on the source
-# existing so a litellm upgrade that renames it cannot break startup.
-_MYTHOS_MAP_SRC = "anthropic.claude-mythos-preview"
-if _MYTHOS_MAP_SRC in litellm.model_cost:
-    litellm.register_model({
-        "claude-mythos-5": {
-            **litellm.model_cost[_MYTHOS_MAP_SRC],
-            "litellm_provider": "anthropic",
-        }
-    })
-
 # ---------------------------------------------------------------------------
-# Mythos model registration
+# litellm model-map registration, declared in provider config
 # ---------------------------------------------------------------------------
-# litellm (checked against 1.90.0) ships a registry entry for
-# `anthropic.claude-mythos-preview` but NOT for `anthropic.claude-mythos-5`,
-# so every registry lookup for the model we actually call misses. Three
-# consequences, all silent:
+# litellm decides several things by looking the model string up in its own
+# model map: whether output_config.effort is supported (else it is DROPPED
+# under drop_params, with only a log warning), cost tracking, max tokens, and
+# the second gate in _supports_prompt_caching(). A model string the map does
+# not know misses silently on all of them.
 #
-#   1. supports_output_config -> False, so litellm DROPS reasoning_effort:
-#        "Dropping unsupported `output_config` for model=%s (drop_params=True).
-#         Effort is only supported on Opus 4.5+, Sonnet 4.6+, and Mythos
-#         Preview."
-#      (litellm/llms/anthropic/chat/transformation.py). Note `thinking` is
-#      NOT dropped -- so adaptive thinking runs with NO effort ceiling, which
-#      is not what any caller asked for.
-#   2. supports_reasoning -> False, so reasoning_effort isn't offered as a
-#      supported param in the first place.
-#   3. get_max_tokens() raises, printing litellm's "Provider List / Give
-#      Feedback" banner on EVERY call (one banner per call, including
-#      successful ones). See BerriAI/litellm#7961: the provider prefix is
-#      resolved, stripped, and the bare dotted model name is then re-looked-up
-#      without it -- which never matches for `anthropic.claude-*` names.
+# The fix is to register an entry for that string. Which models need one, and
+# what the entry says, is a fact about the model -- so it lives on the model's
+# config entry, not here:
 #
-# Registered under BOTH the bare and the prefixed key because the lookup
-# happens at both points. Values are copied verbatim from litellm's own
-# claude-mythos-preview entry rather than invented.
-_MYTHOS_MODEL_INFO = {
-    "input_cost_per_token": 0,
-    "output_cost_per_token": 0,
-    "litellm_provider": "bedrock",
-    "max_input_tokens": 1000000,
-    "max_output_tokens": 128000,
-    "max_tokens": 128000,
-    "mode": "chat",
-    "supports_function_calling": True,
-    "supports_vision": True,
-    "supports_prompt_caching": False,
-    "supports_reasoning": True,
-    "supports_tool_choice": True,
-    "supports_output_config": True,
-}
+#     "litellm_registration": {
+#         "copy_from": "<existing litellm map key>",   # optional
+#         "overrides": {...},                          # merged on top
+#         "aliases":   ["<other string>", ...],        # optional extra keys
+#     }
+#
+# copy_from inherits whatever capability flags and costs litellm already knows
+# rather than hand-writing them. If the source key is missing (a litellm
+# upgrade renamed it) the entry is SKIPPED with a warning rather than failing
+# startup -- the same guard the hard-coded Mythos block had.
+#
+# This replaces two hard-coded Mythos blocks. The live one copied
+# anthropic.claude-mythos-preview onto the 1P string "claude-mythos-5"; it is
+# now declared on that entry in config/anthropic_1p. The other registered
+# "anthropic.claude-mythos-5" and "bedrock/mantle/anthropic.claude-mythos-5"
+# for the removed bedrock-mythos provider; no config entry sends either
+# string, so it is gone rather than migrated.
 
-try:
-    litellm.register_model({
-        "anthropic.claude-mythos-5": _MYTHOS_MODEL_INFO,
-        "bedrock/mantle/anthropic.claude-mythos-5": _MYTHOS_MODEL_INFO,
-    })
-except Exception as _e:  # pragma: no cover - never fail import over metadata
-    print(f"WARNING: could not register Mythos model info with litellm: {_e}",
-          flush=True)
+
+def _register_litellm_models(provider_config: Dict[str, Any]) -> List[str]:
+    """Register every model that declares `litellm_registration`.
+
+    Returns the list of keys registered, for tests and startup logging.
+    Never raises: model metadata must not be able to break import.
+    """
+    registered: List[str] = []
+    for provider_name, provider_cfg in provider_config.items():
+        for model_name, model_cfg in (provider_cfg.get("models") or {}).items():
+            reg = model_cfg.get("litellm_registration")
+            if not reg:
+                continue
+            src = reg.get("copy_from")
+            if src:
+                if src not in litellm.model_cost:
+                    print(
+                        f"WARNING: {provider_name}/{model_name}: litellm model "
+                        f"map has no {src!r} to copy from; not registered. "
+                        f"Effort may be silently dropped for this model.",
+                        flush=True,
+                    )
+                    continue
+                info = {**litellm.model_cost[src], **(reg.get("overrides") or {})}
+            else:
+                info = dict(reg.get("overrides") or {})
+            keys = [model_name, *(reg.get("aliases") or [])]
+            try:
+                litellm.register_model({k: info for k in keys})
+                registered.extend(keys)
+            except Exception as e:  # pragma: no cover - never fail import over metadata
+                print(
+                    f"WARNING: could not register {provider_name}/{model_name} "
+                    f"with litellm: {e}",
+                    flush=True,
+                )
+    return registered
+
+
+_register_litellm_models(PROVIDER_CONFIG)
 
 # Silences the "Provider List / Give Feedback" banner litellm prints via
 # print() (not logging) whenever a model-registry lookup misses. Redundant for
-# Mythos once registered above, but covers any other unregistered model string
+# models registered above, but covers any other unregistered model string
 # and keeps ~40% of noise out of the agent logs.
 litellm.suppress_debug_info = True
 # ---------------------------------------------------------------------------
@@ -166,20 +165,59 @@ def _extract_response_cost(response_obj: Any) -> Optional[float]:
             return None
     return None
 
-def _is_opus_4_7_or_later(model: str) -> bool:
-    """Opus 4.7+ uses adaptive thinking with output_config.effort
-    instead of the old reasoning_effort -> thinking.type.enabled
-    translation that litellm does for Opus 4.6 and earlier.
+# How a model is told to reason. One value per model, declared in provider
+# config as `thinking_style`, resolved once per call by _thinking_style().
+#
+#   "enable_thinking"   vLLM chat-template switch: extra_body.
+#                       chat_template_kwargs.enable_thinking (+ the graded
+#                       level, where the model declares thinking_levels).
+#                       Self-hosted models behind llmao.
+#   "adaptive"          thinking={"type":"adaptive"} + output_config.effort,
+#                       set directly so litellm does not translate
+#                       reasoning_effort into the legacy thinking.type.enabled
+#                       shape these models reject. Opus 4.7+, Mythos.
+#   "reasoning_effort"  pass reasoning_effort through for litellm to translate.
+#                       Every other model.
+#   "none"              send no reasoning parameter at all.
+#
+# This replaces _is_opus_4_7_or_later(), which decided the adaptive shape by
+# substring-matching the model string ("claude-opus-4-7", "claude-opus-4-8",
+# "claude-opus-5", "claude-mythos"). A name cannot know what a model accepts,
+# and every new model meant editing that tuple. The four entries it matched
+# now declare "adaptive" in config.
+THINKING_STYLES = ("enable_thinking", "adaptive", "reasoning_effort", "none")
 
-    Mythos preview uses the same adaptive thinking shape as Opus 4.7+,
-    so we match it here despite the function name. If more non-Opus
-    models join this club, consider renaming to e.g.
-    _supports_adaptive_thinking."""
-    if "claude-mythos" in model:
-        return True
-    return any(tag in model for tag in (
-        "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5"
-    ))
+
+def _thinking_style(provider_cfg: Dict[str, Any], model_config: Dict[str, Any]) -> str:
+    """Resolve a model's thinking style from config.
+
+    An explicit `thinking_style` wins. Otherwise the default is derived so
+    that every model not declaring one behaves exactly as before:
+
+      - a provider served from a custom OpenAI-compatible endpoint (declares
+        api_base_env_var -- only llmao does) whose model supports_thinking
+        -> "enable_thinking". This is the gate that used to sit inline in
+        call_llm and stream_llm; see the comment there for why it is
+        api_base_env_var and not supports_thinking alone.
+      - anything else -> "reasoning_effort". Deliberately NOT keyed on
+        supports_effort: reasoning_effort has always been passed through for
+        every non-adaptive model, and litellm (drop_params=True) decides per
+        model whether it survives. Keying on supports_effort would stop
+        sending it to e.g. Sonnet and Haiku, a behaviour change.
+
+    Raises ValueError on an unknown explicit value: a typo in config should
+    fail the call loudly, not fall back to a default that looks like it works.
+    """
+    style = model_config.get("thinking_style")
+    if style is not None:
+        if style not in THINKING_STYLES:
+            raise ValueError(
+                f"unknown thinking_style {style!r}; expected one of {THINKING_STYLES}"
+            )
+        return style
+    if provider_cfg.get("api_base_env_var") and model_config.get("supports_thinking"):
+        return "enable_thinking"
+    return "reasoning_effort"
 
 
 # In-process cache of Mantle bearer tokens, keyed by role ARN.
@@ -387,9 +425,10 @@ async def call_llm(
     }
 
     reasoning_effort = kwargs.pop('reasoning_effort', 'disable')
-    # Set when the llmao gate below consumes reasoning_effort into
-    # extra_body, so the per-provider re-adds further down leave it alone.
-    _llmao_thinking_handled = False
+    # How this model is told to reason; see THINKING_STYLES. Resolved once
+    # here and used by every branch below, so the llmao gate and the
+    # adaptive/legacy split read the same decision.
+    thinking_style = _thinking_style(provider_cfg, model_config)
     
     # Self-hosted reasoning models (Qwen3, Gemma 4 via llmao's vLLM proxy)
     # think by default. They do NOT understand OpenAI's reasoning_effort; the
@@ -397,9 +436,9 @@ async def call_llm(
     # extra_body. Translate our reasoning_effort intent into it.
     # reasoning_effort == 'disable' -> thinking off.
     #
-    # GATE: this applies ONLY to providers served from a custom
-    # OpenAI-compatible endpoint (llmao -> vLLM), identified by the provider
-    # declaring api_base_env_var. chat_template_kwargs is a vLLM concept, and
+    # GATE: thinking_style == "enable_thinking". By default that resolves ONLY
+    # for providers served from a custom OpenAI-compatible endpoint (llmao ->
+    # vLLM), identified by the provider declaring api_base_env_var. chat_template_kwargs is a vLLM concept, and
     # Bedrock's Converse API rejects any unknown top-level field with
     # 400 "extra_body: Extra inputs are not permitted".
     #
@@ -410,11 +449,14 @@ async def call_llm(
     # classification batch on 2026-07-23. api_base_env_var is the real
     # discriminator (llmao is the only provider that sets it), so Bedrock is
     # excluded by construction rather than by an explicit denylist.
+    # (_thinking_style() now holds that derivation; test_provider_config
+    # checks that no model declares "enable_thinking" explicitly on a provider
+    # without api_base_env_var.)
     #
-    # reasoning_effort is popped above and re-applied per-provider further
-    # down (the Anthropic/Bedrock paths re-add it, and the Opus 4.7+ path
-    # translates it into thinking + output_config), so popping it here does
-    # not strip thinking from the Bedrock tiers.
+    # reasoning_effort is popped above and re-applied per style further down
+    # ("reasoning_effort" passes it through, "adaptive" translates it into
+    # thinking + output_config), so popping it here does not strip thinking
+    # from the Bedrock tiers.
     #
     # NOTE: both llmao's proxy and gofannon run litellm with drop_params=True,
     # so if this param is malformed or the vLLM server lacks the matching
@@ -423,7 +465,7 @@ async def call_llm(
     # and no <think> block. (llmao serves these with --reasoning-parser gemma4 /
     # qwen3; this per-call value is explicit in both directions, so it does not
     # depend on a server-side default.)
-    if provider_cfg.get("api_base_env_var") and model_config.get("supports_thinking"):
+    if thinking_style == "enable_thinking":
         _enable_thinking = (reasoning_effort != 'disable')
         _extra = dict(kwargs.get("extra_body", {}))
         _ctk = dict(_extra.get("chat_template_kwargs", {}))
@@ -455,8 +497,8 @@ async def call_llm(
         kwargs["extra_body"] = _extra
         # These models do not accept OpenAI's reasoning_effort: qwen3.8-27b
         # takes only xhigh/medium/low, the others reject it outright, and
-        # 'enable' is not a value any of them take.
-        _llmao_thinking_handled = True
+        # 'enable' is not a value any of them take. The standard-completion
+        # branch below therefore sends nothing further for this style.
 
     if tools:
         kwargs["tools"] = tools
@@ -709,16 +751,18 @@ async def call_llm(
             raise
     else:
         # Standard acompletion call for most models
-        if reasoning_effort != 'disable' and not _llmao_thinking_handled:
-            if _is_opus_4_7_or_later(model):
-                # Opus 4.7+ rejects the old thinking.type.enabled format
-                # that litellm's reasoning_effort translation produces.
-                # Set the adaptive-thinking params directly and skip
-                # litellm's translation.
+        if reasoning_effort != 'disable':
+            if thinking_style == "adaptive":
+                # Opus 4.7+ and Mythos reject the old thinking.type.enabled
+                # format that litellm's reasoning_effort translation
+                # produces. Set the adaptive-thinking params directly and
+                # skip litellm's translation.
                 kwargs['thinking'] = {'type': 'adaptive'}
                 kwargs['output_config'] = {'effort': reasoning_effort}
-            else:
+            elif thinking_style == "reasoning_effort":
                 kwargs['reasoning_effort'] = reasoning_effort
+            # "enable_thinking": already sent in extra_body above.
+            # "none": the model takes no reasoning parameter.
 
         # Retry loop. Two exception classes are retryable here:
         #   - litellm.Timeout       — slow network or model; modest linear backoff.
@@ -1043,15 +1087,20 @@ async def stream_llm(
     # that parameter on one of the three models and rejects it on the
     # others), but the value is now translated first.
     #
-    # GATE: api_base_env_var, not supports_thinking alone. That flag is also
-    # True on the Bedrock Anthropic models, where it means "can do extended
-    # thinking", NOT "accepts enable_thinking" -- Converse rejects unknown
-    # top-level fields with 400 "extra_body: Extra inputs are not permitted".
-    # Only the llmao provider sets api_base_env_var, so Bedrock is excluded
-    # by construction rather than by a denylist.
+    # GATE: thinking_style == "enable_thinking", resolved by the same
+    # _thinking_style() call_llm uses. By default that means api_base_env_var,
+    # not supports_thinking alone. That flag is also True on the Bedrock
+    # Anthropic models, where it means "can do extended thinking", NOT
+    # "accepts enable_thinking" -- Converse rejects unknown top-level fields
+    # with 400 "extra_body: Extra inputs are not permitted". Only the llmao
+    # provider sets api_base_env_var, so Bedrock is excluded by construction
+    # rather than by a denylist.
+    #
+    # Other styles send nothing here, as before: streaming has never passed
+    # reasoning to non-llmao providers. Unchanged by this refactor.
     _reasoning_effort = kwargs.pop('reasoning_effort', 'disable')
 
-    if provider_cfg.get("api_base_env_var") and model_config.get("supports_thinking"):
+    if _thinking_style(provider_cfg, model_config) == "enable_thinking":
         _extra = dict(kwargs.get("extra_body", {}))
         _ctk = dict(_extra.get("chat_template_kwargs", {}))
         _ctk["enable_thinking"] = (_reasoning_effort != 'disable')

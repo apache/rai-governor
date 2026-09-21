@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from config.provider_config import PROVIDER_CONFIG
 from services import llm_service
 
 
@@ -535,34 +536,82 @@ class TestBedrockProvider:
         assert call_kwargs["temperature"] == 0.7
         assert call_kwargs["max_tokens"] == 1000
 
-class TestIsOpus47OrLater:
-    """Tests for the _is_opus_4_7_or_later helper."""
+class TestThinkingStyle:
+    """_thinking_style() resolves how a model is told to reason, from config.
 
-    @pytest.mark.parametrize("model", [
-        "us.anthropic.claude-opus-4-7",
-        "us.anthropic.claude-opus-4-8",
-        # Tolerate either bare or prefixed model strings.
-        "bedrock/us.anthropic.claude-opus-4-7",
-        "bedrock/us.anthropic.claude-opus-4-8",
-    ])
-    def test_returns_true_for_opus_4_7_and_4_8(self, model):
-        assert llm_service._is_opus_4_7_or_later(model) is True
+    Replaces TestIsOpus47OrLater. The adaptive shape used to be decided by
+    substring-matching the model string; it is now declared per model as
+    thinking_style, with a derived default that reproduces the old behaviour
+    for every model that does not declare one.
+    """
 
-    @pytest.mark.parametrize("model", [
-        # Older Opus generations use the legacy thinking format.
-        "us.anthropic.claude-opus-4-6-v1",
-        "us.anthropic.claude-opus-4-5-20251101-v1:0",
-        "us.anthropic.claude-opus-4-1-20250805-v1:0",
-        # Non-Opus Claude models never go through the new format,
-        # regardless of generation.
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-        # Completely unrelated providers / models.
-        "gpt-5",
-        "",
-    ])
-    def test_returns_false_for_older_opus_and_non_opus(self, model):
-        assert llm_service._is_opus_4_7_or_later(model) is False
+    LLMAO = {"api_base_env_var": "LLMAO_API_BASE"}
+    PLAIN = {}
+
+    def test_explicit_style_wins(self):
+        for style in llm_service.THINKING_STYLES:
+            assert llm_service._thinking_style(self.PLAIN, {"thinking_style": style}) == style
+
+    def test_explicit_style_wins_over_the_llmao_derivation(self):
+        mc = {"supports_thinking": True, "thinking_style": "none"}
+        assert llm_service._thinking_style(self.LLMAO, mc) == "none"
+
+    def test_llmao_gate_is_derived_from_api_base_env_var(self):
+        """The inline gate that used to sit in call_llm and stream_llm."""
+        assert llm_service._thinking_style(self.LLMAO, {"supports_thinking": True}) == "enable_thinking"
+
+    def test_supports_thinking_alone_does_not_mean_enable_thinking(self):
+        """Bedrock Claude models set supports_thinking too. Attaching
+        extra_body to them 400s every call on Converse (2026-07-23)."""
+        assert llm_service._thinking_style(self.PLAIN, {"supports_thinking": True}) == "reasoning_effort"
+
+    def test_api_base_without_supports_thinking_is_not_enable_thinking(self):
+        assert llm_service._thinking_style(self.LLMAO, {}) == "reasoning_effort"
+
+    def test_default_is_reasoning_effort_regardless_of_supports_effort(self):
+        """reasoning_effort has always been passed through for every
+        non-adaptive model; litellm decides per model whether it survives.
+        Keying the default on supports_effort would stop sending it to e.g.
+        Sonnet and Haiku (supports_effort=False) -- a behaviour change."""
+        assert llm_service._thinking_style(self.PLAIN, {"supports_effort": False}) == "reasoning_effort"
+        assert llm_service._thinking_style(self.PLAIN, {"supports_effort": True}) == "reasoning_effort"
+
+    def test_unknown_style_raises(self):
+        """A config typo must fail loudly, not fall back to a working-looking default."""
+        with pytest.raises(ValueError, match="unknown thinking_style"):
+            llm_service._thinking_style(self.PLAIN, {"thinking_style": "adaptiv"})
+
+    def test_the_name_no_longer_decides_anything(self):
+        """An Opus-4.8-looking model string with no config entry is just an
+        unknown model. The substring match is gone."""
+        assert llm_service._thinking_style(self.PLAIN, {}) == "reasoning_effort"
+        assert not hasattr(llm_service, "_is_opus_4_7_or_later")
+
+    def test_config_reproduces_the_old_name_match_exactly(self):
+        """Parity with the removed code, for every configured model.
+
+        The old decision was: llmao gate first, then the name match on
+        claude-mythos / claude-opus-4-7 / -4-8 / -5, else reasoning_effort.
+        If a model is added to config that the old match would have caught
+        (or vice versa) this fails, which is the point: declare
+        thinking_style on it deliberately.
+        """
+        def old(provider_cfg, model, mc):
+            if provider_cfg.get("api_base_env_var") and mc.get("supports_thinking"):
+                return "enable_thinking"
+            if "claude-mythos" in model or any(
+                t in model for t in ("claude-opus-4-7", "claude-opus-4-8", "claude-opus-5")
+            ):
+                return "adaptive"
+            return "reasoning_effort"
+
+        mismatches = [
+            (p, m, old(cfg, m, mc), llm_service._thinking_style(cfg, mc))
+            for p, cfg in PROVIDER_CONFIG.items()
+            for m, mc in cfg.get("models", {}).items()
+            if old(cfg, m, mc) != llm_service._thinking_style(cfg, mc)
+        ]
+        assert not mismatches, mismatches
 
 
 class TestCallLlmAdaptiveThinkingKwargs:
@@ -679,3 +728,67 @@ class TestCallLlmAdaptiveThinkingKwargs:
         assert "thinking" not in captured
         assert "output_config" not in captured
         assert "reasoning_effort" not in captured
+    @pytest.mark.asyncio
+    async def test_mythos_on_anthropic_1p_uses_adaptive_thinking(
+        self, patched_llm, captured, monkeypatch,
+    ):
+        """Mythos reached the adaptive branch only because its NAME contained
+        "claude-mythos" -- and the anthropic_1p config carried a note to
+        VERIFY that still fired after the 1P string dropped the "anthropic."
+        prefix. It is now declared, and this pins it on the real provider."""
+        async def fake_token(**_kw):
+            return "tok"
+        import services.anthropic_wif as wif
+        monkeypatch.setattr(wif, "get_anthropic_1p_bearer_token", fake_token)
+        await llm_service.call_llm(
+            provider="anthropic-1p",
+            model="claude-mythos-5",
+            messages=[{"role": "user", "content": "hi"}],
+            parameters={"reasoning_effort": "high"},
+            user_service=Mock(),
+            user_id="user-1",
+        )
+        assert captured.get("thinking") == {"type": "adaptive"}
+        assert captured.get("output_config") == {"effort": "high"}
+        assert "reasoning_effort" not in captured
+
+    @pytest.mark.asyncio
+    async def test_style_none_sends_no_reasoning_parameter(
+        self, patched_llm, captured, monkeypatch,
+    ):
+        """"none" is the opt-out: nothing reaches litellm even when a tier asks
+        for reasoning."""
+        model = "us.anthropic.claude-sonnet-4-6"
+        entry = dict(PROVIDER_CONFIG["bedrock"]["models"][model], thinking_style="none")
+        monkeypatch.setitem(PROVIDER_CONFIG["bedrock"]["models"], model, entry)
+        await llm_service.call_llm(
+            provider="bedrock",
+            model=model,
+            messages=[{"role": "user", "content": "hi"}],
+            parameters={"reasoning_effort": "high"},
+            user_service=Mock(),
+            user_id="user-1",
+        )
+        assert "thinking" not in captured
+        assert "output_config" not in captured
+        assert "reasoning_effort" not in captured
+        assert "extra_body" not in captured
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_opus_looking_string_takes_the_default(
+        self, patched_llm, captured,
+    ):
+        """Behaviour change, deliberately: a model string that is NOT a config
+        key used to get the adaptive shape if it contained "claude-opus-4-8".
+        Capabilities now come from config, so an unknown string gets the
+        default. Adding a model means declaring its thinking_style."""
+        await llm_service.call_llm(
+            provider="bedrock",
+            model="us.anthropic.claude-opus-4-8-not-in-config",
+            messages=[{"role": "user", "content": "hi"}],
+            parameters={"reasoning_effort": "high"},
+            user_service=Mock(),
+            user_id="user-1",
+        )
+        assert captured.get("reasoning_effort") == "high"
+        assert "thinking" not in captured
