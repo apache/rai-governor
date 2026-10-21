@@ -12,6 +12,14 @@ pytest-cov==7.1.0
 pytest-mock==3.15.1
 factory_boy==3.3.3
 httpx==0.28.1
+# Security floor, not a direct import — httpx verifies against certifi's own
+# copy of the Mozilla roots, so the host trust store does not govern it. Eight
+# eMudhra intermediate CAs were compromised on 2026-10-20 and certifi
+# 2026.10.19 drops emSign ECC Root CA - G3, the root above them. A floor
+# rather than ==, so later releases are not blocked; and it has to be in THIS
+# file because the Dockerfile's pip layer caches on its content — without a
+# change here, a rebuild reuses the old bundle.
+certifi>=2026.10.19
 Faker==40.31.0
 PyYAML==6.0.3
 CouchDB==1.2
