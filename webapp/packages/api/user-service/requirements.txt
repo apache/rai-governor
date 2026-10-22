@@ -5,6 +5,14 @@ boto3==1.43.49
 python-dotenv==1.2.2
 litellm==1.92.0
 fastmcp==2.12.5
+# Ceiling, not a pin. mcp (pulled in by fastmcp) imports the private
+# pydantic._internal._typing_extra.eval_type_backport, which pydantic
+# 2.14 removed. pydantic is otherwise unpinned and arrives transitively
+# via fastapi[all], fastmcp and litellm -- so adding certifi below
+# busted the pip layer cache, re-resolved it to 2.14.1, and the API
+# failed to import for 24h (2026-10-22). Lift this together with a
+# fastmcp/mcp bump that drops the private API.
+pydantic<2.14
 google-auth==2.56.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
