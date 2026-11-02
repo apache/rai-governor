@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/apache/tooling-gofannon/main/website/static/img/logo_1000x1260.png" alt="Gofannon" width="200">
+  <img src="https://raw.githubusercontent.com/The-AI-Alliance/gofannon/main/website/static/img/logo_1000x1260.png" alt="Gofannon" width="200">
 </p>
 
 # Gofannon
