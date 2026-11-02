@@ -1,0 +1,165 @@
+# Dependabot configuration for the Apache maintenance fork.
+#
+# This file exists mainly to say what Dependabot should NOT watch. Without it,
+# Dependabot auto-detects every manifest in the tree, which includes
+# website/package-lock.json -- the Docusaurus site. That site is built and
+# deployed from upstream, not from this fork; the directory is here only as a
+# consequence of syncing. Watching it produced fifteen open pull requests and
+# eighty-one alerts that nobody here could act on, which is how the handful
+# that mattered got lost.
+#
+# Updates are grouped so a week of transitive churn arrives as a few reviewable
+# pull requests rather than twenty. Security updates are deliberately left
+# ungrouped: those should stand alone and be mergeable on their own.
+#
+# NOTE on requirements.lock: Dependabot's pip ecosystem detects
+# requirements.txt and will propose raising the constraints there, but it does
+# NOT recognise a file named requirements.lock, so it will not regenerate it.
+# The lock therefore has to be refreshed deliberately:
+#
+#   cd webapp/packages/api/user-service
+#   uv pip compile requirements.txt --universal --python-version 3.12 \
+#     --no-header -o requirements.lock
+#
+# The CI drift check only verifies the lock is a faithful resolution of the
+# constraints -- it cannot tell you the lock is old. If you want Dependabot to
+# maintain the lock directly, it has to be renamed to something the pip
+# ecosystem recognises, such as requirements-lock.txt.
+
+version: 2
+
+updates:
+  # --- Python: the API service, the only tree that runs in production -------
+  - package-ecosystem: pip
+    directory: /webapp/packages/api/user-service
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    # Raise the floor in requirements.txt rather than pinning: that file states
+    # constraints, and requirements.lock is what pins.
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    groups:
+      python-test-tooling:
+        patterns:
+          - pytest*
+          - factory_boy
+          - faker
+          - Faker
+        update-types:
+          - minor
+          - patch
+      python-minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - litellm
+          - fastmcp
+          - certifi
+          - pydantic
+        update-types:
+          - minor
+          - patch
+    # These four have load-bearing ceilings or floors documented in
+    # requirements.txt. They get their own pull requests so the reasoning in
+    # those comments is read before the bound moves.
+    #   litellm  <1.106  mcp.types.CacheableResult does not exist
+    #   fastmcp  <4      4.0 ships metadata-only, drops fastmcp.tools.tool
+    #   certifi  floor   eMudhra intermediate CA compromise
+    #   pydantic          caused a 24h outage via mcp's private-API import
+
+  # --- Node: the webapp workspace root -------------------------------------
+  - package-ecosystem: npm
+    directory: /webapp
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      js-build-and-test-tooling:
+        patterns:
+          - vite
+          - vitest
+          - "@vitejs/*"
+          - eslint*
+          - "@eslint/*"
+          - postcss*
+          - browserslist
+        update-types:
+          - minor
+          - patch
+      js-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # pnpm's version is declared in webapp/package.json's packageManager
+      # field, with an integrity hash, and corepack resolves it from there.
+      # A bump is fine but it has to land together with the lockfile, so take
+      # it deliberately rather than as part of a group.
+      - dependency-name: pnpm
+        update-types:
+          - version-update:semver-major
+
+  # --- Node: the frontend package ------------------------------------------
+  - package-ecosystem: npm
+    directory: /webapp/packages/webui
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      webui-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # react-router is shipped to the browser, so a major goes through its
+      # own review rather than arriving in a group.
+      - dependency-name: react-router
+        update-types:
+          - version-update:semver-major
+      - dependency-name: react-router-dom
+        update-types:
+          - version-update:semver-major
+
+  # --- GitHub Actions -------------------------------------------------------
+  # Worth watching: the ASF enterprise allowlist only permits third-party
+  # actions at approved SHAs, so a stale pin becomes a hard CI failure rather
+  # than a warning. Grouped, since these are usually one-line bumps.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+# Deliberately absent: website/. See the note at the top of this file.
