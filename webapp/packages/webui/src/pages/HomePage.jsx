@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import RunningJobsModule from '../components/RunningJobsModule';  // ISSUE-006
+import RunningJobsModule from '../components/RunningJobsModule';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -418,7 +418,7 @@ const HomePage = () => {
         </Box>
         {/* end column 1 stack */}
 
-        {/* Column 2: cross-agent runs overview (ISSUE-006) */}
+        {/* Column 2: cross-agent runs overview */}
         <RunningJobsModule />
 
         {/* Column 3: Data Stores Table */}

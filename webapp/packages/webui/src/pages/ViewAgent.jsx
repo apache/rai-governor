@@ -311,7 +311,7 @@ const ViewAgent = () => {
         docstring: agent.docstring,
         friendlyName: canonicalName,
         dataStoreConfig: agent.dataStoreConfig || [],
-        // ISSUE-008: persist per-agent env vars. Filter empty rows so the
+        // persist per-agent env vars. Filter empty rows so the
         // backend doesn't store {key: '', value: ''} blanks the user left
         // behind mid-edit.
         envVars: (agent.envVars || []).filter((ev) => ev.key && ev.key.trim()),
@@ -369,7 +369,7 @@ const ViewAgent = () => {
         docstring: agent.docstring,
         friendlyName: canonicalName,
         dataStoreConfig: agent.dataStoreConfig || [],
-        // ISSUE-008: persist per-agent env vars on the create path too.
+        // persist per-agent env vars on the create path too.
         envVars: (agent.envVars || []).filter((ev) => ev.key && ev.key.trim()),
       };
       const savedAgent = await agentService.saveAgent(agentData);
@@ -787,7 +787,7 @@ const ViewAgent = () => {
     syncToContext('outputSchema', newSchema);
   };
 
-  // ISSUE-008: env vars don't flow through AgentCreationFlowContext today
+  // env vars don't flow through AgentCreationFlowContext today
   // (they're not needed by the code generator), so we only mirror the value
   // into local agent state. The context could grow envVars later if some
   // other screen needs to read them mid-creation-flow.
@@ -1062,7 +1062,7 @@ const ViewAgent = () => {
             </AccordionDetails>
         </Accordion>
 
-        {/* Environment Variables Section (ISSUE-008) */}
+        {/* Environment Variables Section */}
         <Accordion>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Typography>Environment Variables</Typography>

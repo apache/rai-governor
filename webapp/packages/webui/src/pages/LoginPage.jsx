@@ -96,7 +96,7 @@ const LoginPage = () => {
 
   useEffect(() => {
     if (user) {
-      // ISSUE-010: respect ?returnTo=<path> so the user lands back where
+      // respect ?returnTo=<path> so the user lands back where
       // the session-expired modal was triggered. Be conservative -- only
       // honor same-origin relative paths to avoid open-redirect.
       const params = new URLSearchParams(window.location.search);

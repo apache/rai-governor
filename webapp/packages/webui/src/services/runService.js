@@ -1,6 +1,6 @@
 // webapp/packages/webui/src/services/runService.js
 //
-// ISSUE-005/006 — thin client for the run registry endpoints (ISSUE-003).
+// thin client for the run registry endpoints.
 // All requests inherit credentials/cookie behavior from fetchInterceptor.
 
 import appConfig from '../config';
@@ -43,7 +43,7 @@ export async function getRun(runId) {
   return jsonOrThrow(resp, 'getRun');
 }
 
-/** POST /runs/{runId}/stop — see ISSUE-007. Returns 202 on success. */
+/** POST /runs/{runId}/stop. Returns 202 on success. */
 export async function stopRun(runId) {
   const resp = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/stop`, {
     method: 'POST',

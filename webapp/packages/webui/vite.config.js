@@ -31,15 +31,15 @@ export default defineConfig({
             const noisy = ['ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ECONNABORTED'];
             if (noisy.includes(code)) {
               const url = req && req.url ? req.url : '?';
-              process.stderr.write(`[vite proxy] ${code} ${url} (transient, ignored)\n`);
+              globalThis.process.stderr.write(`[vite proxy] ${code} ${url} (transient, ignored)\n`);
             } else {
-              process.stderr.write(`[vite proxy] error: ${err.stack || err.message}\n`);
+              globalThis.process.stderr.write(`[vite proxy] error: ${err.stack || err.message}\n`);
             }
             if (res && typeof res.writeHead === 'function' && !res.headersSent) {
               try {
                 res.writeHead(502, { 'Content-Type': 'text/plain' });
                 res.end('Bad Gateway (dev proxy: ' + code + ')');
-              } catch {}
+              } catch { /* response already closed or headers sent */ }
             }
           });
         },

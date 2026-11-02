@@ -1,6 +1,6 @@
 // webapp/packages/webui/src/components/RunningJobsModule.jsx
 //
-// ISSUE-006 — cross-agent view of recent and current runs on the home page.
+// cross-agent view of recent and current runs on the home page.
 // Polls GET /runs every 5s and renders each non-terminal run plus the
 // most recent N completed runs. Status chip color encodes terminal
 // state.

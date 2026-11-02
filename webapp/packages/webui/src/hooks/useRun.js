@@ -1,7 +1,7 @@
 // webapp/packages/webui/src/hooks/useRun.js
 //
-// ISSUE-005 — subscribe to a run's SSE stream with replay-then-live
-// semantics. Backed by GET /runs/{run_id}/stream from ISSUE-003's run
+// subscribe to a run's SSE stream with replay-then-live
+// semantics. Backed by GET /runs/{run_id}/stream from the run
 // registry.
 //
 // The hook OPENS the stream on mount and CLOSES it on unmount. Closing
@@ -64,7 +64,7 @@ export default function useRun(runId) {
         preflight = await fetch(`/runs/${encodeURIComponent(runId)}`, {
           credentials: 'include',
         });
-      } catch (e) {
+      } catch {
         // Network error or fetch aborted. Treat as disconnected;
         // consumer can retry via reconnect().
         if (!cancelled) setStatus('disconnected');

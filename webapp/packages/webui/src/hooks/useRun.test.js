@@ -1,4 +1,4 @@
-// ISSUE-005 — useRun subscribes via EventSource and surfaces events + status.
+// useRun subscribes via EventSource and surfaces events + status.
 //
 // NOTE ON TIMING: useRun does a pre-flight fetch to /runs/{id} before it
 // opens the EventSource — that fetch is the auth entrypoint, because
@@ -44,23 +44,23 @@ describe('useRun', () => {
   let originalFetch;
 
   beforeEach(() => {
-    originalES = global.EventSource;
-    originalFetch = global.fetch;
-    global.EventSource = FakeEventSource;
+    originalES = globalThis.EventSource;
+    originalFetch = globalThis.fetch;
+    globalThis.EventSource = FakeEventSource;
     FakeEventSource.instances = [];
     // jsdom needs the CLOSED constant on the class
-    global.EventSource.CLOSED = 2;
+    globalThis.EventSource.CLOSED = 2;
     // The hook pre-flights GET /runs/{id} for auth, then polls it every 30s.
     // Without this mock the preflight rejects, the hook sets 'disconnected',
     // and no EventSource is ever constructed.
-    global.fetch = vi.fn(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }),
     );
   });
 
   afterEach(() => {
-    global.EventSource = originalES;
-    global.fetch = originalFetch;
+    globalThis.EventSource = originalES;
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -114,10 +114,10 @@ describe('useRun', () => {
     expect(es.readyState).toBe(2);
   });
 
-  // --- behaviours the pre-auth hook did not have -------------------------
+  // --- behaviors the pre-auth hook did not have -------------------------
 
   it('reports not_found when the run does not exist', async () => {
-    global.fetch = vi.fn(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) }),
     );
     const { result } = renderHook(() => useRun('missing'));
@@ -127,7 +127,7 @@ describe('useRun', () => {
   });
 
   it('reports disconnected (not error) when the session has expired', async () => {
-    global.fetch = vi.fn(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) }),
     );
     const { result } = renderHook(() => useRun('r-1'));

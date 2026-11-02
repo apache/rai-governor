@@ -1,6 +1,6 @@
 // webapp/packages/webui/src/components/AuthExpiryModal.jsx
 //
-// ISSUE-010 -- listens for the `auth:session-expired` custom event dispatched
+// listens for the `auth:session-expired` custom event dispatched
 // by services/fetchInterceptor.js when the API returns HTTP 401 with the
 // X-Auth-Reason: session_expired header. Renders a modal prompting the user
 // to sign in again, capturing the path they were on so we can return them

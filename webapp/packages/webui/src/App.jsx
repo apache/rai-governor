@@ -8,7 +8,7 @@ import config from './config';
 import { useAuth } from './contexts/AuthContextValue';
 import { useLocation } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
-import AuthExpiryModal from './components/AuthExpiryModal';  // ISSUE-010
+import AuthExpiryModal from './components/AuthExpiryModal';
 import observabilityService from './services/observabilityService';
 import Layout from './components/Layout';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -83,7 +83,7 @@ function App() {
   return (
     <ErrorBoundary>
     <Router>
-      {/* ISSUE-010: globally listens for auth:session-expired event */}
+      {/* globally listens for auth:session-expired event */}
       <AuthExpiryModal />
       <RouteChangeTracker />
       <Routes>

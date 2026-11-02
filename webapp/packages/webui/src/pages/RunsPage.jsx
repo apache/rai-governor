@@ -1,7 +1,7 @@
 // webapp/packages/webui/src/pages/RunsPage.jsx
 //
 // All runs index — cross-agent table view of every run currently
-// known to the in-memory RunRegistry (ISSUE-003). Linked from the
+// known to the in-memory RunRegistry. Linked from the
 // home page Running Jobs module's "View all" button.
 //
 // Polls GET /runs every 5s like the home page module does, but

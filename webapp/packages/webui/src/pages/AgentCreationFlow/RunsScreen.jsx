@@ -155,14 +155,14 @@ const RunsScreen = () => {
   const [output, setOutput] = useState(null);
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  // ISSUE-007 follow-up: track the active run's id so we can render
+  // track the active run's id so we can render
   // a Stop button while it's in flight. Set from the first 'run_id'
   // SSE event; cleared in handleRun's finally.
   const [currentRunId, setCurrentRunId] = useState(null);
   // AbortController for the streaming fetch. Stop button uses this to
   // cut the client off immediately, then best-effort POSTs to
   // /runs/{id}/stop so the backend cancels server-side work via the
-  // cancel-token check that ISSUE-007 wired into data_store_service
+  // cancel-token check wired into data_store_service
   // and llm_service.
   const abortRef = React.useRef(null);
   // Warnings from the server-side output-schema validator. Advisory only —
@@ -468,7 +468,7 @@ const RunsScreen = () => {
         // there is raised outside this block and is NOT caught here. That
         // updater has its own guard for exactly that reason.
         try {
-        // ISSUE-007 follow-up: capture runId from the first 'run_id' event
+        // capture runId from the first 'run_id' event
         // so the Stop button becomes enabled.
         if (event && event.type === 'run_id' && event.data && event.data.runId) {
           setCurrentRunId(event.data.runId);
@@ -541,7 +541,7 @@ const RunsScreen = () => {
         }
       };
 
-      // ISSUE-007 follow-up: AbortController for the streaming fetch.
+      // AbortController for the streaming fetch.
       // Stored in the ref so handleStop can call .abort() on it.
       const abort = new AbortController();
       abortRef.current = abort;
@@ -591,7 +591,7 @@ const RunsScreen = () => {
         });
       }
     } catch (err) {
-      // ISSUE-007 follow-up: distinguish a user-initiated stop from a real
+      // distinguish a user-initiated stop from a real
       // transport error. AbortController.abort() makes the streaming fetch's
       // body stream throw with name='AbortError' or a 'BodyStreamBuffer was
       // aborted' message depending on browser. Neither is a failure -- the
@@ -663,9 +663,9 @@ const RunsScreen = () => {
     }
   };
 
-  // ISSUE-007 follow-up: stop a run in flight. Client-side abort frees
+  // stop a run in flight. Client-side abort frees
   // the user from the running view immediately; backend POST sets the
-  // cancel token, which ISSUE-007 already wired into data_store_service
+  // cancel token, which is wired into data_store_service
   // and llm_service so the agent's next structural boundary raises.
   const handleStop = async () => {
     // Optimistic UX: flip the button to 'Stopping...' disabled state

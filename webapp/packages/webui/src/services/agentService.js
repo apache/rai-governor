@@ -135,7 +135,7 @@ class AgentService {
       llmSettings,
       outputSchema,
       friendlyName,
-      // ISSUE-008: per-agent env vars threaded to the runtime overlay
+      // per-agent env vars threaded to the runtime overlay
       envVars,
       // Threaded through so the run registry can record which saved
       // agent this run belongs to. The runs UI uses this for the
@@ -154,7 +154,7 @@ class AgentService {
       body: JSON.stringify(requestBody),
       // Cookies must flow for session auth.
       credentials: 'include',
-      // ISSUE-007 follow-up: caller can pass an AbortSignal to stop the
+      // caller can pass an AbortSignal to stop the
       // stream from the client side.
       signal: abortSignal,
     });
@@ -223,7 +223,7 @@ class AgentService {
             console.error('[AgentService] onEvent handler threw:', err);
           }
         } else if (frame.event === 'run_id') {
-          // ISSUE-007 follow-up: surface runId to the caller so the
+          // surface runId to the caller so the
           // Stop button can address the run. Wrapped in {type, data}
           // so the caller can disambiguate from raw trace events.
           try {

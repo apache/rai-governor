@@ -47,7 +47,7 @@ function installFetchInterceptor() {
     }
     const resp = await originalFetch(input, init);
 
-    // ISSUE-010: surface session expiry as a global event so a top-level
+    // surface session expiry as a global event so a top-level
     // AuthExpiryModal can react. Distinguish session_expired (had a
     // cookie, server rejected it) from not_authenticated (never had one)
     // -- only session_expired warrants the modal. Genuinely-anonymous
