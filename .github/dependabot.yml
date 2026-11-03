@@ -1,30 +1,38 @@
 # Dependabot configuration for the Apache maintenance fork.
 #
-# This file exists mainly to say what Dependabot should NOT watch. Without it,
-# Dependabot auto-detects every manifest in the tree, which includes
-# website/package-lock.json -- the Docusaurus site. That site is built and
-# deployed from upstream, not from this fork; the directory is here only as a
-# consequence of syncing. Watching it produced fifteen open pull requests and
-# eighty-one alerts that nobody here could act on, which is how the handful
-# that mattered got lost.
+# Three jobs:
 #
-# Updates are grouped so a week of transitive churn arrives as a few reviewable
-# pull requests rather than twenty. Security updates are deliberately left
-# ungrouped: those should stand alone and be mergeable on their own.
+#   1. Don't watch website/. The Docusaurus site is built and deployed from
+#      upstream, not from this fork; the directory is here only as a
+#      consequence of syncing. Watching it produced fifteen pull requests and
+#      eighty-one alerts nobody here could act on, which is how the handful
+#      that mattered got lost.
 #
-# NOTE on requirements.lock: Dependabot's pip ecosystem detects
-# requirements.txt and will propose raising the constraints there, but it does
-# NOT recognise a file named requirements.lock, so it will not regenerate it.
-# The lock therefore has to be refreshed deliberately:
+#   2. Don't propose lifting a bound that exists for a reason. Every ceiling in
+#      requirements.txt is there because crossing it broke something, and the
+#      reasoning is in the comments beside it. Those are listed under `ignore`
+#      below with the version ranges spelled out, so Dependabot proposes moves
+#      within the bound and never the bound itself.
+#
+#   3. Wait before proposing. `cooldown` holds a release for seven days, which
+#      is the window in which a yanked or compromised package is usually
+#      caught. Security updates are not subject to grouping, so a genuine fix
+#      still arrives as its own reviewable pull request.
+#
+# NOTE on requirements.lock: Dependabot's pip ecosystem recognises
+# requirements.txt but NOT a file named requirements.lock, so it will not
+# regenerate the lock. Until the lock is renamed to something the ecosystem
+# understands -- requirements-lock.txt -- or the project moves to
+# pyproject.toml plus uv.lock and the `uv` ecosystem, every pip pull request
+# needs the lock refreshed by hand before CI's drift check will pass:
 #
 #   cd webapp/packages/api/user-service
 #   uv pip compile requirements.txt --universal --python-version 3.12 \
 #     --no-header -o requirements.lock
 #
-# The CI drift check only verifies the lock is a faithful resolution of the
-# constraints -- it cannot tell you the lock is old. If you want Dependabot to
-# maintain the lock directly, it has to be renamed to something the pip
-# ecosystem recognises, such as requirements-lock.txt.
+# Once the lock is Dependabot-visible, switch the pip block below to
+# `versioning-strategy: lockfile-only`: the constraints are deliberate human
+# decisions and Dependabot should refresh the resolution, not widen the bounds.
 
 version: 2
 
@@ -37,14 +45,31 @@ updates:
       day: tuesday
       time: "06:00"
       timezone: America/Los_Angeles
-    # Raise the floor in requirements.txt rather than pinning: that file states
-    # constraints, and requirements.lock is what pins.
+    cooldown:
+      default-days: 7
     versioning-strategy: increase
+    allow:
+      - dependency-type: direct
     open-pull-requests-limit: 5
     labels:
       - dependencies
       - python
+    ignore:
+      # fastmcp 4.0 ships metadata-only and drops fastmcp.tools.tool, which
+      # mcp_client_service and remote_mcp_client both import. Dependabot
+      # proposed 4.1.4 on 2026-11-02; it would not have started.
+      - dependency-name: fastmcp
+        versions:
+          - ">=4"
+      # litellm 1.106.0 imports mcp.types.CacheableResult, which no released
+      # mcp provides -- re-verified against mcp 1.30.0 on 2026-11-02. Every
+      # litellm.aresponses call raises APIConnectionError.
+      - dependency-name: litellm
+        versions:
+          - ">=1.106"
     groups:
+      # Security fixes are never grouped, so each arrives on its own and can
+      # be merged alone. These groups are for routine movement only.
       python-test-tooling:
         patterns:
           - pytest*
@@ -58,20 +83,44 @@ updates:
         patterns:
           - "*"
         exclude-patterns:
+          # These carry documented bounds or floors. They get individual pull
+          # requests so the reasoning beside them is read before anything moves.
           - litellm
           - fastmcp
           - certifi
-          - pydantic
         update-types:
           - minor
           - patch
-    # These four have load-bearing ceilings or floors documented in
-    # requirements.txt. They get their own pull requests so the reasoning in
-    # those comments is read before the bound moves.
-    #   litellm  <1.106  mcp.types.CacheableResult does not exist
-    #   fastmcp  <4      4.0 ships metadata-only, drops fastmcp.tools.tool
-    #   certifi  floor   eMudhra intermediate CA compromise
-    #   pydantic          caused a 24h outage via mcp's private-API import
+
+  # --- Container base images ------------------------------------------------
+  # Previously unwatched, and there are real problems here:
+  #   Dockerfile.couchdb-setup  FROM alpine:latest     unpinned
+  #   Dockerfile.webui          FROM nginx:1.23-alpine 1.23 is from 2022
+  #   Dockerfile.api            FROM python:3.12-slim
+  #   Dockerfile.webui          FROM node:22-alpine
+  # An unpinned `latest` is the same mutable-tag exposure that cost us the
+  # MinIO image when it was deleted from Docker Hub.
+  - package-ecosystem: docker
+    directory: /webapp/infra/docker
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+    ignore:
+      # Python minor upgrades change the interpreter the image ships and the
+      # wheels that resolve against it. Patch-level only; a move to 3.13 is a
+      # deliberate decision taken with requirements.lock regenerated for it.
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
 
   # --- Node: the webapp workspace root -------------------------------------
   - package-ecosystem: npm
@@ -81,16 +130,33 @@ updates:
       day: tuesday
       time: "06:00"
       timezone: America/Los_Angeles
+    cooldown:
+      default-days: 7
+    # Direct dependencies only. The transitive tail -- brace-expansion,
+    # js-yaml, nanoid, protobufjs and the rest -- is cleared by regenerating
+    # pnpm-lock.yaml, not by thirty separate branches. Those alerts still
+    # appear in the security tab; they just do not each become a pull request.
+    allow:
+      - dependency-type: direct
     open-pull-requests-limit: 5
     labels:
       - dependencies
       - javascript
+    ignore:
+      # pnpm's version is declared in webapp/package.json's packageManager
+      # field with an integrity hash, and corepack resolves it from there. A
+      # bump has to land together with the lockfile, so take it deliberately.
+      - dependency-name: pnpm
+        update-types:
+          - version-update:semver-major
     groups:
       js-build-and-test-tooling:
         patterns:
           - vite
           - vitest
           - "@vitejs/*"
+          - "@vitest/*"
+          - jsdom
           - eslint*
           - "@eslint/*"
           - postcss*
@@ -104,14 +170,6 @@ updates:
         update-types:
           - minor
           - patch
-    ignore:
-      # pnpm's version is declared in webapp/package.json's packageManager
-      # field, with an integrity hash, and corepack resolves it from there.
-      # A bump is fine but it has to land together with the lockfile, so take
-      # it deliberately rather than as part of a group.
-      - dependency-name: pnpm
-        update-types:
-          - version-update:semver-major
 
   # --- Node: the frontend package ------------------------------------------
   - package-ecosystem: npm
@@ -121,10 +179,23 @@ updates:
       day: tuesday
       time: "06:00"
       timezone: America/Los_Angeles
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-type: direct
     open-pull-requests-limit: 5
     labels:
       - dependencies
       - javascript
+    ignore:
+      # react-router is the one dependency in this tree that reaches a
+      # browser, so a major goes through its own review.
+      - dependency-name: react-router
+        update-types:
+          - version-update:semver-major
+      - dependency-name: react-router-dom
+        update-types:
+          - version-update:semver-major
     groups:
       webui-minor-and-patch:
         patterns:
@@ -132,20 +203,17 @@ updates:
         update-types:
           - minor
           - patch
-    ignore:
-      # react-router is shipped to the browser, so a major goes through its
-      # own review rather than arriving in a group.
-      - dependency-name: react-router
-        update-types:
-          - version-update:semver-major
-      - dependency-name: react-router-dom
-        update-types:
-          - version-update:semver-major
 
   # --- GitHub Actions -------------------------------------------------------
-  # Worth watching: the ASF enterprise allowlist only permits third-party
-  # actions at approved SHAs, so a stale pin becomes a hard CI failure rather
-  # than a warning. Grouped, since these are usually one-line bumps.
+  # Deliberately NOT grouped. The ASF enterprise allowlist only permits
+  # third-party actions at approved SHAs, so a bump to an unapproved SHA is a
+  # hard startup failure, not a warning -- the workflow produces no jobs at
+  # all, as pnpm/action-setup@v4 did for five months. In a group, one bad SHA
+  # fails every workflow in the group and the error does not say which bump
+  # caused it. Individual pull requests isolate that.
+  #
+  # The approved list is actions.yml in apache/infrastructure-actions, and
+  # additions are self-service by pull request there.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -153,13 +221,11 @@ updates:
       day: tuesday
       time: "06:00"
       timezone: America/Los_Angeles
-    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
     labels:
       - dependencies
       - ci
-    groups:
-      github-actions:
-        patterns:
-          - "*"
 
 # Deliberately absent: website/. See the note at the top of this file.
