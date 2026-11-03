@@ -27,11 +27,20 @@ export default defineConfig({
         'src/theme.js',
         'src/config.js',
       ],
+      // Recalibrated for vitest 5. Coverage now counts only files imported
+      // by tests, where v2 counted every matching file, and v8 branch
+      // counting is AST-aware rather than approximate. The old figures
+      // (lines/statements 15, branches 70) described a different
+      // population and were not a meaningful gate.
+      //
+      // Set just under the measured values: statements 82.7, lines 85.1,
+      // functions 81.6, branches 62.0. Weakest areas are ProfileMenu
+      // (22% branch), useRun (35%) and userService (0%).
       thresholds: {
-        lines: 15,
-        functions: 45,
-        branches: 70,
-        statements: 15,
+        lines: 80,
+        functions: 75,
+        branches: 58,
+        statements: 78,
       },
     },
     include: ['**/*.{test,spec}.{js,jsx,ts,tsx}'],
