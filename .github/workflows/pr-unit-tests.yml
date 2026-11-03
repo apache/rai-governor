@@ -89,7 +89,7 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'webapp/packages/api/user-service/requirements.lock'
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
 
       # requirements.lock must stay a faithful resolution of requirements.txt.
       # Recompiling preserves existing pins, so this only fails when the
