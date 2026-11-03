@@ -30,15 +30,21 @@ jobs:
       # its built-in `cache: pnpm` is replaced by the explicit cache step
       # below -- that option resolves the pnpm store path at the time
       # setup-node runs, when pnpm is not yet on PATH.
+      #
+      # The version is NOT named here. corepack reads it from the
+      # packageManager field in webapp/package.json, hash included, so there
+      # is one place to update when pnpm moves and the download is integrity
+      # checked. That field is why every pnpm step runs inside ./webapp:
+      # there is no package.json at the repo root for corepack to resolve.
       - name: Activate pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.34.4 --activate
-          pnpm --version
+        run: corepack enable
 
       - name: Locate pnpm store
         id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ./webapp
+        run: |
+          pnpm --version
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
         with:
@@ -79,13 +85,31 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
           cache: 'pip'
-          cache-dependency-path: 'webapp/packages/api/user-service/requirements.txt'
+          cache-dependency-path: 'webapp/packages/api/user-service/requirements.lock'
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+
+      # requirements.lock must stay a faithful resolution of requirements.txt.
+      # Recompiling preserves existing pins, so this only fails when the
+      # constraints changed and the lock was not regenerated -- not merely
+      # because a dependency published a new release.
+      - name: Verify requirements.lock is in sync
+        working-directory: ./webapp/packages/api/user-service
+        run: |
+          cp requirements.lock /tmp/lock.committed
+          uv pip compile requirements.txt --universal --python-version 3.12 \
+            --no-header -o requirements.lock
+          if ! diff -u /tmp/lock.committed requirements.lock; then
+            echo "::error::requirements.lock is stale. Regenerate it with:"
+            echo "  uv pip compile requirements.txt --universal --python-version 3.12 --no-header -o requirements.lock"
+            exit 1
+          fi
 
       - name: Install Python dependencies
         working-directory: ./webapp/packages/api/user-service
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.lock
 
       - name: Run backend unit tests with coverage
         working-directory: ./webapp/packages/api/user-service
@@ -121,15 +145,21 @@ jobs:
       # its built-in `cache: pnpm` is replaced by the explicit cache step
       # below -- that option resolves the pnpm store path at the time
       # setup-node runs, when pnpm is not yet on PATH.
+      #
+      # The version is NOT named here. corepack reads it from the
+      # packageManager field in webapp/package.json, hash included, so there
+      # is one place to update when pnpm moves and the download is integrity
+      # checked. That field is why every pnpm step runs inside ./webapp:
+      # there is no package.json at the repo root for corepack to resolve.
       - name: Activate pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.34.4 --activate
-          pnpm --version
+        run: corepack enable
 
       - name: Locate pnpm store
         id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        working-directory: ./webapp
+        run: |
+          pnpm --version
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
         with:

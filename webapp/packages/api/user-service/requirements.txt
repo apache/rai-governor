@@ -1,42 +1,60 @@
-fastapi[all]==0.139.0
-starlette==1.3.1
-uvicorn[standard]==0.51.0
-boto3==1.43.49
-python-dotenv==1.2.2
-litellm==1.92.0
-fastmcp==2.12.5
-# Ceiling, not a pin. mcp (pulled in by fastmcp) imports the private
-# pydantic._internal._typing_extra.eval_type_backport, which pydantic
-# 2.14 removed. pydantic is otherwise unpinned and arrives transitively
-# via fastapi[all], fastmcp and litellm -- so adding certifi below
-# busted the pip layer cache, re-resolved it to 2.14.1, and the API
-# failed to import for 24h (2026-10-22). Lift this together with a
-# fastmcp/mcp bump that drops the private API.
-pydantic<2.14
-google-auth==2.56.0
-pytest==9.1.1
-pytest-asyncio==1.4.0
-pytest-cov==7.1.0
-pytest-mock==3.15.1
-factory_boy==3.3.3
-httpx==0.28.1
-# Security floor, not a direct import — httpx verifies against certifi's own
-# copy of the Mozilla roots, so the host trust store does not govern it. Eight
-# eMudhra intermediate CAs were compromised on 2026-10-20 and certifi
-# 2026.10.19 drops emSign ECC Root CA - G3, the root above them. A floor
-# rather than ==, so later releases are not blocked; and it has to be in THIS
-# file because the Dockerfile's pip layer caches on its content — without a
-# change here, a rebuild reuses the old bundle.
+# Floor, not a pin. FastAPI is pre-1.0 and changes internals across minor
+# releases: _IncludedRouter arrived somewhere between 0.120 and 0.139 and has
+# no .path attribute, which broke the route-registration test. Deploys resolve
+# from requirements.lock, so no ceiling is needed here -- the lock is what
+# pins, and CI resolves against the lock too.
+fastapi[all]>=0.139
+uvicorn[standard]
+boto3  # S3-compatible object storage (SeaweedFS locally)
+python-dotenv
+# Ceiling, not a pin. litellm 1.106.0 added
+# 'from mcp.types import CacheableResult' to
+# litellm/proxy/_experimental/mcp_server/catalog.py, which
+# _responses_try_dispatch_mcp_gateway loads on every litellm.aresponses
+# call. No released mcp defines that symbol (checked 1.16.0 - 2.3.0), so
+# aresponses raises APIConnectionError and the Responses API path is dead.
+# 1.105.0 and earlier are clean. Lift this when litellm fixes the import.
+# Re-verified 2026-11-02 against mcp 1.30.0: still missing, still raises.
+#
+# The floor is a security floor, not a compatibility one. GHSA advisories
+# affecting litellm are patched in 1.95.0 and 1.100.4; with no lockfile in
+# this tree, a resolver is free to pick the lowest permitted version, so the
+# floor is what actually keeps a vulnerable release out of an install.
+litellm>=1.100.4,<1.106
+# Security floor. The eMudhra intermediate CAs were compromised in October
+# 2026 and certifi dropped them in 2026.10.19. httpx verifies against
+# certifi's own copy of the Mozilla roots, so the host trust store does not
+# govern it. litellm 1.106 requires this itself and nothing else here does,
+# so capping litellm above would otherwise remove the floor.
 certifi>=2026.10.19
-Faker==40.31.0
-PyYAML==6.0.3
-CouchDB==1.2
-gunicorn==26.0.0
-firebase_admin==7.5.0
-firebase_functions==0.6.0
-google-cloud-storage==3.13.0
-cffi==2.1.0
-a2wsgi==1.10.10
-google-cloud-logging==3.16.1
-ldap3==2.9.1
-awscrt==0.35.0
+# Security floor. Advisories against fastmcp are patched in 2.13.0, 2.14.0,
+# 2.14.2 and 3.2.0, the last being an SSRF and path traversal in the OpenAPI
+# provider. Nothing here constructs a server from an OpenAPI spec -- fastmcp
+# is used only as a client (fastmcp.Client, fastmcp.tools.tool,
+# fastmcp.client.auth) -- but the floor costs nothing and removes the
+# question. Ceiling stays at 4: fastmcp 4.0 ships metadata-only and drops
+# fastmcp.tools.tool.
+fastmcp>=3.2.0,<4
+google-auth
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+factory-boy>=3.3.0
+httpx>=0.25.0
+faker>=22.0.0
+PyYAML
+CouchDB>=1.2
+gunicorn
+firebase-admin>=6.0.0
+firebase-functions>=0.2.0
+google-cloud-storage
+cffi
+a2wsgi
+google-cloud-logging
+ldap3>=2.9
+
+# Not imported directly. botocore's login credential provider requires the AWS
+# Common Runtime when AWS_PROFILE is set, which is how local dev authenticates
+# to Bedrock; without it boto3 raises MissingDependencyException. Added 4811cda.
+awscrt>=0.20

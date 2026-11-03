@@ -15,11 +15,12 @@ os.environ["AWS_ACCESS_KEY_ID"] = "test_key"
 os.environ["AWS_SECRET_ACCESS_KEY"] = "test_secret"
 os.environ["AWS_REGION"] = "us-east-1"
 os.environ["S3_BUCKET_NAME"] = "test-bucket"
-os.environ["S3_ENDPOINT_URL"] = "http://test-seaweedfs:9000"
-# litellm fetches its model cost map from the network at import unless this
-# is set. Capability flags the gates consult then change under the suite
-# with no code change -- which is how test_mythos_is_excluded_despite_being_claude
-# started failing. Pinning litellm does not pin litellm's model data.
+os.environ["S3_ENDPOINT_URL"] = "http://test-seaweedfs:8333"
+# litellm fetches its model cost map over the network at import unless this is
+# set. The capability flags the provider gates consult come from that map, so
+# without it the flags -- and therefore which models the gates admit -- change
+# under the suite with no code change here, and a test can start failing on a
+# day nobody touched the repo. Pinning litellm does not pin litellm's data.
 os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 from app_factory import create_app
