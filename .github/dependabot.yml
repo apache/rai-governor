@@ -1,43 +1,21 @@
-# Dependabot configuration for the Apache maintenance fork.
+# website/ is intentionally not watched: the Docusaurus site is built and
+# deployed from upstream, not from this fork.
 #
-# Three jobs:
-#
-#   1. Don't watch website/. The Docusaurus site is built and deployed from
-#      upstream, not from this fork; the directory is here only as a
-#      consequence of syncing. Watching it produced fifteen pull requests and
-#      eighty-one alerts nobody here could act on, which is how the handful
-#      that mattered got lost.
-#
-#   2. Don't propose lifting a bound that exists for a reason. Every ceiling in
-#      requirements.txt is there because crossing it broke something, and the
-#      reasoning is in the comments beside it. Those are listed under `ignore`
-#      below with the version ranges spelled out, so Dependabot proposes moves
-#      within the bound and never the bound itself.
-#
-#   3. Wait before proposing. `cooldown` holds a release for seven days, which
-#      is the window in which a yanked or compromised package is usually
-#      caught. Security updates are not subject to grouping, so a genuine fix
-#      still arrives as its own reviewable pull request.
-#
-# NOTE on requirements.lock: Dependabot's pip ecosystem recognises
-# requirements.txt but NOT a file named requirements.lock, so it will not
-# regenerate the lock. Until the lock is renamed to something the ecosystem
-# understands -- requirements-lock.txt -- or the project moves to
-# pyproject.toml plus uv.lock and the `uv` ecosystem, every pip pull request
-# needs the lock refreshed by hand before CI's drift check will pass:
+# requirements.lock is not maintained by Dependabot — the pip ecosystem does not
+# recognise that filename. Regenerate it on any pip update before CI's drift
+# check will pass:
 #
 #   cd webapp/packages/api/user-service
 #   uv pip compile requirements.txt --universal --python-version 3.12 \
 #     --no-header -o requirements.lock
 #
-# Once the lock is Dependabot-visible, switch the pip block below to
-# `versioning-strategy: lockfile-only`: the constraints are deliberate human
-# decisions and Dependabot should refresh the resolution, not widen the bounds.
+# Switch the pip block to versioning-strategy: lockfile-only once the lock is
+# recognised, either renamed to requirements-lock.txt or migrated to
+# pyproject.toml plus uv.lock with the uv ecosystem.
 
 version: 2
 
 updates:
-  # --- Python: the API service, the only tree that runs in production -------
   - package-ecosystem: pip
     directory: /webapp/packages/api/user-service
     schedule:
@@ -55,21 +33,17 @@ updates:
       - dependencies
       - python
     ignore:
-      # fastmcp 4.0 ships metadata-only and drops fastmcp.tools.tool, which
-      # mcp_client_service and remote_mcp_client both import. Dependabot
-      # proposed 4.1.4 on 2026-11-02; it would not have started.
+      # fastmcp 4.0 removed fastmcp.tools.tool, imported by mcp_client_service
+      # and remote_mcp_client.
       - dependency-name: fastmcp
         versions:
           - ">=4"
       # litellm 1.106.0 imports mcp.types.CacheableResult, which no released
-      # mcp provides -- re-verified against mcp 1.30.0 on 2026-11-02. Every
-      # litellm.aresponses call raises APIConnectionError.
+      # mcp provides.
       - dependency-name: litellm
         versions:
           - ">=1.106"
     groups:
-      # Security fixes are never grouped, so each arrives on its own and can
-      # be merged alone. These groups are for routine movement only.
       python-test-tooling:
         patterns:
           - pytest*
@@ -82,9 +56,9 @@ updates:
       python-minor-and-patch:
         patterns:
           - "*"
+        # Excluded packages carry documented bounds in requirements.txt and get
+        # individual pull requests.
         exclude-patterns:
-          # These carry documented bounds or floors. They get individual pull
-          # requests so the reasoning beside them is read before anything moves.
           - litellm
           - fastmcp
           - certifi
@@ -92,14 +66,6 @@ updates:
           - minor
           - patch
 
-  # --- Container base images ------------------------------------------------
-  # Previously unwatched, and there are real problems here:
-  #   Dockerfile.couchdb-setup  FROM alpine:latest     unpinned
-  #   Dockerfile.webui          FROM nginx:1.23-alpine 1.23 is from 2022
-  #   Dockerfile.api            FROM python:3.12-slim
-  #   Dockerfile.webui          FROM node:22-alpine
-  # An unpinned `latest` is the same mutable-tag exposure that cost us the
-  # MinIO image when it was deleted from Docker Hub.
   - package-ecosystem: docker
     directory: /webapp/infra/docker
     schedule:
@@ -114,15 +80,17 @@ updates:
       - dependencies
       - docker
     ignore:
-      # Python minor upgrades change the interpreter the image ships and the
-      # wheels that resolve against it. Patch-level only; a move to 3.13 is a
-      # deliberate decision taken with requirements.lock regenerated for it.
+      # An interpreter change requires requirements.lock to be regenerated for
+      # the new version.
       - dependency-name: python
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
+      # Build images track even-numbered LTS releases.
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
 
-  # --- Node: the webapp workspace root -------------------------------------
   - package-ecosystem: npm
     directory: /webapp
     schedule:
@@ -132,10 +100,7 @@ updates:
       timezone: America/Los_Angeles
     cooldown:
       default-days: 7
-    # Direct dependencies only. The transitive tail -- brace-expansion,
-    # js-yaml, nanoid, protobufjs and the rest -- is cleared by regenerating
-    # pnpm-lock.yaml, not by thirty separate branches. Those alerts still
-    # appear in the security tab; they just do not each become a pull request.
+    # Transitive updates are handled by regenerating pnpm-lock.yaml.
     allow:
       - dependency-type: direct
     open-pull-requests-limit: 5
@@ -143,9 +108,8 @@ updates:
       - dependencies
       - javascript
     ignore:
-      # pnpm's version is declared in webapp/package.json's packageManager
-      # field with an integrity hash, and corepack resolves it from there. A
-      # bump has to land together with the lockfile, so take it deliberately.
+      # pnpm's version comes from the packageManager field in
+      # webapp/package.json; a bump must land with the lockfile.
       - dependency-name: pnpm
         update-types:
           - version-update:semver-major
@@ -171,7 +135,6 @@ updates:
           - minor
           - patch
 
-  # --- Node: the frontend package ------------------------------------------
   - package-ecosystem: npm
     directory: /webapp/packages/webui
     schedule:
@@ -188,8 +151,7 @@ updates:
       - dependencies
       - javascript
     ignore:
-      # react-router is the one dependency in this tree that reaches a
-      # browser, so a major goes through its own review.
+      # Shipped to the browser; majors reviewed individually.
       - dependency-name: react-router
         update-types:
           - version-update:semver-major
@@ -204,16 +166,10 @@ updates:
           - minor
           - patch
 
-  # --- GitHub Actions -------------------------------------------------------
-  # Deliberately NOT grouped. The ASF enterprise allowlist only permits
-  # third-party actions at approved SHAs, so a bump to an unapproved SHA is a
-  # hard startup failure, not a warning -- the workflow produces no jobs at
-  # all, as pnpm/action-setup@v4 did for five months. In a group, one bad SHA
-  # fails every workflow in the group and the error does not say which bump
-  # caused it. Individual pull requests isolate that.
-  #
-  # The approved list is actions.yml in apache/infrastructure-actions, and
-  # additions are self-service by pull request there.
+  # Not grouped: the ASF allowlist permits third-party actions only at approved
+  # SHAs, and an unapproved SHA fails the workflow at startup. Individual pull
+  # requests isolate which bump is at fault. Approved list is actions.yml in
+  # apache/infrastructure-actions.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -227,5 +183,3 @@ updates:
     labels:
       - dependencies
       - ci
-
-# Deliberately absent: website/. See the note at the top of this file.
