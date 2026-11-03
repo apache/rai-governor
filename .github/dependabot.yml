@@ -158,6 +158,21 @@ updates:
       - dependency-name: react-router-dom
         update-types:
           - version-update:semver-major
+      # @vitejs/plugin-react 6.x peers vite ^8.0.0; this tree is on vite 7.
+      - dependency-name: "@vitejs/plugin-react"
+        update-types:
+          - version-update:semver-major
+      # @vitest/ui and @vitest/coverage-v8 peer-require an exact vitest
+      # version, so the three move together or not at all.
+      - dependency-name: vitest
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@vitest/ui"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@vitest/coverage-v8"
+        update-types:
+          - version-update:semver-major
     groups:
       webui-minor-and-patch:
         patterns:
