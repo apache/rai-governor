@@ -1,17 +1,12 @@
 # website/ is intentionally not watched: the Docusaurus site is built and
 # deployed from upstream, not from this fork.
 #
-# requirements.lock is not maintained by Dependabot — the pip ecosystem does not
-# recognise that filename. Regenerate it on any pip update before CI's drift
-# check will pass:
+# requirements.lock is not maintained by Dependabot; the pip ecosystem does not
+# recognise that filename. Refresh it upstream:
 #
 #   cd webapp/packages/api/user-service
 #   uv pip compile requirements.txt --universal --python-version 3.12 \
-#     --no-header -o requirements.lock
-#
-# Switch the pip block to versioning-strategy: lockfile-only once the lock is
-# recognised, either renamed to requirements-lock.txt or migrated to
-# pyproject.toml plus uv.lock with the uv ecosystem.
+#     --no-header --upgrade -o requirements.lock
 
 version: 2
 
@@ -25,7 +20,9 @@ updates:
       timezone: America/Los_Angeles
     cooldown:
       default-days: 7
-    versioning-strategy: increase
+    # Ranges are open-ended and the lock pins versions; only raise a bound
+    # when a new release falls outside it.
+    versioning-strategy: increase-if-necessary
     allow:
       - dependency-type: direct
     open-pull-requests-limit: 5
@@ -43,28 +40,6 @@ updates:
       - dependency-name: litellm
         versions:
           - ">=1.106"
-    groups:
-      python-test-tooling:
-        patterns:
-          - pytest*
-          - factory_boy
-          - faker
-          - Faker
-        update-types:
-          - minor
-          - patch
-      python-minor-and-patch:
-        patterns:
-          - "*"
-        # Excluded packages carry documented bounds in requirements.txt and get
-        # individual pull requests.
-        exclude-patterns:
-          - litellm
-          - fastmcp
-          - certifi
-        update-types:
-          - minor
-          - patch
 
   - package-ecosystem: docker
     directory: /webapp/infra/docker
@@ -91,6 +66,8 @@ updates:
         update-types:
           - version-update:semver-major
 
+  # Covers all workspace packages; pnpm-lock.yaml lives here. A block pointed
+  # at packages/webui updates package.json without the lockfile and fails CI.
   - package-ecosystem: npm
     directory: /webapp
     schedule:
@@ -113,49 +90,15 @@ updates:
       - dependency-name: pnpm
         update-types:
           - version-update:semver-major
-    groups:
-      js-build-and-test-tooling:
-        patterns:
-          - vite
-          - vitest
-          - "@vitejs/*"
-          - "@vitest/*"
-          - jsdom
-          - eslint*
-          - "@eslint/*"
-          - postcss*
-          - browserslist
-        update-types:
-          - minor
-          - patch
-      js-minor-and-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-
-  - package-ecosystem: npm
-    directory: /webapp/packages/webui
-    schedule:
-      interval: weekly
-      day: tuesday
-      time: "06:00"
-      timezone: America/Los_Angeles
-    cooldown:
-      default-days: 7
-    allow:
-      - dependency-type: direct
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - javascript
-    ignore:
       # Shipped to the browser; majors reviewed individually.
       - dependency-name: react-router
         update-types:
           - version-update:semver-major
       - dependency-name: react-router-dom
+        update-types:
+          - version-update:semver-major
+      # MUI majors require a migration across webui.
+      - dependency-name: "@mui/*"
         update-types:
           - version-update:semver-major
       # @vitejs/plugin-react 6.x peers vite ^8.0.0; this tree is on vite 7.
@@ -174,7 +117,21 @@ updates:
         update-types:
           - version-update:semver-major
     groups:
-      webui-minor-and-patch:
+      js-build-and-test-tooling:
+        patterns:
+          - vite
+          - vitest
+          - "@vitejs/*"
+          - "@vitest/*"
+          - jsdom
+          - eslint*
+          - "@eslint/*"
+          - postcss*
+          - browserslist
+        update-types:
+          - minor
+          - patch
+      js-minor-and-patch:
         patterns:
           - "*"
         update-types:
