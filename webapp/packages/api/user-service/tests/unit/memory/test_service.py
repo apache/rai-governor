@@ -1,4 +1,6 @@
+import hashlib
 import io
+import re
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
@@ -89,7 +91,11 @@ async def test_supersede_marks_old_and_archives_its_previous_version(svc):
     new = await svc.write(_req(summary="Fixed in 1.2", supersedes=old.front.id), author="x")
     assert (await svc.get(old.front.id)).front.status is Status.SUPERSEDED
     assert [h["id"] for h in await svc.search("dom-scan")] == [new.front.id]
-    assert len(svc.blobs.history("dom-scan", old.front.id)) == 1
+    (version,) = svc.blobs.history("dom-scan", old.front.id)
+    # tooling-memory's name: <stamp>-<first 8 hex of sha256 of the old text>.md
+    archived_text = svc.blobs.objects[version]
+    expected = hashlib.sha256(archived_text.encode()).hexdigest()[:8]
+    assert re.fullmatch(rf".*/\d{{8}}T\d{{6}}\.\d{{6}}Z-{expected}\.md", version)
 
 
 @pytest.mark.asyncio

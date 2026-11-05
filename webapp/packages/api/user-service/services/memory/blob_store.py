@@ -1,7 +1,7 @@
 """Where entries live: one object per entry, laid out as tooling-memory lays them out.
 
     <root>record/<domain>/<id>.md                      the entry as it stands
-    <root>record/<domain>/.history/<id>/<stamp>.md     each version it replaced
+    <root>record/<domain>/.history/<id>/<stamp>-<digest>.md   each version it replaced
 
 ``<root>`` is ``MEMORY_S3_ROOT`` (default ``memory/``) in the bucket the rest of
 gofannon uses, so pointing tooling-memory's OpenDAL S3 operator at the same
@@ -13,6 +13,7 @@ Every method here is blocking. Callers on the event loop wrap them in
 
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Protocol
@@ -71,7 +72,9 @@ class _KeyValue:
         archived = None
         previous = self._read(key)
         if previous is not None:
-            archived = f"{history_prefix(domain, entry_id)}{_stamp()}.md"
+            # tooling-memory's version name: <stamp>-<first 8 hex of sha256(text)>.
+            digest = hashlib.sha256(previous.encode("utf-8")).hexdigest()[:8]
+            archived = f"{history_prefix(domain, entry_id)}{_stamp()}-{digest}.md"
             self._write(archived, previous)
         self._write(key, entry.render())
         return archived
