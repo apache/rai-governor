@@ -49,6 +49,22 @@ async def test_search_returns_summaries_never_bodies(svc):
 
 
 @pytest.mark.asyncio
+async def test_a_whole_question_finds_entries_by_its_words(svc):
+    sql = await svc.write(_req(), author="x")
+    key = await svc.write(_req(summary="Hard-coded key in a.py", body="# Key\n"), author="x")
+    hits = await svc.search("dom-scan", "What SQL problems are in a.py?")
+    # Both mention a.py; the SQL entry matches two words, the key entry one.
+    assert [h["id"] for h in hits] == [sql.front.id, key.front.id]
+    assert await svc.search("dom-scan", "what is in there?") == await svc.search("dom-scan")
+
+
+def test_human_author_uses_the_session_provider():
+    assert human_author("asf:akm") == "human:asf:akm"
+    assert human_author("dev_stub:site_admin_1") == "human:dev_stub:site_admin_1"
+    assert human_author("firebase-uid") == "human:gofannon:firebase-uid"
+
+
+@pytest.mark.asyncio
 async def test_filters_and_due_by(svc):
     await svc.write(_req(review_by=date(2026, 12, 1)), author="x")
     await svc.write(_req(type=EntryType.CONVENTION, summary="Use parameterised queries"), author="x")
@@ -92,7 +108,10 @@ async def test_recall_goes_through_call_llm_and_cites(svc):
     assert out["cited"] == [e.front.id]
     assert out["matched"] == 1
     assert llm.await_args.kwargs["user_id"] == "alice"
-    assert e.front.id in llm.await_args.kwargs["messages"][1]["content"]
+    sent = llm.await_args.kwargs["messages"]
+    assert e.front.id in sent[1]["content"]
+    assert "Question or topic: sql" in sent[1]["content"]
+    assert "cite the entry" in sent[0]["content"]
 
 
 @pytest.mark.asyncio

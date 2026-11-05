@@ -1,14 +1,15 @@
 """The index: one row per entry, so a search costs a row read rather than a blob read.
 
-Retrieval in the pilot is keyed and filtered, not ranked (services/memory.md
-section 4): equality on indexed fields, then a substring match on title and
-summary. Ranked full-text is deferred until the zero-result rate says it is
+Retrieval in the pilot is keyed and filtered (services/memory.md section 4):
+equality on indexed fields, then the query's words matched against title and
+summary, ordered by how many matched. Ranked full-text is deferred until the zero-result rate says it is
 needed, and the index is derived, so it can be rebuilt into another store
 (AD-19, work item B13) without moving a single entry.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Dict, List, Optional
 
@@ -87,7 +88,7 @@ class MemoryIndex:
             selector[key] = value
         rows = self.db.find(INDEX_DB, selector, limit=None)
 
-        needle = (query or "").strip().lower()
+        terms = query_terms(query)
         hits = []
         for row in rows:
             if not include_inactive and row.get("status") in (
@@ -98,10 +99,35 @@ class MemoryIndex:
             if due_by is not None:
                 if not row.get("review_by") or row["review_by"] > due_by.isoformat():
                     continue
-            if needle:
-                text = f"{row.get('title') or ''} {row.get('summary') or ''}".lower()
-                if needle not in text:
+            score = 0
+            if terms:
+                words = set(_WORD_RE.findall(
+                    f"{row.get('title') or ''} {row.get('summary') or ''}".lower()
+                ))
+                score = sum(1 for t in terms if t in words)
+                if score == 0:
                     continue
-            hits.append(row)
-        hits.sort(key=lambda r: r.get("created") or "", reverse=True)
-        return hits[: max(1, min(limit, 200))]
+            hits.append((score, row.get("created") or "", row))
+        # Most query words matched first, newest first among equals.
+        hits.sort(key=lambda h: (h[0], h[1]), reverse=True)
+        return [row for _, _, row in hits[: max(1, min(limit, 200))]]
+
+
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9_.-]*[a-z0-9]|[a-z0-9]")
+
+# Words that carry no meaning for matching a question to an entry.
+_STOPWORDS = frozenset(
+    "a an and any are as at be by do does for from has have how i in is it its "
+    "of on or our that the their there these this to was we were what when where "
+    "which who why will with you".split()
+)
+
+
+def query_terms(query: Optional[str]) -> List[str]:
+    """The words of a query worth matching on: lowercased, no stopwords, unique."""
+    seen: List[str] = []
+    for w in _WORD_RE.findall((query or "").lower()):
+        w = w.rstrip(".")
+        if w and w not in _STOPWORDS and w not in seen:
+            seen.append(w)
+    return seen

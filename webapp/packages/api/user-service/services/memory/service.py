@@ -36,6 +36,19 @@ RECALL_MAX_ENTRIES = int(os.getenv("MEMORY_RECALL_MAX_ENTRIES", "5"))
 RECALL_MAX_CHARS = int(os.getenv("MEMORY_RECALL_MAX_CHARS", "6000"))
 
 
+RECALL_INSTRUCTIONS = (
+    "You write briefs from a memory store for another agent to act on. You are given "
+    "entries, each tagged with its id and trust tier, and a question or a topic.\n"
+    "Write 2 to 6 sentences that answer the question, or, if it is only a topic, say "
+    "what the entries record about it: what was found, where, and anything that "
+    "supersedes or qualifies it. Use only what the entries say.\n"
+    "After each claim, cite the entry it came from as [entry id]. If any cited entry "
+    "is at raw trust, end with: 'Unreviewed: ' and those ids.\n"
+    "If the entries do not address the question, reply exactly: "
+    "'The entries do not answer this.'"
+)
+
+
 class NotFound(LookupError):
     pass
 
@@ -55,8 +68,12 @@ class WriteRequest:
 
 
 def human_author(uid: str) -> str:
-    """tooling-memory's shape for a person: ``human:<system>:<user-id>``."""
-    return f"human:gofannon:{uid}"
+    """tooling-memory's shape for a person: ``human:<system>:<user-id>``.
+
+    Session uids are already ``<provider>:<id>`` (``asf:akm``), so the provider
+    is the system. A bare uid, from the legacy Firebase path, gets ``gofannon``.
+    """
+    return f"human:{uid}" if ":" in uid else f"human:gofannon:{uid}"
 
 
 def agent_author(agent_name: str, model: Optional[str]) -> str:
@@ -163,15 +180,12 @@ class MemoryService:
         from services.llm_service import call_llm
 
         messages = [
+            {"role": "system", "content": RECALL_INSTRUCTIONS},
             {
-                "role": "system",
-                "content": (
-                    "Answer from the entries given and nothing else. Cite each claim "
-                    "with the entry id in square brackets. Say which entries are at "
-                    "raw trust. If the entries do not answer the question, say so."
-                ),
+                "role": "user",
+                "content": "\n\n".join(parts)
+                + f"\n\nQuestion or topic: {question}\n\nWrite the brief.",
             },
-            {"role": "user", "content": "\n\n".join(parts) + f"\n\nQuestion: {question}"},
         ]
         brief, _ = await call_llm(
             provider=RECALL_PROVIDER,
