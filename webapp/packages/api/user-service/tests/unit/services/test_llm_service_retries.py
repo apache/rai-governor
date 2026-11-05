@@ -478,6 +478,117 @@ def test_digits_that_merely_contain_502_are_not_gateway_errors(err):
     assert not llm_service._is_gateway_error(err.lower())
 
 
+# --- Classification by exception class ------------------------------------
+#
+# Every predicate above matches on message text, and text has now defeated
+# this classifier twice: the message belongs to the provider, so each new
+# backend or litellm version words it differently and the match silently stops
+# working. _is_transient_exception matches on the class, which is litellm's
+# own and stable.
+#
+# The error that motivated it, reported verbatim by litellm:
+INTERNAL_SERVER_CONNECTION = (
+    "litellm.InternalServerError: InternalServerError: OpenAIException - "
+    "Connection error."
+)
+
+
+@pytest.mark.parametrize(
+    "label,exc",
+    [
+        ("internal server error", litellm.InternalServerError(
+            INTERNAL_SERVER_CONNECTION, llm_provider="llmao", model="qwen3.8-27b")),
+        ("service unavailable", litellm.ServiceUnavailableError(
+            "no capacity", llm_provider="llmao", model="qwen3.8-27b")),
+        ("api connection error", litellm.APIConnectionError(
+            "Connection error.", llm_provider="llmao", model="qwen3.8-27b")),
+    ],
+)
+def test_transient_exception_classes_open_the_retry_budget(label, exc):
+    """A transient class is retried even when its text matches no predicate."""
+    assert llm_service._is_transient_exception(exc), (
+        f"{label} should be treated as transient")
+
+
+def test_the_error_that_cost_twelve_requirements_is_now_transient():
+    """Regression: litellm.InternalServerError with "Connection error." text.
+
+    Neither string predicate matches it -- litellm writes the class as one
+    token, so "500 internal server error" misses, and "Connection error."
+    carried no status code. Two audit bundles failed after a single attempt
+    and twelve ASVS requirements went unanalysed.
+    """
+    exc = litellm.InternalServerError(
+        INTERNAL_SERVER_CONNECTION, llm_provider="llmao", model="qwen3.8-27b")
+    assert llm_service._is_transient_exception(exc)
+    # And the call site ORs the class test with the text test, so the whole
+    # classification now opens the budget for it.
+    err_str = str(exc).lower()
+    assert (
+        llm_service._is_transient_exception(exc)
+        or llm_service._is_overloaded_error(err_str)
+        or llm_service._is_transient_5xx_error(err_str)
+    )
+
+
+@pytest.mark.parametrize(
+    "label,exc",
+    [
+        ("context window exceeded", litellm.ContextWindowExceededError(
+            "prompt is 99073 tokens", model="qwen3.8-27b", llm_provider="llmao")),
+        ("authentication", litellm.AuthenticationError(
+            "invalid api key", llm_provider="llmao", model="qwen3.8-27b")),
+        ("bad request", litellm.BadRequestError(
+            "temperature must be <= 2", model="qwen3.8-27b", llm_provider="llmao")),
+        ("not found", litellm.NotFoundError(
+            "model does not exist", model="qwen3.8-27b", llm_provider="llmao")),
+        ("a plain exception", Exception("something odd")),
+    ],
+)
+def test_terminal_exception_classes_do_not_open_the_retry_budget(label, exc):
+    assert not llm_service._is_transient_exception(exc), (
+        f"{label} must fail on first contact")
+
+
+def test_a_timeout_is_never_retried_even_though_it_inherits_transient():
+    """This is why _TERMINAL_EXC_NAMES is checked FIRST, not merged in.
+
+    litellm.Timeout's real MRO is
+
+        Timeout -> APITimeoutError -> APIConnectionError -> APIError
+
+    and APIConnectionError is in _TRANSIENT_EXC_NAMES. Walking the MRO alone
+    would therefore retry a timeout -- the single worst case for this
+    classifier. A timeout means the caller already waited its whole budget, so
+    each retry burns that budget again and fails the same way: with a 2700s
+    HEAVY request, five attempts is nearly four hours spent to reach the same
+    outcome. Same reasoning that keeps 504 out of _is_gateway_error.
+    """
+    exc = litellm.Timeout(
+        "timed out after 2700s", model="qwen3.8-27b", llm_provider="llmao")
+    mro = {cls.__name__ for cls in type(exc).__mro__}
+    # The hazard is real, not hypothetical: assert the inheritance that would
+    # make a naive implementation retry this.
+    assert mro & llm_service._TRANSIENT_EXC_NAMES, (
+        "if litellm stops inheriting Timeout from APIConnectionError this "
+        "test no longer guards anything -- check the classifier still orders "
+        "terminal before transient")
+    assert not llm_service._is_transient_exception(exc), (
+        "a timeout must not open the retry budget")
+
+
+def test_context_window_error_is_not_a_server_error_by_inheritance():
+    """It subclasses BadRequestError, so the MRO walk cannot pick it up.
+
+    Asserted explicitly because callers size their next prompt from this
+    error: if it were ever retried, a prompt that cannot fit would sleep
+    through the whole budget before the caller's split ladder saw it.
+    """
+    mro = {cls.__name__ for cls in litellm.ContextWindowExceededError.__mro__}
+    assert "BadRequestError" in mro
+    assert not (mro & llm_service._TRANSIENT_EXC_NAMES)
+
+
 def _make_bad_gateway_error(message: str = BAD_GATEWAY_502) -> litellm.BadGatewayError:
     return litellm.BadGatewayError(
         message=message,

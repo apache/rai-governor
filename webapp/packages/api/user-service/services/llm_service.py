@@ -222,14 +222,78 @@ def _is_transient_5xx_error(err_str: str) -> bool:
     load, and gateway-class 502s. These succeed on a backed-off retry just
     like a 529, but are NOT matched by the overloaded checks (different
     type/status), so without this they fail the call on the first hit.
+
+    "connection error" is here because litellm reports a dropped upstream
+    that way with no status code in the text at all -- see
+    _is_transient_exception, which is the primary matcher for that case.
     """
     return (
         "serviceunavailable" in err_str
         or "500 internal server error" in err_str
         or "\"type\":\"api_error\"" in err_str
         or "the server had an error" in err_str
+        or "connection error" in err_str
         or _is_gateway_error(err_str)
     )
+
+
+# Exception CLASSES whose instances are transient. Checked before any of the
+# string matchers above, because the string is the provider's and the class is
+# litellm's: every predicate here that matches on message text has eventually
+# been defeated by a provider rewording its errors, while the class name is
+# stable across backends and versions.
+#
+# Twice now, for the same reason:
+#   BadGatewayError  -- "<title>502 Proxy Error</title>", matched by no test
+#                       until "badgateway" was added to _is_gateway_error.
+#   InternalServerError -- "InternalServerError: OpenAIException - Connection
+#                       error." litellm writes the class as one token, so
+#                       "500 internal server error" did not match, and
+#                       "Connection error." matched nothing at all. Two audit
+#                       bundles failed with one attempt each and the retry
+#                       budget was never opened.
+_TRANSIENT_EXC_NAMES = frozenset({
+    "InternalServerError",      # HTTP 500 and litellm's catch-all for it
+    "ServiceUnavailableError",  # HTTP 503
+    "BadGatewayError",          # HTTP 502
+    "APIConnectionError",       # socket dropped before a verdict
+})
+
+# Checked FIRST and overriding the set above, because the hierarchy nests a
+# timeout under a transient parent: APIConnectionTimeoutError subclasses
+# APIConnectionError, so walking the MRO alone would retry it.
+#
+# A timeout must not be retried. The caller already waited its full budget, so
+# retrying burns that budget again per attempt and fails the same way -- one
+# slow failure becomes several. This is the same reasoning that keeps 504 out
+# of _is_gateway_error.
+#
+# ContextWindowExceededError subclasses BadRequestError rather than any server
+# error, so the MRO walk would not catch it regardless; it is named anyway so
+# the intent survives a future litellm reshuffle. It has to fail fast, because
+# callers size their next prompt from it.
+_TERMINAL_EXC_NAMES = frozenset({
+    "Timeout",
+    "APITimeoutError",
+    "APIConnectionTimeoutError",
+    "ContextWindowExceededError",
+})
+
+
+def _is_transient_exception(exc: BaseException) -> bool:
+    """Classify a provider failure by exception class rather than message.
+
+    The MRO is walked by NAME rather than by importing litellm's classes:
+    litellm renames and re-homes these between versions, and an ImportError
+    raised from this module would take down every call rather than one.
+    """
+    try:
+        names = {cls.__name__ for cls in type(exc).__mro__}
+    except Exception:  # pragma: no cover - defensive; __mro__ is always there
+        names = {type(exc).__name__}
+    if names & _TERMINAL_EXC_NAMES:
+        return False
+    return bool(names & _TRANSIENT_EXC_NAMES)
 
 
 def _extract_response_cost(response_obj: Any) -> Optional[float]:
@@ -1050,7 +1114,12 @@ async def call_llm(
                 # total however its errors are spelled.
                 _err_str = str(e).lower()
                 _is_overloaded = _is_overloaded_error(_err_str)
-                _is_transient_5xx = _is_transient_5xx_error(_err_str)
+                # Class first, text second: the class is litellm's and stable,
+                # the text is the provider's and is not.
+                _is_transient_class = _is_transient_exception(e)
+                _is_transient_5xx = (
+                    _is_transient_class or _is_transient_5xx_error(_err_str)
+                )
                 if (_is_overloaded or _is_transient_5xx) and overloaded_attempts_used < MAX_OVERLOADED_RETRIES:
                     last_exception = e
                     backoff = min(
@@ -1063,6 +1132,11 @@ async def call_llm(
                         _kind = "overloaded (529)"
                     elif _is_gateway_error(_err_str):
                         _kind = "bad gateway (502)"
+                    elif _is_transient_class:
+                        # Name the class that opened the budget, so the next
+                        # time this fires the log says which exception it was
+                        # instead of leaving it to be inferred from the text.
+                        _kind = f"transient {type(e).__name__}"
                     else:
                         _kind = "server error (5xx)"
                     print(
