@@ -174,4 +174,8 @@ def create_app() -> FastAPI:
         from routes_auth import router as auth_router
         _include_routers(app, [RouterConfig(router=auth_router)])
 
+    if os.getenv("MEMORY_ENABLED", "false").lower() == "true":
+        from routes_memory import router as memory_router
+        _include_routers(app, [RouterConfig(router=memory_router)])
+
     return app
