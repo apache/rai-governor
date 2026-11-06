@@ -102,3 +102,13 @@ def test_cached_view_copy_is_updated(setup):
     assert cached.status == "running"
     reg.reconcile_orphans(now=NOW)
     assert reg.get("r").status == "error"
+
+
+def test_a_new_run_of_a_worker_without_a_heartbeat_is_left_alone(setup):
+    # The run doc can be written before its worker's first heartbeat.
+    db, reg = setup
+    _run(db, "r-new", "not-yet-beating", started_ago=30)
+    _run(db, "r-old", "not-yet-beating", started_ago=600)
+    assert reg.reconcile_orphans(now=NOW) == 1
+    assert _status(db, "r-new") == "running"
+    assert _status(db, "r-old") == "error"

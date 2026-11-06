@@ -146,12 +146,29 @@ async def lifespan(app: FastAPI):
                 )
                 await asyncio.sleep(60.0)
 
+    async def _event_checkpointer():
+        # ISSUE-017: save running runs' new events every 2 s so a stream
+        # served by another worker can follow them live.
+        while True:
+            try:
+                await asyncio.sleep(2.0)
+                await asyncio.to_thread(get_run_registry().checkpoint_events)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.log(
+                    "event_checkpoint_error",
+                    f"Event checkpoint failed: {exc}",
+                    level="WARNING",
+                )
+
     await asyncio.to_thread(get_run_registry().heartbeat)
     poller_task = asyncio.create_task(_stop_poller())
     evictor_task = asyncio.create_task(_evictor())
     heartbeat_task = asyncio.create_task(_heartbeat())
     sweeper_task = asyncio.create_task(_orphan_sweeper())
-    background = (poller_task, evictor_task, heartbeat_task, sweeper_task)
+    checkpoint_task = asyncio.create_task(_event_checkpointer())
+    background = (poller_task, evictor_task, heartbeat_task, sweeper_task, checkpoint_task)
 
     try:
         yield

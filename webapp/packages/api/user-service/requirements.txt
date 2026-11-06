@@ -46,6 +46,7 @@ faker>=22.0.0
 PyYAML
 CouchDB>=1.2
 gunicorn
+uvicorn-worker  # gunicorn worker class for the API container (gunicorn.conf.py)
 firebase-admin>=6.0.0
 firebase-functions>=0.2.0
 google-cloud-storage

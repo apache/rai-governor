@@ -630,7 +630,9 @@ uvicorn==0.54.0
     #   mcp
     #   uvicorn-worker
 uvicorn-worker==0.4.0
-    # via functions-framework
+    # via
+    #   -r requirements.txt
+    #   functions-framework
 uvloop==0.23.0 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'
     # via uvicorn
 watchdog==7.0.0

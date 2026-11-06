@@ -1159,6 +1159,20 @@ async def stream_run(run_id: str, user: dict = Depends(get_current_user)):
     if record is None or record.user_id != user.get("uid"):
         raise HTTPException(status_code=404, detail="Run not found")
 
+    if not registry.is_live_here(record):
+        # The run executes on another worker (or none). This worker's copy
+        # is a snapshot and gets no live events, so follow the stored run
+        # instead of waiting on a queue nothing will fill (ISSUE-017).
+        return StreamingResponse(
+            _follow_stored_run(registry, run_id),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
     queue: asyncio.Queue = asyncio.Queue()
     record.trace.add_subscriber(queue, loop=asyncio.get_running_loop())
 
@@ -1224,6 +1238,62 @@ async def stream_run(run_id: str, user: dict = Depends(get_current_user)):
             "Connection": "keep-alive",
         },
     )
+
+
+# How often a stream served by a non-owning worker re-reads the stored run.
+FOLLOW_POLL_SECONDS = 1.0
+# Comment frames keep proxies from closing an idle stream.
+FOLLOW_HEARTBEAT_SECONDS = 10.0
+
+
+def _done_frame(rec) -> str:
+    return "event: done\ndata: " + json.dumps({
+        "outcome": rec.status,
+        "result": rec.result,
+        "error": rec.error,
+        "schemaWarnings": rec.schema_warnings,
+        "opsLog": rec.ops_log,
+    }, default=str) + "\n\n"
+
+
+async def _follow_stored_run(registry, run_id: str):
+    """SSE for a run owned by another worker: replay, then poll until it ends.
+
+    The owning worker checkpoints events every couple of seconds and writes
+    the final state on completion; the orphan sweep (ISSUE-022) writes an
+    error if that worker dies. Either way this loop reaches a done frame.
+    """
+    yield f"event: run_id\ndata: {json.dumps({'runId': run_id})}\n\n"
+    sent = 0
+    since_beat = 0.0
+    while True:
+        try:
+            rec = await asyncio.to_thread(registry.fetch_persisted, run_id)
+        except Exception:
+            # A database blip, not a missing run: wait and read again.
+            await asyncio.sleep(FOLLOW_POLL_SECONDS)
+            since_beat += FOLLOW_POLL_SECONDS
+            if since_beat >= FOLLOW_HEARTBEAT_SECONDS:
+                since_beat = 0.0
+                yield ": heartbeat\n\n"
+            continue
+        if rec is None:
+            yield "event: done\ndata: " + json.dumps(
+                {"outcome": "error", "error": "Run record not found."}
+            ) + "\n\n"
+            return
+        events = list(rec.trace.events)
+        for ev in events[sent:]:
+            yield f"event: trace\ndata: {json.dumps(ev, default=str)}\n\n"
+        sent = max(sent, len(events))
+        if rec.status != "running":
+            yield _done_frame(rec)
+            return
+        await asyncio.sleep(FOLLOW_POLL_SECONDS)
+        since_beat += FOLLOW_POLL_SECONDS
+        if since_beat >= FOLLOW_HEARTBEAT_SECONDS:
+            since_beat = 0.0
+            yield ": heartbeat\n\n"
 
 
 @router.post("/runs/{run_id}/stop", status_code=202)

@@ -29,6 +29,7 @@ Design constraints:
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import os
 import uuid
@@ -230,6 +231,12 @@ class RunRecord:
     # Flag used by mark_complete to skip re-persisting an already-
     # completed record (defensive against double-call).
     _persisted_complete: bool = False
+    # How many trace events the last checkpoint wrote (ISSUE-017).
+    _checkpointed_events: int = 0
+    # True for a copy read from the database: it has no live trace, even
+    # when its worker_id is this worker's (a run from before a cache
+    # eviction, or one this process no longer runs).
+    _from_store: bool = False
 
     def to_summary(self) -> Dict[str, Any]:
         """Subset suitable for list endpoints — no events, no result body.
@@ -333,6 +340,7 @@ class RunRecord:
         if events:
             rec.trace.events.extend(events)
         rec._persisted_complete = doc.get("status") in ("success", "error", "stopped")
+        rec._from_store = True
         return rec
 
 
@@ -377,6 +385,11 @@ class RunRegistry:
         # Track which run_ids were stop-flipped locally so the polling
         # task doesn't re-flip and so we can stop polling them.
         self._stop_flipped: set = set()
+        # Serialises read-modify-write of run docs within this process: the
+        # event checkpoint runs in a thread while completion runs on the
+        # event loop. Across processes, CouchDB's _rev check plus the retry
+        # in _update_run_doc does the same job.
+        self._doc_lock = threading.Lock()
 
     # --- DB binding helpers -------------------------------------
 
@@ -398,41 +411,64 @@ class RunRegistry:
             self._db = None
         return self._db
 
-    def _persist(self, record: RunRecord, include_events: bool = False) -> None:
-        """Write the record to CouchDB. Best-effort -- logs and continues
-        on failure rather than breaking the in-memory flow that handles
-        the actual run.
+    def _update_run_doc(self, run_id: str, mutate, attempts: int = 5) -> bool:
+        """Read the run doc, apply ``mutate``, save; retry on a write conflict.
 
-        CouchDB requires _rev for updates. The save() in this codebase
-        does NOT auto-resolve revs (per the comment in CouchDBService
-        .save: "Caller is responsible for providing _rev when updating
-        an existing document"), so we do a get() first to pick up the
-        current _rev. New docs (first persist for a fresh run_id)
-        skip the _rev step -- the get returns None and we save
-        without _rev, which CouchDB accepts for inserts. Each update
-        therefore costs one extra HTTP round-trip; acceptable since
-        run records aren't written hot (create, complete, and the
-        occasional stop_requested flip)."""
+        ``mutate`` gets the stored doc (or None when there is none) and
+        returns the doc to save, or None to leave it alone. Returns True when
+        a doc was saved. Every write to a run doc goes through here, so the
+        event checkpoint, completion, stop requests and the orphan sweep
+        cannot silently undo each other: a writer that loses the race reads
+        the new revision and decides again.
+        """
         db = self._get_db()
         if db is None:
-            return
-        try:
+            return False
+        with self._doc_lock:
+            for attempt in range(attempts):
+                try:
+                    stored = db.get(RUN_REGISTRY_DB, run_id)
+                except Exception as e:
+                    if getattr(e, "status_code", None) != 404:
+                        raise
+                    stored = None
+                doc = mutate(dict(stored) if stored else None)
+                if doc is None:
+                    return False
+                if stored and stored.get("_rev"):
+                    doc["_rev"] = stored["_rev"]
+                else:
+                    doc.pop("_rev", None)
+                try:
+                    db.save(RUN_REGISTRY_DB, run_id, doc)
+                    return True
+                except Exception as e:
+                    if getattr(e, "status_code", None) == 409 and attempt < attempts - 1:
+                        continue
+                    raise
+        return False
+
+    def _persist(self, record: RunRecord, include_events: bool = False) -> None:
+        """Write the record's state to the database. Best-effort.
+
+        Keeps what other writers own on the stored doc: a stop request set
+        by another worker, and events already checkpointed when this write
+        carries none. A conflict is retried, so completion always lands.
+        """
+        def mutate(stored):
             doc = record.to_couch_doc(include_events=include_events)
-            try:
-                existing = db.get(RUN_REGISTRY_DB, record.run_id)
-                if existing and existing.get("_rev"):
-                    doc["_rev"] = existing["_rev"]
-            except Exception:
-                # Doc doesn't exist (or get failed transiently);
-                # proceed without _rev. CouchDB treats a save with
-                # no _rev as an insert; if the doc actually exists
-                # we'll get a 409 below and log it.
-                pass
-            db.save(RUN_REGISTRY_DB, record.run_id, doc)
+            if stored:
+                if stored.get("stop_requested"):
+                    doc["stop_requested"] = True
+                if not include_events and stored.get("events"):
+                    doc["events"] = stored["events"]
+            return doc
+
+        try:
+            self._update_run_doc(record.run_id, mutate)
         except Exception as e:
             # Defensive: persistence failure mustn't break run-time
-            # behavior. The in-memory record stays consistent; the
-            # registry will retry on the next state transition.
+            # behavior. The in-memory record stays consistent.
             print(f"[run_registry] persist failed for {record.run_id}: {e}",
                   flush=True)
 
@@ -470,8 +506,9 @@ class RunRegistry:
         fallback. Returns None if not found in either."""
         self._evict_expired_local()
         rec = self._records.get(run_id)
-        if rec is not None:
+        if rec is not None and not (rec._from_store and rec.status == "running"):
             return rec
+        # A stored copy of a run still going elsewhere goes stale: re-read it.
         # Fall back to CouchDB. This handles cross-worker read
         # (UI loads on worker B for a run owned by worker A) and
         # post-eviction lookup (record completed and was evicted
@@ -604,9 +641,13 @@ class RunRegistry:
         # Update CouchDB unconditionally so the polling task on the
         # owning worker sees the flag. Skip if we have no DB (tests).
         if db is not None and doc is not None:
-            doc["stop_requested"] = True
+            def flag(stored):
+                if stored is None:
+                    return None
+                stored["stop_requested"] = True
+                return stored
             try:
-                db.save(RUN_REGISTRY_DB, run_id, doc)
+                self._update_run_doc(run_id, flag)
             except Exception as e:
                 print(f"[run_registry] request_stop persist failed: {e}",
                       flush=True)
@@ -670,6 +711,66 @@ class RunRegistry:
             flipped += 1
         return flipped
 
+    def is_live_here(self, record: RunRecord) -> bool:
+        """True when this worker is running ``record`` and holds its live trace."""
+        return (
+            record.worker_id == WORKER_ID
+            and not record._from_store
+            and self._records.get(record.run_id) is record
+        )
+
+    def fetch_persisted(self, run_id: str) -> Optional[RunRecord]:
+        """Read the run from the database, bypassing the local cache.
+
+        None means the run does not exist. Any other failure raises, so a
+        caller can tell a database blip from a missing run.
+        """
+        db = self._get_db()
+        if db is None:
+            return None
+        try:
+            doc = db.get(RUN_REGISTRY_DB, run_id)
+        except Exception as e:
+            if getattr(e, "status_code", None) == 404:
+                return None
+            raise
+        return RunRecord.from_couch_doc(doc) if doc else None
+
+    def checkpoint_events(self) -> int:
+        """Write new trace events of this worker's running runs. Returns runs written.
+
+        Lets a stream served by another worker follow a run while it runs
+        (ISSUE-017); before, events reached the database only at completion.
+        Only the events field changes, and only while both the stored doc
+        and the local record say "running", so a checkpoint can never undo a
+        completion or a stop request.
+        """
+        if self._get_db() is None:
+            return 0
+        written = 0
+        for record in list(self._records.values()):
+            if record.status != "running" or not self.is_live_here(record):
+                continue
+            events = list(record.trace.events)
+            if len(events) <= record._checkpointed_events:
+                continue
+
+            def add_events(stored, record=record, events=events):
+                if not stored or stored.get("status") != "running" or record.status != "running":
+                    return None
+                stored["events"] = events
+                return stored
+
+            try:
+                saved = self._update_run_doc(record.run_id, add_events)
+            except Exception as e:
+                print(f"[run_registry] event checkpoint failed for {record.run_id}: {e}", flush=True)
+                continue
+            if saved:
+                record._checkpointed_events = len(events)
+                written += 1
+        return written
+
     def heartbeat(self) -> None:
         """Record that this worker is alive (ISSUE-022)."""
         db = self._get_db()
@@ -729,39 +830,50 @@ class RunRegistry:
                 continue
             last_seen[w.get("worker_id") or w["_id"]] = age
 
-        def alive(worker_id: str) -> bool:
-            return worker_id == WORKER_ID or (
-                worker_id in last_seen and last_seen[worker_id] <= WORKER_DEAD_AFTER_SECONDS
-            )
+        def closable(doc) -> bool:
+            worker_id = doc.get("worker_id") or ""
+            if worker_id == WORKER_ID:
+                return False
+            if worker_id in last_seen:
+                # Known worker: closed once its heartbeat is stale.
+                return last_seen[worker_id] > WORKER_DEAD_AFTER_SECONDS
+            # No heartbeat on record: an old record, a worker from before
+            # heartbeats, or one whose first beat failed. Allow the same
+            # grace from the run's start before calling it dead.
+            try:
+                started = datetime.fromisoformat(doc["started_at"])
+            except Exception:
+                return False
+            return (now - started).total_seconds() > WORKER_DEAD_AFTER_SECONDS
 
         closed = 0
         for doc in running:
+            if not closable(doc):
+                continue
+            run_id = doc["_id"]
             worker_id = doc.get("worker_id") or ""
-            if alive(worker_id):
-                continue
-            if not worker_id:
-                try:
-                    started = datetime.fromisoformat(doc["started_at"])
-                except Exception:
-                    started = now
-                if (now - started).total_seconds() <= WORKER_DEAD_AFTER_SECONDS:
-                    continue
-            doc = dict(doc)
-            doc["status"] = "error"
-            doc["error"] = doc.get("error") or ORPHANED_RUN_ERROR
-            doc["completed_at"] = now.isoformat()
-            doc["orphaned_from_worker"] = worker_id or None
+
+            def close(stored, worker_id=worker_id):
+                # Decide again on the latest revision: the run may have
+                # finished, or its worker may have come back.
+                if not stored or stored.get("status") != "running" or not closable(stored):
+                    return None
+                stored["status"] = "error"
+                stored["error"] = stored.get("error") or ORPHANED_RUN_ERROR
+                stored["completed_at"] = now.isoformat()
+                stored["orphaned_from_worker"] = worker_id or None
+                return stored
+
             try:
-                db.save(RUN_REGISTRY_DB, doc["_id"], doc)
+                if not self._update_run_doc(run_id, close):
+                    continue
             except Exception as e:
-                # A conflict means the run changed under us, most likely
-                # because its worker was alive after all and finished it.
-                print(f"[run_registry] could not close orphan {doc['_id']}: {e}", flush=True)
+                print(f"[run_registry] could not close orphan {run_id}: {e}", flush=True)
                 continue
-            cached = self._records.get(doc["_id"])
-            if cached is not None and cached.task is None:
+            cached = self._records.get(run_id)
+            if cached is not None and cached._from_store:
                 cached.status = "error"
-                cached.error = doc["error"]
+                cached.error = ORPHANED_RUN_ERROR
                 cached.completed_at = now
                 cached._persisted_complete = True
             closed += 1
