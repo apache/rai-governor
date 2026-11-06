@@ -263,6 +263,8 @@ async def _execute_agent_code(
         Args:
             timeout: Per-call timeout in seconds. If not set, automatically scaled
                      based on max_tokens and reasoning_effort to avoid premature timeouts.
+            stream (in kwargs): True to receive the response as a stream on the
+                     wire; the return value is the same. See llm_service.call_llm.
         """
         # Remove user context kwargs if they were passed by generated code
         # (we'll set them explicitly from the outer scope)
@@ -340,7 +342,7 @@ async def _execute_agent_code(
             # else: falls through to DEFAULT_LLM_TIMEOUT (600s) in llm_service.py
 
         ctx_window = get_context_window(provider, model)
-        print(f">>> call_llm {provider}/{model} context_window={ctx_window:,} max_tokens={parameters.get('max_tokens')} temperature={parameters.get('temperature')} reasoning_effort={parameters.get('reasoning_effort')} timeout={timeout or 'default'}", flush=True)
+        print(f">>> call_llm {provider}/{model} context_window={ctx_window:,} max_tokens={parameters.get('max_tokens')} temperature={parameters.get('temperature')} reasoning_effort={parameters.get('reasoning_effort')} timeout={timeout or 'default'} stream={kwargs.get('stream', 'default')}", flush=True)
 
         # Trace the LLM call. Start time captured before so we can
         # compute duration even if the call raises.

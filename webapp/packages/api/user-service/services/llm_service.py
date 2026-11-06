@@ -117,6 +117,12 @@ DEFAULT_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "600"))
 LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
 
 
+# How long a streamed call may go without receiving anything before it is
+# treated as stalled (seconds). Only applies when call_llm streams on the
+# wire; the call's own timeout still bounds it as a whole.
+LLM_STREAM_IDLE_TIMEOUT = float(os.getenv("LLM_STREAM_IDLE_TIMEOUT_SECONDS", "300"))
+
+
 def _http_timeout(total: float) -> httpx.Timeout:
     """``total`` for reading and writing; at most LLM_CONNECT_TIMEOUT to connect."""
     return httpx.Timeout(total, connect=min(LLM_CONNECT_TIMEOUT, total))
@@ -1119,6 +1125,7 @@ async def call_llm(
     user_basic_info: Optional[Dict[str, Any]] = None,
     timeout: Optional[int] = None,
     cache_prefix: Optional[str] = None,
+    stream: Optional[bool] = None,
 ) -> Tuple[str, Any]:
     """
     Calls the specified language model using litellm, handling different API styles.
@@ -1141,6 +1148,15 @@ async def call_llm(
             The marker carries NO ttl field: Bedrock rejects ttl (litellm
             issues #17250 / #15880); the native Anthropic API accepts it but
             we target Bedrock.
+        stream: Receive the response from the provider as a stream and
+            reassemble it, instead of waiting for it in one piece. The
+            return value is the same either way. A long non-streamed call
+            sends nothing until it finishes, and proxies and NAT gateways
+            drop connections that sit idle, often well inside the call's
+            timeout; a streamed one sends data the whole time. None (the
+            default) takes the model's "stream" flag in provider config,
+            which defaults to False. Not used for the OpenAI 'responses'
+            API style.
     """
     req = await _prepare_request(
         provider, model, messages, parameters,
@@ -1351,7 +1367,11 @@ async def call_llm(
         # Standard acompletion call for most models
         _apply_completion_reasoning(req)
 
+        use_stream = model_config.get("stream", False) if stream is None else bool(stream)
+
         async def _attempt():
+            if use_stream:
+                return await _stream_and_rebuild(req)
             return await litellm.acompletion(**req.kwargs)
 
         response = await _completion_with_retries(
@@ -1463,6 +1483,53 @@ async def stream_llm(
         )
         raise
     _charge_usage(req, _rebuild_stream(chunks, req))
+
+
+async def _stream_and_rebuild(req: _LLMRequest) -> Any:
+    """One streamed attempt for call_llm, reassembled into a ModelResponse.
+
+    Nothing reaches the caller until the stream is complete, so a failure
+    anywhere in it can be retried like any other. The response carries the
+    same content, reasoning, tool calls, usage and cost as a non-streamed
+    one, so everything after the call is unchanged.
+
+    Timeouts: each read may wait up to LLM_STREAM_IDLE_TIMEOUT (capped at
+    the call's timeout), which catches a stream that stalls; the call's
+    timeout still bounds the whole attempt.
+    """
+    kwargs = dict(req.kwargs)
+    kwargs["stream"] = True
+    if _stream_usage_supported(req):
+        kwargs["stream_options"] = {"include_usage": True}
+    kwargs["timeout"] = _http_timeout(min(LLM_STREAM_IDLE_TIMEOUT, req.timeout))
+    chunks: List[Any] = []
+
+    async def _consume():
+        stream = await litellm.acompletion(**kwargs)
+        async for chunk in stream:
+            chunks.append(chunk)
+
+    try:
+        await asyncio.wait_for(_consume(), timeout=req.timeout)
+    except asyncio.TimeoutError as e:
+        raise litellm.Timeout(
+            message=(
+                f"streamed response not complete within {req.timeout}s "
+                f"({len(chunks)} chunks received)"
+            ),
+            model=req.model_string,
+            llm_provider=req.provider,
+        ) from e
+    response = _rebuild_stream(chunks, req)
+    if response is None:
+        # An empty or unreadable stream: the connection ended without an
+        # answer, which is retried like a dropped connection.
+        raise litellm.APIConnectionError(
+            message=f"stream ended with no usable response ({len(chunks)} chunks)",
+            llm_provider=req.provider,
+            model=req.model_string,
+        )
+    return response
 
 
 def _stream_usage_supported(req: _LLMRequest) -> bool:
