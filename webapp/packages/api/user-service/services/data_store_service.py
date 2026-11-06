@@ -15,7 +15,7 @@ from fastapi import HTTPException
 
 from services.database_service import DatabaseService
 from services.cancel_token import check_should_stop  # ISSUE-007
-from services.access_tracking import AccessAccumulator
+from services.access_tracking import AccessAccumulator, get_accumulator
 from time_utils import naive_utc_now
 
 
@@ -36,7 +36,7 @@ class DataStoreService:
         self.db = db
         # Background batcher for access-tracking metadata.  Keeps the
         # read paths off the write path; see services/access_tracking.py.
-        self._access_accumulator = AccessAccumulator(db, DATA_STORE_DB)
+        self._access_accumulator = get_accumulator(db, DATA_STORE_DB)
         # Track namespaces we've already ensured indexes for so we
         # don't call ensure_index on every single write.
         self._indexed_namespaces: set = set()
@@ -193,9 +193,13 @@ class DataStoreService:
         check_should_stop()  # ISSUE-007
         """Delete a value from the data store."""
         doc_id = self._make_doc_id(user_id, namespace, key)
+        self._access_accumulator.forget([doc_id])
 
         try:
             self.db.delete(DATA_STORE_DB, doc_id)
+            # Again after the delete: a read between the first forget and
+            # the delete could have queued the doc again.
+            self._access_accumulator.forget([doc_id])
             return True
         except HTTPException as e:
             if e.status_code == 404:
@@ -430,7 +434,9 @@ class DataStoreService:
         if not keys:
             return 0
         doc_ids = [self._make_doc_id(user_id, namespace, k) for k in keys]
+        self._access_accumulator.forget(doc_ids)
         results = self.db.delete_many(DATA_STORE_DB, doc_ids)
+        self._access_accumulator.forget(doc_ids)
         return sum(1 for r in results if r.get("ok"))
 
 
@@ -455,7 +461,9 @@ class DataStoreService:
         if not keys:
             return 0
         doc_ids = [self._make_doc_id(user_id, namespace, key) for key in keys]
+        self._access_accumulator.forget(doc_ids)
         results = self.db.delete_many(DATA_STORE_DB, doc_ids)
+        self._access_accumulator.forget(doc_ids)
         return sum(1 for r in results if r.get("ok"))
 
 

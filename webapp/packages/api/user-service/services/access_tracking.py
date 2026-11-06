@@ -63,6 +63,13 @@ class AccessAccumulator:
         # to the same doc within a flush window collapse: we keep only
         # the most recent agent_name + ts and sum the count delta.
         self._buffer: Dict[str, Dict[str, object]] = {}
+        # Ids deleted since the current flush took its snapshot. The flush
+        # skips them, so a delete that lands between its get_many and its
+        # save_many does not bring the doc back on backends without
+        # revision checks (memory, DynamoDB). CouchDB refuses such a write
+        # with a conflict anyway.
+        self._deleted_during_flush: set = set()
+        self._flushing = False
         self._lock = threading.Lock()
         self._task: Optional[asyncio.Task] = None
         self._stopped = False
@@ -85,6 +92,18 @@ class AccessAccumulator:
                 entry["agent_name"] = agent_name
                 entry["ts"] = ts
                 entry["delta"] = int(entry["delta"]) + 1
+
+    def forget(self, doc_ids: List[str]) -> None:
+        """Drop pending updates for docs that are being deleted (ISSUE-018).
+
+        Ids are remembered only while a flush is under way, for that flush
+        to skip; otherwise nothing holds on to them.
+        """
+        with self._lock:
+            for doc_id in doc_ids:
+                self._buffer.pop(doc_id, None)
+                if self._flushing:
+                    self._deleted_during_flush.add(doc_id)
 
     def record_many(self, doc_ids: List[str], agent_name: Optional[str]) -> None:
         """Convenience wrapper for the bulk-read path."""
@@ -136,49 +155,58 @@ class AccessAccumulator:
                 return 0
             snapshot = self._buffer
             self._buffer = {}
-
-        # Fetch current docs in one bulk call so we have the right
-        # _rev to write back with.
-        doc_ids = list(snapshot.keys())
-        try:
-            existing = self._db.get_many(self._db_name, doc_ids)
-        except Exception:
-            logger.exception(
-                "AccessAccumulator: get_many failed; dropping %d updates",
-                len(snapshot),
-            )
-            return 0
-
-        updates: List[Dict[str, object]] = []
-        for doc_id, entry in snapshot.items():
-            doc = existing.get(doc_id)
-            if doc is None:
-                # Doc was deleted between read and flush.  Skip.
-                continue
-            doc["lastAccessedByAgent"] = entry["agent_name"]
-            doc["lastAccessedAt"] = entry["ts"]
-            doc["accessCount"] = int(doc.get("accessCount", 0)) + int(entry["delta"])
-            updates.append(doc)
-
-        if not updates:
-            return 0
+            self._deleted_during_flush = set()
+            self._flushing = True
 
         try:
-            results = self._db.save_many(self._db_name, updates)
-        except Exception:
-            logger.exception(
-                "AccessAccumulator: save_many failed; %d updates lost",
-                len(updates),
-            )
-            return 0
+            # Fetch current docs in one bulk call so we have the right
+            # _rev to write back with.
+            doc_ids = list(snapshot.keys())
+            try:
+                existing = self._db.get_many(self._db_name, doc_ids)
+            except Exception:
+                logger.exception(
+                    "AccessAccumulator: get_many failed; dropping %d updates",
+                    len(snapshot),
+                )
+                return 0
 
-        ok = sum(1 for r in results if r.get("ok"))
-        if ok < len(updates):
-            logger.info(
-                "AccessAccumulator: flushed %d/%d (some conflicts skipped)",
-                ok, len(updates),
-            )
-        return ok
+            updates: List[Dict[str, object]] = []
+            for doc_id, entry in snapshot.items():
+                doc = existing.get(doc_id)
+                if doc is None:
+                    # Doc was deleted between read and flush.  Skip.
+                    continue
+                doc["lastAccessedByAgent"] = entry["agent_name"]
+                doc["lastAccessedAt"] = entry["ts"]
+                doc["accessCount"] = int(doc.get("accessCount", 0)) + int(entry["delta"])
+                updates.append(doc)
+
+            with self._lock:
+                updates = [d for d in updates if d.get("_id") not in self._deleted_during_flush]
+            if not updates:
+                return 0
+
+            try:
+                results = self._db.save_many(self._db_name, updates)
+            except Exception:
+                logger.exception(
+                    "AccessAccumulator: save_many failed; %d updates lost",
+                    len(updates),
+                )
+                return 0
+
+            ok = sum(1 for r in results if r.get("ok"))
+            if ok < len(updates):
+                logger.info(
+                    "AccessAccumulator: flushed %d/%d (some conflicts skipped)",
+                    ok, len(updates),
+                )
+            return ok
+        finally:
+            with self._lock:
+                self._flushing = False
+                self._deleted_during_flush = set()
 
     def stop(self) -> None:
         """Stop the background loop.  Tests call this to avoid leaking tasks."""
@@ -186,3 +214,21 @@ class AccessAccumulator:
         if self._task is not None:
             self._task.cancel()
             self._task = None
+
+
+# One accumulator per process for each (database service, database name).
+# DataStoreService is built per request and per run; giving each its own
+# accumulator meant a new 10-second flush task per request that never
+# stopped, and a delete could not drop updates another request had queued.
+_ACCUMULATORS: Dict[tuple, AccessAccumulator] = {}
+_ACCUMULATORS_LOCK = threading.Lock()
+
+
+def get_accumulator(db_service: "DatabaseService", db_name: str) -> AccessAccumulator:
+    key = (id(db_service), db_name)
+    with _ACCUMULATORS_LOCK:
+        acc = _ACCUMULATORS.get(key)
+        if acc is None or acc._db is not db_service:
+            acc = AccessAccumulator(db_service, db_name)
+            _ACCUMULATORS[key] = acc
+        return acc

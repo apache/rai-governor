@@ -7,6 +7,9 @@ from .base import DatabaseService
 class CouchDBService(DatabaseService):
     """CouchDB implementation of the DatabaseService."""
 
+    # Rows per _find request when a caller asks for every match.
+    FIND_PAGE_SIZE = 10000
+
     def __init__(self, url: str, user: str, password: str, settings):
         try:
             self.server = couchdb.Server(url)
@@ -110,35 +113,33 @@ class CouchDBService(DatabaseService):
                 return [dict(row) for row in db.find(query)]
 
             # limit is None -> fetch ALL rows via bookmark pagination.
-            # CouchDB returns a bookmark with every _find response; passing
-            # it on the next request continues after the last row. A page
-            # smaller than page_size (or an unchanged bookmark) means done.
-            PAGE = 10000
+            # Every _find response carries a bookmark; sending it back
+            # continues after the last row. python-couchdb's Database.find
+            # returns only the docs and drops the bookmark, so this calls
+            # _find directly. Without the bookmark the loop stopped after one
+            # page, and callers such as clear_namespace silently left every
+            # row past the first page behind (ISSUE-018).
             out: List[Dict[str, Any]] = []
             bookmark = None
             seen_bookmarks = set()
             while True:
-                query = {"selector": selector, "limit": PAGE}
+                query = {"selector": selector, "limit": self.FIND_PAGE_SIZE}
                 if field_list:
                     query["fields"] = field_list
                 if bookmark:
                     query["bookmark"] = bookmark
-                # python-cloudant's db.find accepts bookmark in the query
-                # dict and exposes the returned bookmark on the result;
-                # fall back to raw _find if the bound method doesn't surface
-                # it. We read rows first, then advance the bookmark.
-                result = db.find(query)
-                rows = [dict(row) for row in result]
+                _, _, data = db.resource.post_json("_find", body=query)
+                rows = [dict(row) for row in (data or {}).get("docs", [])]
                 out.extend(rows)
-                # Obtain the next bookmark. python-cloudant attaches it to
-                # the QueryResult; if unavailable, stop to avoid a loop.
-                next_bookmark = getattr(result, "bookmark", None)
-                if not next_bookmark or next_bookmark in seen_bookmarks:
+                next_bookmark = (data or {}).get("bookmark")
+                if (
+                    len(rows) < self.FIND_PAGE_SIZE
+                    or not next_bookmark
+                    or next_bookmark in seen_bookmarks
+                ):
                     break
                 seen_bookmarks.add(next_bookmark)
                 bookmark = next_bookmark
-                if len(rows) < PAGE:
-                    break
             return out
         except Exception as e:
             print(f"CouchDB Mango find failed, falling back to list_all filter: {e}")
