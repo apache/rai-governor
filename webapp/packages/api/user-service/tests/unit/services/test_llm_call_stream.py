@@ -228,3 +228,64 @@ async def test_a_proxy_502_is_named_as_a_proxy_error(env, monkeypatch, capsys):
     monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
     await _call()
     assert "502 from a proxy in front of the model" in capsys.readouterr().out
+
+
+def _plain(content, finish):
+    msg = SimpleNamespace(content=content, tool_calls=None, reasoning_content="r" * 40)
+    resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=msg, finish_reason=finish)], _hidden_params={})
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_a_plain_answer_cut_off_at_max_tokens_is_reported(env, monkeypatch, capsys):
+    obs = Mock()
+    monkeypatch.setattr(llm_service, "get_observability_service", lambda: obs)
+
+    async def fake(**kwargs):
+        return _plain('{"findings": [{"title": "half', "length")
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    (content, _), _ = await _call()
+    assert content == '{"findings": [{"title": "half'   # returned unchanged
+    out = capsys.readouterr().out
+    assert "answer cut off at the output limit" in out
+    assert f"{PROVIDER}/{MODEL}" in out
+    events = [c.kwargs.get("event_type") for c in obs.log.call_args_list]
+    assert events == ["llm_output_truncated"]
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_answer_cut_off_is_reported(env, monkeypatch, capsys):
+    async def fake(**kwargs):
+        return _agen([_chunk(role="assistant", content="Half an ans"), _chunk(finish="length")])
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    (content, _), _ = await _call(stream=True)
+    assert content == "Half an ans"
+    out = capsys.readouterr().out
+    assert out.count("WARNING") == 1
+    assert "answer cut off at the output limit" in out
+
+
+@pytest.mark.asyncio
+async def test_a_complete_plain_answer_is_not_reported(env, monkeypatch, capsys):
+    async def fake(**kwargs):
+        return _plain("All done.", "stop")
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    await _call()
+    assert "WARNING" not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_reports_a_cut_off_answer_at_the_end(env, monkeypatch, capsys):
+    async def fake(**kwargs):
+        return _agen([_chunk(role="assistant", content="Half"), _chunk(finish="length")])
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    got = [c async for c in llm_service.stream_llm(
+        PROVIDER, MODEL, [{"role": "user", "content": "hi"}], {"max_tokens": 5},
+        user_service=_user(), user_id="u")]
+    assert len(got) == 2   # chunks still reach the caller unchanged
+    assert "answer cut off at the output limit" in capsys.readouterr().out

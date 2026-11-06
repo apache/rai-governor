@@ -1380,6 +1380,7 @@ async def call_llm(
         response = await _completion_with_retries(
             req, _attempt, context="litellm.acompletion"
         )
+        _warn_if_cut_off(response, req)
         message = response.choices[0].message
         content = message.content if isinstance(message.content, str) else ""
         
@@ -1485,7 +1486,10 @@ async def stream_llm(
             },
         )
         raise
-    _charge_usage(req, _rebuild_stream(chunks, req))
+    rebuilt = _rebuild_stream(chunks, req)
+    if rebuilt is not None:
+        _warn_if_cut_off(rebuilt, req)
+    _charge_usage(req, rebuilt)
 
 
 async def _stream_and_rebuild(req: _LLMRequest) -> Any:
@@ -1532,46 +1536,68 @@ async def _stream_and_rebuild(req: _LLMRequest) -> Any:
             llm_provider=req.provider,
             model=req.model_string,
         )
-    _warn_if_budget_spent_thinking(response, req)
     return response
 
 
-def _warn_if_budget_spent_thinking(response: Any, req: _LLMRequest) -> None:
-    """Say so when a streamed answer is empty because output ran out.
+def _warn_if_cut_off(response: Any, req: _LLMRequest) -> None:
+    """Say so when an answer stopped at max_tokens (finish_reason "length").
 
-    A reasoning model can spend its whole max_tokens thinking and stop with
-    finish_reason "length" and no content. A non-streamed call through
-    llmao's gateway gets a clear error for that from the gateway's
-    empty-completion guard, which does not cover streams. The call still
-    returns the empty content: agents already handle an empty answer (most
-    retry with thinking off), and raising would take that away from them.
+    Two cases, both silent before:
+
+    - Empty: a reasoning model spent all of max_tokens thinking. llmao's
+      gateway reports this as an error for non-streamed calls only.
+    - Cut off: the answer stops mid-way. The caller gets half an answer,
+      such as a finding block or JSON object with no end, and nothing says
+      it is incomplete.
+
+    The response is returned unchanged either way. Agents already handle an
+    empty answer (most retry with thinking off), and raising would take
+    that away from them.
     """
     try:
         choice = response.choices[0]
-        content = choice.message.content
         finish = choice.finish_reason
+        content = choice.message.content
         reasoning = getattr(choice.message, "reasoning_content", None) or ""
     except Exception:
         return
-    if (content or "").strip() or finish != "length":
+    if finish != "length":
         return
+    if isinstance(content, list):
+        content = "".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    content = content if isinstance(content, str) else ""
     max_tokens = req.kwargs.get("max_tokens")
-    message = (
-        f"{req.model_string}: empty answer, output limit reached "
-        f"(finish_reason=length, max_tokens={max_tokens}, "
-        f"{len(reasoning):,} chars of reasoning). The model spent its output "
-        f"budget thinking; raise max_tokens or lower the reasoning effort."
-    )
+    label = f"{req.provider}/{req.model}"
+    if content.strip():
+        event_type = "llm_output_truncated"
+        message = (
+            f"{label}: answer cut off at the output limit (finish_reason=length, "
+            f"max_tokens={max_tokens}, {len(content):,} chars of answer, "
+            f"{len(reasoning):,} chars of reasoning). The caller got an "
+            f"incomplete answer; raise max_tokens or lower the reasoning effort."
+        )
+    else:
+        event_type = "llm_output_budget_spent_thinking"
+        message = (
+            f"{label}: empty answer, output limit reached "
+            f"(finish_reason=length, max_tokens={max_tokens}, "
+            f"{len(reasoning):,} chars of reasoning). The model spent its output "
+            f"budget thinking; raise max_tokens or lower the reasoning effort."
+        )
     print(f"  WARNING: {message}", flush=True)
     get_observability_service().log(
         level="WARNING",
-        event_type="llm_output_budget_spent_thinking",
+        event_type=event_type,
         message=message,
         user_id=req.user_id,
         metadata={
             "provider": req.provider,
             "model": req.model,
             "max_tokens": max_tokens,
+            "answer_chars": len(content),
             "reasoning_chars": len(reasoning),
         },
     )
