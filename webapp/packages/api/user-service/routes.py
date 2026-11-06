@@ -800,8 +800,8 @@ async def run_agent_code_stream(
             schema_warnings = validate_output_against_schema(result, request.output_schema)
             if schema_warnings:
                 logger.log(
-                    "WARNING", "output_schema_mismatch",
-                    f"Agent output did not match declared schema: {schema_warnings}",
+                    "output_schema_mismatch", f"Agent output did not match declared schema: {schema_warnings}",
+                    level="WARNING",
                     metadata={"warnings": schema_warnings},
                 )
             final["result"] = result
@@ -820,13 +820,13 @@ async def run_agent_code_stream(
                 )
             except Exception:
                 logger.log(
-                    "ERROR", "run_registry_update_failed",
-                    f"mark_complete failed for run {_run_record.run_id}",
+                    "run_registry_update_failed", f"mark_complete failed for run {_run_record.run_id}",
+                    level="ERROR",
                     metadata={"traceback": traceback.format_exc()},
                 )
             logger.log(
-                "INFO", "sandbox_run",
-                "Agent code executed successfully (streaming).",
+                "sandbox_run", "Agent code executed successfully (streaming).",
+                level="INFO",
                 metadata={"request": get_sanitized_request_data(req)},
             )
         except asyncio.CancelledError:
@@ -855,13 +855,13 @@ async def run_agent_code_stream(
                 )
             except Exception:
                 logger.log(
-                    "ERROR", "run_registry_update_failed",
-                    f"mark_complete failed for run {_run_record.run_id}",
+                    "run_registry_update_failed", f"mark_complete failed for run {_run_record.run_id}",
+                    level="ERROR",
                     metadata={"traceback": traceback.format_exc()},
                 )
             logger.log(
-                "INFO", "sandbox_run_cancelled",
-                f"Streaming run cancelled (SSE closed) for run {_run_record.run_id}",
+                "sandbox_run_cancelled", f"Streaming run cancelled (SSE closed) for run {_run_record.run_id}",
+                level="INFO",
                 metadata={"request": get_sanitized_request_data(req)},
             )
             raise
@@ -893,13 +893,13 @@ async def run_agent_code_stream(
                 )
             except Exception:
                 logger.log(
-                    "ERROR", "run_registry_update_failed",
-                    f"mark_complete failed for run {_run_record.run_id}",
+                    "run_registry_update_failed", f"mark_complete failed for run {_run_record.run_id}",
+                    level="ERROR",
                     metadata={"traceback": traceback.format_exc()},
                 )
             logger.log(
-                "ERROR", "sandbox_run_failure",
-                f"Error running agent code (streaming, trace events: {len(trace.events)})",
+                "sandbox_run_failure", f"Error running agent code (streaming, trace events: {len(trace.events)})",
+                level="ERROR",
                 metadata={
                     "traceback": traceback.format_exc(),
                     "request": get_sanitized_request_data(req),
@@ -980,10 +980,10 @@ async def run_agent_code_stream(
             # implicit cancellation is gone by design.
             if not agent_task.done():
                 logger.log(
-                    "INFO",
                     "sse_disconnect_run_continues",
                     f"SSE closed for run {_run_record.run_id}; run continues "
                     f"in background (detached)",
+                    level="INFO",
                     metadata={"run_id": _run_record.run_id},
                 )
 
@@ -1053,9 +1053,9 @@ async def start_agent_run(
             )
         except Exception as e:
             logger.log(
-                "ERROR",
                 "run_failure",
                 f"Run {record.run_id} failed: {type(e).__name__}",
+                level="ERROR",
                 metadata={"traceback": traceback.format_exc()},
             )
             registry.mark_complete(
@@ -1325,9 +1325,9 @@ async def force_complete_run(
     if record.task is not None and not record.task.done():
         record.task.cancel()
         logger.log(
-            "WARNING",
             "force_complete_cancelled_live_task",
             f"force-complete cancelled a still-live task for run {run_id}",
+            level="WARNING",
             metadata={"run_id": run_id, "idle_seconds": idle_seconds},
         )
 
@@ -1390,8 +1390,8 @@ async def run_agent_code(
             )
         except Exception as _exc:
             logger.log(
-                "ERROR", "sandbox_run_failure",
-                f"Error running agent code (trace events: {len(trace.events)})",
+                "sandbox_run_failure", f"Error running agent code (trace events: {len(trace.events)})",
+                level="ERROR",
                 metadata={"traceback": traceback.format_exc(), "request": get_sanitized_request_data(req)}
             )
             return RunCodeResponse(
@@ -1405,8 +1405,8 @@ async def run_agent_code(
         schema_warnings = validate_output_against_schema(result, request.output_schema)
         if schema_warnings:
             logger.log(
-                "WARNING", "output_schema_mismatch",
-                f"Agent output did not match declared schema: {schema_warnings}",
+                "output_schema_mismatch", f"Agent output did not match declared schema: {schema_warnings}",
+                level="WARNING",
                 metadata={"warnings": schema_warnings}
             )
 
@@ -1423,7 +1423,7 @@ async def run_agent_code(
         tb_str = traceback.format_exc()
 
         logger.log(
-            "ERROR", "sandbox_run_failure", f"Error running agent code: {error_str}",
+            "sandbox_run_failure", f"Error running agent code: {error_str}", level="ERROR",
             metadata={"traceback": tb_str, "request": get_sanitized_request_data(req)}
         )
 
@@ -1562,9 +1562,9 @@ async def start_deployed_agent_run(
             )
         except Exception as e:
             logger.log(
-                "ERROR",
                 "deployed_run_failure",
                 f"Deployed run {record.run_id} ({friendly_name}) failed: {type(e).__name__}",
+                level="ERROR",
                 metadata={"traceback": traceback.format_exc(),
                           "run_id": record.run_id,
                           "friendly_name": friendly_name},

@@ -489,9 +489,9 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
 
         if request.provider == "gofannon":
             logger.log(
-                "INFO",
                 "agent_chat_request",
                 f"Initiating Agent call to {request.model}",
+                level="INFO",
                 metadata={"request": get_sanitized_request_data(req)},
                 user_id=log_user_id,
             )
@@ -557,9 +557,9 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
                         built_in_tools.append(tool_conf["tool_config"])
 
             logger.log(
-                "INFO",
                 "llm_request",
                 f"Initiating LLM call to {request.provider}/{request.model}",
+                level="INFO",
                 metadata={"request": get_sanitized_request_data(req)},
                 user_id=log_user_id,
             )
@@ -589,9 +589,9 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
 
     except Exception as e:
         logger.log(
-            "ERROR",
             "background_task_failure",
             f"Chat processing failed for ticket {ticket_id}: {e}",
+            level="ERROR",
             metadata={"traceback": traceback.format_exc(), "request": get_sanitized_request_data(req)},
             user_id=log_user_id,
         )
