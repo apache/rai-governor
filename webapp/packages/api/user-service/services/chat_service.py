@@ -160,7 +160,8 @@ class ChatService:
                 user_service=None,  # Chat service doesn't track user costs
                 user_id=None,
             ):
-                if chunk.choices[0].delta.content:
+                # The last chunk can carry only usage, with no choices.
+                if chunk.choices and chunk.choices[0].delta.content:
                     yield {
                         "type": "content",
                         "data": chunk.choices[0].delta.content

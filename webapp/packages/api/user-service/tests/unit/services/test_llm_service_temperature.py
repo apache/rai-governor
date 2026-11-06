@@ -246,8 +246,11 @@ async def test_stream_mythos_never_receives_temperature(captured, wif):
 
 
 @pytest.mark.asyncio
-async def test_stream_bedrock_claude_keeps_temperature(captured):
-    """stream_llm has never sent reasoning to non-llmao models, so thinking
-    is off there and temperature is legitimately kept."""
+async def test_stream_bedrock_claude_thinks_and_drops_temperature(captured):
+    """stream_llm now sends reasoning as call_llm does, so thinking is on and
+    temperature follows the same rule. It used to send no reasoning to any
+    model but llmao's, which kept the temperature and silently turned
+    thinking off."""
     await _stream("bedrock", "us.anthropic.claude-opus-4-8", reasoning_effort="high", temperature=0.5)
-    assert captured.get("temperature") == 0.5
+    assert captured.get("thinking") == {"type": "adaptive"}
+    assert "temperature" not in captured

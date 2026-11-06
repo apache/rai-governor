@@ -218,6 +218,23 @@ async def test_stream_chat_success(chat_service):
 
 
 @pytest.mark.asyncio
+async def test_stream_chat_skips_a_usage_only_chunk(chat_service):
+    """With usage requested, the last chunk can have no choices at all."""
+    from types import SimpleNamespace
+
+    async def mock_stream(*args, **kwargs):
+        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Hi"))])
+        yield SimpleNamespace(choices=[], usage={"total_tokens": 3})
+
+    with patch("services.chat_service.stream_llm", side_effect=mock_stream):
+        chunks = [c async for c in chat_service.stream_chat(
+            session_id="s", messages=[{"role": "user", "content": "x"}],
+            model="openai/gpt-3.5-turbo", config={})]
+
+    assert chunks == [{"type": "content", "data": "Hi"}, {"type": "done", "data": None}]
+
+
+@pytest.mark.asyncio
 async def test_stream_chat_error(chat_service):
     """Test streaming chat with error."""
     messages = [{"role": "user", "content": "Test"}]

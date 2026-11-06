@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import dataclass
 import os
 import random
 import re
@@ -320,6 +321,16 @@ def _extract_response_cost(response_obj: Any) -> Optional[float]:
                 return float(cost_value)
         except Exception:
             pass
+    # Where litellm itself puts the cost it computed: on every response it
+    # returns, and on a response rebuilt from a stream (stream_chunk_builder),
+    # which has no standard_logging_object.
+    if hasattr(response_obj, "_hidden_params") and isinstance(response_obj._hidden_params, dict):
+        cost_value = response_obj._hidden_params.get("response_cost")
+        if cost_value is not None:
+            try:
+                return float(cost_value)
+            except Exception:
+                pass
     usage = getattr(response_obj, "usage", None)
     if usage and getattr(usage, "total_cost", None) is not None:
         try:
@@ -567,43 +578,52 @@ def _inject_cache_prefix(
     return new_messages
 
 
-async def call_llm(
+
+# ---------------------------------------------------------------------------
+# Request setup and retry policy shared by call_llm and stream_llm
+# ---------------------------------------------------------------------------
+# These were two copies that drifted: stream_llm sent no reasoning to any
+# model but llmao's, ignored cache_prefix and tools, had no retries, and
+# never charged the user. Both entry points now build the request here and
+# run it under the same retry policy.
+
+
+@dataclass
+class _LLMRequest:
+    provider: str
+    model: str
+    model_string: str
+    provider_cfg: Dict[str, Any]
+    model_config: Dict[str, Any]
+    kwargs: Dict[str, Any]
+    reasoning_effort: str
+    thinking_style: str
+    timeout: float
+    # The user's own key for this provider, if any. Minted bearer tokens and
+    # proxy keys go straight into kwargs and are not kept here.
+    api_key: Optional[str]
+    user_service: Optional[UserService]
+    user_id: Optional[str]
+    user_basic_info: Optional[Dict[str, Any]]
+
+
+async def _prepare_request(
     provider: str,
     model: str,
     messages: List[Dict[str, Any]],
     parameters: Dict[str, Any],
-    tools: Optional[List[Dict[str, Any]]] = None,
-    user_service: Optional[UserService] = None,
-    user_id: Optional[str] = None,
-    user_basic_info: Optional[Dict[str, Any]] = None,
-    timeout: Optional[int] = None,
-    cache_prefix: Optional[str] = None,
-) -> Tuple[str, Any]:
-    """
-    Calls the specified language model using litellm, handling different API styles.
-    Returns a tuple of (content, thoughts).
-
-    Args:
-        timeout: Per-call timeout in seconds. Defaults to LLM_TIMEOUT_SECONDS env var (600).
-        cache_prefix: Optional large, stable text (system prompt, ASVS
-            requirement text, shared inventory) to cache across calls that
-            share it. When provided for a Claude model, it is sent as a
-            separate content block marked cache_control={"type":"ephemeral"}
-            ahead of the existing message content. litellm translates that
-            marker to Bedrock's native cachePoint; cached input bills at
-            ~10% on a hit. Ignored for non-Claude models and for the OpenAI
-            'responses' API style (that path builds its own input from the
-            original messages). Prompts under the provider minimum (2,048
-            tokens for Sonnet 4.x) are silently processed without caching —
-            no error — so pass only a genuinely large prefix.
-
-            The marker carries NO ttl field: Bedrock rejects ttl (litellm
-            issues #17250 / #15880); the native Anthropic API accepts it but
-            we target Bedrock.
-    """
+    *,
+    tools: Optional[List[Dict[str, Any]]],
+    user_service: Optional[UserService],
+    user_id: Optional[str],
+    user_basic_info: Optional[Dict[str, Any]],
+    timeout: Optional[float],
+    cache_prefix: Optional[str],
+) -> _LLMRequest:
+    """Build the litellm request: model string, messages, reasoning,
+    temperature, tools, timeout, credentials. Checks the user's allowance."""
     check_should_stop()  # ISSUE-007: cancel at structural boundary
     model_config = PROVIDER_CONFIG.get(provider, {}).get("models", {}).get(model, {})
-    api_style = model_config.get("api_style")
 
     # If the provider config supplies an explicit litellm prefix (e.g.
     # anthropic-1p -> "anthropic"), use it so litellm routes
@@ -612,12 +632,13 @@ async def call_llm(
     provider_cfg = PROVIDER_CONFIG.get(provider, {})
     litellm_prefix = provider_cfg.get("litellm_provider_prefix", provider)
     model_string = f"{litellm_prefix}/{model}"
-    
-    thoughts = None
-    content = ""
+
 
     # Filter out None values from parameters (e.g., top_p with default None)
     filtered_params = {k: v for k, v in parameters.items() if v is not None}
+    # The timeout argument wins; a timeout inside parameters is the
+    # streaming path's old spelling and is still honoured.
+    _params_timeout = filtered_params.pop("timeout", None)
 
     # cache_prefix is a GUARANTEED-DELIVERED input whose transport varies by
     # capability: a cache_control block where the provider supports one,
@@ -730,7 +751,7 @@ async def call_llm(
         kwargs["tools"] = tools
 
     # Set timeout for the LLM call
-    effective_timeout = timeout or DEFAULT_LLM_TIMEOUT
+    effective_timeout = timeout or _params_timeout or DEFAULT_LLM_TIMEOUT
     kwargs["timeout"] = _http_timeout(effective_timeout)
 
     if user_service is None:
@@ -790,6 +811,357 @@ async def call_llm(
                 )
             kwargs["api_key"] = _key
 
+    return _LLMRequest(
+        provider=provider,
+        model=model,
+        model_string=model_string,
+        provider_cfg=provider_cfg,
+        model_config=model_config,
+        kwargs=kwargs,
+        reasoning_effort=reasoning_effort,
+        thinking_style=thinking_style,
+        timeout=effective_timeout,
+        api_key=api_key,
+        user_service=user_service,
+        user_id=user_id,
+        user_basic_info=user_basic_info,
+    )
+
+
+def _apply_completion_reasoning(req: _LLMRequest) -> None:
+    """Add the reasoning parameters chat completion needs for this style.
+
+    "enable_thinking" is already in extra_body (see _prepare_request), and
+    "none" takes no reasoning parameter. The OpenAI 'responses' path sends
+    reasoning its own way and does not call this.
+    """
+    if req.reasoning_effort == 'disable':
+        return
+    if req.thinking_style == "adaptive":
+        # Opus 4.7+ and Mythos reject the old thinking.type.enabled
+        # format that litellm's reasoning_effort translation
+        # produces. Set the adaptive-thinking params directly and
+        # skip litellm's translation.
+        req.kwargs['thinking'] = {'type': 'adaptive'}
+        req.kwargs['output_config'] = {'effort': req.reasoning_effort}
+    elif req.thinking_style == "reasoning_effort":
+        req.kwargs['reasoning_effort'] = req.reasoning_effort
+
+
+def _charge_usage(req: _LLMRequest, response_obj: Any) -> None:
+    """Add the call's cost to the user's spend, when it can be read."""
+    if not (req.user_service and req.user_id):
+        return
+    try:
+        response_cost = _extract_response_cost(response_obj)
+    except Exception:
+        response_cost = None
+    if response_cost is not None:
+        req.user_service.add_usage(
+            req.user_id, response_cost, basic_info=req.user_basic_info
+        )
+
+
+async def _completion_with_retries(req: _LLMRequest, make_attempt, context: str):
+    """Run ``make_attempt()`` under the retry policy and return its result.
+
+    ``make_attempt`` is an async callable that makes one request with
+    ``req.kwargs`` (read at call time: an auth re-mint replaces the key).
+    Errors that are not retried, or that exhaust their budget, are logged
+    under ``context`` and raised, as user-facing ValueErrors for a bad key
+    or an overflowing context window.
+    """
+    kwargs = req.kwargs
+    provider = req.provider
+    model = req.model
+    model_config = req.model_config
+    provider_cfg = req.provider_cfg
+    model_string = req.model_string
+    effective_timeout = req.timeout
+    user_id = req.user_id
+    api_key = req.api_key
+    # Retry loop. Two exception classes are retryable here:
+    #   - litellm.Timeout       — slow network or model; modest linear backoff.
+    #   - litellm.RateLimitError — provider throttling (Bedrock 429,
+    #     OpenAI 429); needs slow exponential backoff with jitter so
+    #     parallel callers don't synchronise their retries into a
+    #     thundering herd.
+    # Other exceptions fall through to the error-classifier branch
+    # below (auth, context window, generic). Those are not retryable.
+    last_exception = None
+    # +MAX_AUTH_REMINT_RETRIES: an expired bearer costs an attempt, and
+    # without its own budget an auth failure would eat into the timeout
+    # or rate-limit allowance.
+    max_attempts = (
+        1
+        + MAX_TIMEOUT_RETRIES
+        + MAX_RATE_LIMIT_RETRIES
+        + MAX_OVERLOADED_RETRIES
+        + MAX_AUTH_REMINT_RETRIES
+    )
+    timeout_attempts_used = 0
+    rate_limit_attempts_used = 0
+    overloaded_attempts_used = 0
+    auth_remint_attempts_used = 0
+
+    async def _refresh_bearer_token_if_needed() -> None:
+        """Re-mint the bearer before a retry.
+
+        The token was minted before the loop. A long call (up to 1800s)
+        can outlive the STS credentials that signed it, in which case
+        every retry would replay the SAME dead token and fail
+        identically -- which is exactly what a 3x900s "timeout" cascade
+        looks like from the outside. Invalidate and re-mint so each
+        attempt gets a token good for its own duration.
+        """
+        if provider_cfg.get("auth_mechanism") != "wif":
+            return
+        from services.anthropic_wif import (
+            invalidate_anthropic_1p_token,
+            get_anthropic_1p_bearer_token,
+        )
+        invalidate_anthropic_1p_token()
+        kwargs["api_key"] = await get_anthropic_1p_bearer_token(
+            min_validity_seconds=int(effective_timeout or 0),
+        )
+
+    for attempt in range(max_attempts):
+        try:
+            return await make_attempt()
+        except litellm.AuthenticationError as e:
+            # Bedrock rejects an expired presigned token as an auth
+            # error. The cached bearer is poisoned for this whole
+            # worker, so drop it and retry with a fresh one --
+            # otherwise every later call on this process inherits it.
+            # Only retry for minted tokens: for a static API key a
+            # re-mint changes nothing and the key is genuinely bad.
+            last_exception = e
+            if (
+                provider_cfg.get("auth_mechanism") == "wif"
+                and auth_remint_attempts_used < MAX_AUTH_REMINT_RETRIES
+            ):
+                auth_remint_attempts_used += 1
+                print(
+                    f"  Auth error on attempt {attempt + 1} for "
+                    f"{model_string}; re-minting bearer token and "
+                    f"retrying "
+                    f"({auth_remint_attempts_used}/"
+                    f"{MAX_AUTH_REMINT_RETRIES})...",
+                    flush=True,
+                )
+                await _refresh_bearer_token_if_needed()
+                continue
+            raise
+        except litellm.Timeout as e:
+            last_exception = e
+            if timeout_attempts_used < MAX_TIMEOUT_RETRIES:
+                timeout_attempts_used += 1
+                wait_secs = 5 * timeout_attempts_used
+                print(
+                    f"  Timeout on attempt {attempt + 1} "
+                    f"for {model_string} (timeout={effective_timeout}s, "
+                    f"connect={min(LLM_CONNECT_TIMEOUT, effective_timeout)}s). "
+                    f"Retrying in {wait_secs}s...",
+                    flush=True,
+                )
+                await asyncio.sleep(wait_secs)
+                # A timeout is indistinguishable from an expired-token
+                # stall at this layer, so refresh before retrying.
+                await _refresh_bearer_token_if_needed()
+                continue
+            raise
+        except litellm.RateLimitError as e:
+            last_exception = e
+            if rate_limit_attempts_used < MAX_RATE_LIMIT_RETRIES:
+                # Exponential backoff with jitter. The 2**n curve
+                # plus uniform(0, n+1) jitter spreads parallel
+                # callers' retries across time so the next attempt
+                # batch doesn't arrive at the provider as
+                # synchronously as the failed batch did.
+                backoff = min(
+                    RATE_LIMIT_BACKOFF_CAP_SECONDS,
+                    (2 ** rate_limit_attempts_used)
+                    + random.uniform(0, rate_limit_attempts_used + 1),
+                )
+                rate_limit_attempts_used += 1
+                print(
+                    f"  RateLimit on attempt {attempt + 1} "
+                    f"for {model_string}; sleeping {backoff:.1f}s "
+                    f"(retry {rate_limit_attempts_used}/{MAX_RATE_LIMIT_RETRIES})",
+                    flush=True,
+                )
+                await asyncio.sleep(backoff)
+                continue
+            # Exhausted rate-limit retries. Log and re-raise so the
+            # caller can decide whether to apply a domain-specific
+            # fallback (e.g., the bundle's score=5 default for failed
+            # relevance batches).
+            observability = get_observability_service()
+            observability.log_exception(
+                e,
+                user_id=user_id,
+                metadata={
+                    "context": context,
+                    "model": kwargs.get('model'),
+                    "provider": provider,
+                    "tools": kwargs.get('tools'),
+                    "rate_limit_retries_exhausted": MAX_RATE_LIMIT_RETRIES,
+                }
+            )
+            raise
+        except Exception as e:
+            # Retryable provider failures -- overload (529) and transient
+            # 5xx, including gateway-class 502 -- share one backoff budget
+            # and are classified by the module-level predicates above, so
+            # a flapping endpoint cannot exceed MAX_OVERLOADED_RETRIES in
+            # total however its errors are spelled.
+            _err_str = str(e).lower()
+            _is_overloaded = _is_overloaded_error(_err_str)
+            # Class first, text second: the class is litellm's and stable,
+            # the text is the provider's and is not.
+            _is_transient_class = _is_transient_exception(e)
+            _is_transient_5xx = (
+                _is_transient_class or _is_transient_5xx_error(_err_str)
+            )
+            if (_is_overloaded or _is_transient_5xx) and overloaded_attempts_used < MAX_OVERLOADED_RETRIES:
+                last_exception = e
+                backoff = min(
+                    RATE_LIMIT_BACKOFF_CAP_SECONDS,
+                    (2 ** overloaded_attempts_used)
+                    + random.uniform(0, overloaded_attempts_used + 1),
+                )
+                overloaded_attempts_used += 1
+                if _is_overloaded:
+                    _kind = "overloaded (529)"
+                elif _is_gateway_error(_err_str):
+                    _kind = "bad gateway (502)"
+                elif _is_transient_class:
+                    # Name the class that opened the budget, so the next
+                    # time this fires the log says which exception it was
+                    # instead of leaving it to be inferred from the text.
+                    _kind = f"transient {type(e).__name__}"
+                else:
+                    _kind = "server error (5xx)"
+                print(
+                    f"  {_kind} on attempt {attempt + 1} "
+                    f"for {model_string}; sleeping {backoff:.1f}s "
+                    f"(retry {overloaded_attempts_used}/{MAX_OVERLOADED_RETRIES})",
+                    flush=True,
+                )
+                await asyncio.sleep(backoff)
+                continue
+            observability = get_observability_service()
+
+            # Check for authentication errors and provide user-friendly message
+            error_str = str(e).lower()
+            if "invalid_api_key" in error_str or "authentication" in error_str or "api key" in error_str:
+                key_source = "user-specific" if api_key else "environment variable"
+                error_msg = f"Invalid API key for {provider}. Please check your {key_source} API key in your profile settings."
+                observability.log(
+                    level="ERROR",
+                    event_type="invalid_api_key",
+                    message=error_msg,
+                    user_id=user_id,
+                    metadata={
+                        "provider": provider,
+                        "key_source": key_source,
+                        "original_error": str(e)[:200],
+                    }
+                )
+                raise ValueError(error_msg) from e
+
+            # Check for context window overflow errors
+            if "prompt is too long" in error_str or "context_length_exceeded" in error_str or "maximum context length" in error_str:
+                context_window = model_config.get("context_window", "unknown")
+                error_msg = (
+                    f"Prompt exceeded {model}'s context window of {context_window} tokens. "
+                    f"Use hierarchical consolidation to process data in smaller groups."
+                )
+                observability.log(
+                    level="ERROR",
+                    event_type="context_window_exceeded",
+                    message=error_msg,
+                    user_id=user_id,
+                    metadata={
+                        "provider": provider,
+                        "model": model,
+                        "context_window": context_window,
+                        "original_error": str(e)[:500],
+                    }
+                )
+                raise ValueError(error_msg) from e
+
+            observability.log_exception(
+                e,
+                user_id=user_id,
+                metadata={
+                    "context": context,
+                    "model": kwargs.get('model'),
+                    "provider": provider,
+                    "tools": kwargs.get('tools'),
+                }
+            )
+            raise
+    # Every branch above returns, continues or raises; a budget that ran out
+    # on a continue lands here.
+    raise last_exception
+
+
+
+async def call_llm(
+    provider: str,
+    model: str,
+    messages: List[Dict[str, Any]],
+    parameters: Dict[str, Any],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    user_service: Optional[UserService] = None,
+    user_id: Optional[str] = None,
+    user_basic_info: Optional[Dict[str, Any]] = None,
+    timeout: Optional[int] = None,
+    cache_prefix: Optional[str] = None,
+) -> Tuple[str, Any]:
+    """
+    Calls the specified language model using litellm, handling different API styles.
+    Returns a tuple of (content, thoughts).
+
+    Args:
+        timeout: Per-call timeout in seconds. Defaults to LLM_TIMEOUT_SECONDS env var (600).
+        cache_prefix: Optional large, stable text (system prompt, ASVS
+            requirement text, shared inventory) to cache across calls that
+            share it. When provided for a Claude model, it is sent as a
+            separate content block marked cache_control={"type":"ephemeral"}
+            ahead of the existing message content. litellm translates that
+            marker to Bedrock's native cachePoint; cached input bills at
+            ~10% on a hit. Ignored for non-Claude models and for the OpenAI
+            'responses' API style (that path builds its own input from the
+            original messages). Prompts under the provider minimum (2,048
+            tokens for Sonnet 4.x) are silently processed without caching —
+            no error — so pass only a genuinely large prefix.
+
+            The marker carries NO ttl field: Bedrock rejects ttl (litellm
+            issues #17250 / #15880); the native Anthropic API accepts it but
+            we target Bedrock.
+    """
+    req = await _prepare_request(
+        provider, model, messages, parameters,
+        tools=tools,
+        user_service=user_service,
+        user_id=user_id,
+        user_basic_info=user_basic_info,
+        timeout=timeout,
+        cache_prefix=cache_prefix,
+    )
+    # The names the branches below were written against.
+    kwargs = req.kwargs
+    model_config = req.model_config
+    model_string = req.model_string
+    reasoning_effort = req.reasoning_effort
+    api_key = req.api_key
+    user_id = req.user_id
+    api_style = model_config.get("api_style")
+
+    thoughts = None
+    content = ""
 
     # Only use aresponses API when we actually need its features (tools or reasoning)
     # Otherwise use standard acompletion which is more reliable
@@ -977,242 +1349,14 @@ async def call_llm(
             raise
     else:
         # Standard acompletion call for most models
-        if reasoning_effort != 'disable':
-            if thinking_style == "adaptive":
-                # Opus 4.7+ and Mythos reject the old thinking.type.enabled
-                # format that litellm's reasoning_effort translation
-                # produces. Set the adaptive-thinking params directly and
-                # skip litellm's translation.
-                kwargs['thinking'] = {'type': 'adaptive'}
-                kwargs['output_config'] = {'effort': reasoning_effort}
-            elif thinking_style == "reasoning_effort":
-                kwargs['reasoning_effort'] = reasoning_effort
-            # "enable_thinking": already sent in extra_body above.
-            # "none": the model takes no reasoning parameter.
+        _apply_completion_reasoning(req)
 
-        # Retry loop. Two exception classes are retryable here:
-        #   - litellm.Timeout       — slow network or model; modest linear backoff.
-        #   - litellm.RateLimitError — provider throttling (Bedrock 429,
-        #     OpenAI 429); needs slow exponential backoff with jitter so
-        #     parallel callers don't synchronise their retries into a
-        #     thundering herd.
-        # Other exceptions fall through to the error-classifier branch
-        # below (auth, context window, generic). Those are not retryable.
-        last_exception = None
-        # +MAX_AUTH_REMINT_RETRIES: an expired bearer costs an attempt, and
-        # without its own budget an auth failure would eat into the timeout
-        # or rate-limit allowance.
-        max_attempts = (
-            1
-            + MAX_TIMEOUT_RETRIES
-            + MAX_RATE_LIMIT_RETRIES
-            + MAX_OVERLOADED_RETRIES
-            + MAX_AUTH_REMINT_RETRIES
+        async def _attempt():
+            return await litellm.acompletion(**req.kwargs)
+
+        response = await _completion_with_retries(
+            req, _attempt, context="litellm.acompletion"
         )
-        timeout_attempts_used = 0
-        rate_limit_attempts_used = 0
-        overloaded_attempts_used = 0
-        auth_remint_attempts_used = 0
-
-        async def _refresh_bearer_token_if_needed() -> None:
-            """Re-mint the bearer before a retry.
-
-            The token was minted before the loop. A long call (up to 1800s)
-            can outlive the STS credentials that signed it, in which case
-            every retry would replay the SAME dead token and fail
-            identically -- which is exactly what a 3x900s "timeout" cascade
-            looks like from the outside. Invalidate and re-mint so each
-            attempt gets a token good for its own duration.
-            """
-            if provider_cfg.get("auth_mechanism") != "wif":
-                return
-            from services.anthropic_wif import (
-                invalidate_anthropic_1p_token,
-                get_anthropic_1p_bearer_token,
-            )
-            invalidate_anthropic_1p_token()
-            kwargs["api_key"] = await get_anthropic_1p_bearer_token(
-                min_validity_seconds=int(effective_timeout or 0),
-            )
-
-        for attempt in range(max_attempts):
-            try:
-                response = await litellm.acompletion(**kwargs)
-                break  # Success
-            except litellm.AuthenticationError as e:
-                # Bedrock rejects an expired presigned token as an auth
-                # error. The cached bearer is poisoned for this whole
-                # worker, so drop it and retry with a fresh one --
-                # otherwise every later call on this process inherits it.
-                # Only retry for minted tokens: for a static API key a
-                # re-mint changes nothing and the key is genuinely bad.
-                last_exception = e
-                if (
-                    provider_cfg.get("auth_mechanism") == "wif"
-                    and auth_remint_attempts_used < MAX_AUTH_REMINT_RETRIES
-                ):
-                    auth_remint_attempts_used += 1
-                    print(
-                        f"  Auth error on attempt {attempt + 1} for "
-                        f"{model_string}; re-minting bearer token and "
-                        f"retrying "
-                        f"({auth_remint_attempts_used}/"
-                        f"{MAX_AUTH_REMINT_RETRIES})...",
-                        flush=True,
-                    )
-                    await _refresh_bearer_token_if_needed()
-                    continue
-                raise
-            except litellm.Timeout as e:
-                last_exception = e
-                if timeout_attempts_used < MAX_TIMEOUT_RETRIES:
-                    timeout_attempts_used += 1
-                    wait_secs = 5 * timeout_attempts_used
-                    print(
-                        f"  Timeout on attempt {attempt + 1} "
-                        f"for {model_string} (timeout={effective_timeout}s, "
-                        f"connect={min(LLM_CONNECT_TIMEOUT, effective_timeout)}s). "
-                        f"Retrying in {wait_secs}s...",
-                        flush=True,
-                    )
-                    await asyncio.sleep(wait_secs)
-                    # A timeout is indistinguishable from an expired-token
-                    # stall at this layer, so refresh before retrying.
-                    await _refresh_bearer_token_if_needed()
-                    continue
-                raise
-            except litellm.RateLimitError as e:
-                last_exception = e
-                if rate_limit_attempts_used < MAX_RATE_LIMIT_RETRIES:
-                    # Exponential backoff with jitter. The 2**n curve
-                    # plus uniform(0, n+1) jitter spreads parallel
-                    # callers' retries across time so the next attempt
-                    # batch doesn't arrive at the provider as
-                    # synchronously as the failed batch did.
-                    backoff = min(
-                        RATE_LIMIT_BACKOFF_CAP_SECONDS,
-                        (2 ** rate_limit_attempts_used)
-                        + random.uniform(0, rate_limit_attempts_used + 1),
-                    )
-                    rate_limit_attempts_used += 1
-                    print(
-                        f"  RateLimit on attempt {attempt + 1} "
-                        f"for {model_string}; sleeping {backoff:.1f}s "
-                        f"(retry {rate_limit_attempts_used}/{MAX_RATE_LIMIT_RETRIES})",
-                        flush=True,
-                    )
-                    await asyncio.sleep(backoff)
-                    continue
-                # Exhausted rate-limit retries. Log and re-raise so the
-                # caller can decide whether to apply a domain-specific
-                # fallback (e.g., the bundle's score=5 default for failed
-                # relevance batches).
-                observability = get_observability_service()
-                observability.log_exception(
-                    e,
-                    user_id=user_id,
-                    metadata={
-                        "context": "litellm.acompletion",
-                        "model": kwargs.get('model'),
-                        "provider": provider,
-                        "tools": kwargs.get('tools'),
-                        "rate_limit_retries_exhausted": MAX_RATE_LIMIT_RETRIES,
-                    }
-                )
-                raise
-            except Exception as e:
-                # Retryable provider failures -- overload (529) and transient
-                # 5xx, including gateway-class 502 -- share one backoff budget
-                # and are classified by the module-level predicates above, so
-                # a flapping endpoint cannot exceed MAX_OVERLOADED_RETRIES in
-                # total however its errors are spelled.
-                _err_str = str(e).lower()
-                _is_overloaded = _is_overloaded_error(_err_str)
-                # Class first, text second: the class is litellm's and stable,
-                # the text is the provider's and is not.
-                _is_transient_class = _is_transient_exception(e)
-                _is_transient_5xx = (
-                    _is_transient_class or _is_transient_5xx_error(_err_str)
-                )
-                if (_is_overloaded or _is_transient_5xx) and overloaded_attempts_used < MAX_OVERLOADED_RETRIES:
-                    last_exception = e
-                    backoff = min(
-                        RATE_LIMIT_BACKOFF_CAP_SECONDS,
-                        (2 ** overloaded_attempts_used)
-                        + random.uniform(0, overloaded_attempts_used + 1),
-                    )
-                    overloaded_attempts_used += 1
-                    if _is_overloaded:
-                        _kind = "overloaded (529)"
-                    elif _is_gateway_error(_err_str):
-                        _kind = "bad gateway (502)"
-                    elif _is_transient_class:
-                        # Name the class that opened the budget, so the next
-                        # time this fires the log says which exception it was
-                        # instead of leaving it to be inferred from the text.
-                        _kind = f"transient {type(e).__name__}"
-                    else:
-                        _kind = "server error (5xx)"
-                    print(
-                        f"  {_kind} on attempt {attempt + 1} "
-                        f"for {model_string}; sleeping {backoff:.1f}s "
-                        f"(retry {overloaded_attempts_used}/{MAX_OVERLOADED_RETRIES})",
-                        flush=True,
-                    )
-                    await asyncio.sleep(backoff)
-                    continue
-                observability = get_observability_service()
-                
-                # Check for authentication errors and provide user-friendly message
-                error_str = str(e).lower()
-                if "invalid_api_key" in error_str or "authentication" in error_str or "api key" in error_str:
-                    key_source = "user-specific" if api_key else "environment variable"
-                    error_msg = f"Invalid API key for {provider}. Please check your {key_source} API key in your profile settings."
-                    observability.log(
-                        level="ERROR",
-                        event_type="invalid_api_key",
-                        message=error_msg,
-                        user_id=user_id,
-                        metadata={
-                            "provider": provider,
-                            "key_source": key_source,
-                            "original_error": str(e)[:200],
-                        }
-                    )
-                    raise ValueError(error_msg) from e
-                
-                # Check for context window overflow errors
-                if "prompt is too long" in error_str or "context_length_exceeded" in error_str or "maximum context length" in error_str:
-                    context_window = model_config.get("context_window", "unknown")
-                    error_msg = (
-                        f"Prompt exceeded {model}'s context window of {context_window} tokens. "
-                        f"Use hierarchical consolidation to process data in smaller groups."
-                    )
-                    observability.log(
-                        level="ERROR",
-                        event_type="context_window_exceeded",
-                        message=error_msg,
-                        user_id=user_id,
-                        metadata={
-                            "provider": provider,
-                            "model": model,
-                            "context_window": context_window,
-                            "original_error": str(e)[:500],
-                        }
-                    )
-                    raise ValueError(error_msg) from e
-
-                observability.log_exception(
-                    e,
-                    user_id=user_id,
-                    metadata={
-                        "context": "litellm.acompletion",
-                        "model": kwargs.get('model'),
-                        "provider": provider,
-                        "tools": kwargs.get('tools'),
-                    }
-                )
-                raise
         message = response.choices[0].message
         content = message.content if isinstance(message.content, str) else ""
         
@@ -1243,14 +1387,7 @@ async def call_llm(
     if thoughts is not None:
         thoughts = json.loads(json.dumps(thoughts, default=str))
 
-    if user_service and user_id:
-        response_cost = None
-        try:
-            response_cost = _extract_response_cost(final_response if use_responses_api else response)
-        except Exception:
-            response_cost = None
-        if response_cost is not None:
-            user_service.add_usage(user_id, response_cost, basic_info=user_basic_info)
+    _charge_usage(req, final_response if use_responses_api else response)
 
     return content, thoughts
 
@@ -1263,156 +1400,93 @@ async def stream_llm(
     user_service: Optional[UserService] = None,
     user_id: Optional[str] = None,
     user_basic_info: Optional[Dict[str, Any]] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    timeout: Optional[int] = None,
+    cache_prefix: Optional[str] = None,
 ) -> AsyncGenerator[Any, None]:
+    """Stream an LLM response; yields litellm's chunks unchanged.
+
+    The request is built exactly as call_llm builds it: the same thinking
+    styles, temperature rules, cache_prefix, tools, credentials and timeout.
+    Failures are retried under call_llm's policy until the first chunk
+    arrives. After that they are raised, since the caller already holds
+    part of the answer and the call cannot be repeated behind its back.
+    The cost is charged to the user when the stream completes.
+
+    Models with the OpenAI 'responses' API style stream through plain chat
+    completion, as before.
     """
-    Stream LLM responses using litellm's async streaming.
-
-    This function provides streaming capability while maintaining the same
-    interface and checks as call_llm (user allowance, logging, etc).
-
-    Yields chunks from the LLM response stream.
-
-    Note: Cost tracking is not available for streaming responses.
-    """
-    # If the provider config supplies an explicit litellm prefix (e.g.
-    # anthropic-1p -> "anthropic"), use it so litellm routes
-    # through its native handler for that backend. Defaults to the
-    # gofannon provider key for backwards compatibility.
-    provider_cfg = PROVIDER_CONFIG.get(provider, {})
-    model_config = PROVIDER_CONFIG.get(provider, {}).get("models", {}).get(model, {})
-    litellm_prefix = provider_cfg.get("litellm_provider_prefix", provider)
-    model_string = f"{litellm_prefix}/{model}"
-
-    # Filter out None values from parameters
-    filtered_params = {k: v for k, v in parameters.items() if v is not None}
-    stream_timeout = float(filtered_params.pop("timeout", DEFAULT_LLM_TIMEOUT))
-
-    kwargs = {
-        "model": model_string,
-        "messages": messages,
-        "stream": True,
-        **filtered_params,
-        # Without this, streaming fell back to litellm's 600 s default with no
-        # separate connect limit (ISSUE-021).
-        "timeout": _http_timeout(stream_timeout),
-    }
-
-    # Reasoning, mirroring the gate in call_llm.
-    #
-    # This previously read `kwargs.pop('reasoning_effort', None)` with the
-    # note "not typically used in streaming", which discarded the caller's
-    # intent without acting on it. For Bedrock that was harmless -- the
-    # parameter simply went unused. For the llmao provider it was not: those
-    # models are reached through a vLLM endpoint where reasoning is
-    # controlled by chat_template_kwargs.enable_thinking, and sending nothing
-    # leaves each model at ITS OWN default. Two of the three think by
-    # default, and on qwen3-8b that means the whole token budget is spent
-    # reasoning and the stream carries no content at all -- measured, 400
-    # chunks and zero output.
-    #
-    # So the pop is kept (reasoning_effort must never reach vLLM: it accepts
-    # that parameter on one of the three models and rejects it on the
-    # others), but the value is now translated first.
-    #
-    # GATE: thinking_style == "enable_thinking", resolved by the same
-    # _thinking_style() call_llm uses. By default that means api_base_env_var,
-    # not supports_thinking alone. That flag is also True on the Bedrock
-    # Anthropic models, where it means "can do extended thinking", NOT
-    # "accepts enable_thinking" -- Converse rejects unknown top-level fields
-    # with 400 "extra_body: Extra inputs are not permitted". Only the llmao
-    # provider sets api_base_env_var, so Bedrock is excluded by construction
-    # rather than by a denylist.
-    #
-    # Other styles send nothing here, as before: streaming has never passed
-    # reasoning to non-llmao providers. Unchanged by this refactor.
-    _reasoning_effort = kwargs.pop('reasoning_effort', 'disable')
-
-    if _thinking_style(provider_cfg, model_config) == "enable_thinking":
-        _extra = dict(kwargs.get("extra_body", {}))
-        _ctk = dict(_extra.get("chat_template_kwargs", {}))
-        _ctk["enable_thinking"] = (_reasoning_effort != 'disable')
-        # Models that grade their reasoning take the level in the same place.
-        # See the equivalent branch in call_llm for the measurements: on
-        # qwen3.8-27b the default is xhigh, its maximum, and it costs 1.9x the
-        # wall time of medium to produce half the content.
-        if _reasoning_effort in (model_config.get("thinking_levels") or ()):
-            _ctk["reasoning_effort"] = _reasoning_effort
-        _extra["chat_template_kwargs"] = _ctk
-        kwargs["extra_body"] = _extra
-
-    # Streaming only ever sends reasoning for enable_thinking models (see the
-    # gate above), so that is the only case where thinking is on here.
-    # rejects_temperature still applies to every model.
-    _reconcile_temperature(
-        kwargs, model_config,
-        thinking_active=(
-            _reasoning_effort != 'disable'
-            and _thinking_style(provider_cfg, model_config) == "enable_thinking"
-        ),
-        model_label=f"{provider}/{model}",
+    req = await _prepare_request(
+        provider, model, messages, parameters,
+        tools=tools,
+        user_service=user_service,
+        user_id=user_id,
+        user_basic_info=user_basic_info,
+        timeout=timeout,
+        cache_prefix=cache_prefix,
     )
+    _apply_completion_reasoning(req)
+    req.kwargs["stream"] = True
+    if _stream_usage_supported(req):
+        # Usage arrives in the last chunk only when asked for; without it the
+        # call cannot be charged. Anthropic sends usage regardless and does
+        # not take the parameter.
+        req.kwargs["stream_options"] = {"include_usage": True}
 
-    if user_service is None:
-        user_service = get_user_service(get_database_service(settings))
-    if user_id is None:
-        user_id = "anonymous"
+    async def _open():
+        stream = await litellm.acompletion(**req.kwargs)
+        try:
+            first = await stream.__anext__()
+        except StopAsyncIteration:
+            first = None
+        return stream, first
 
-    if user_service and user_id:
-        user_service.require_allowance(user_id, basic_info=user_basic_info)
-
-    # Get the effective API key (user's key takes precedence over env var)
-    api_key = None
-    if user_service and user_id:
-        api_key = user_service.get_effective_api_key(user_id, provider, basic_info=user_basic_info)
-
-    # If no user-specific key, litellm will use environment variables
-    if api_key:
-        kwargs["api_key"] = api_key
-
-    # Anthropic 1P: mint a short-lived bearer token at request time. The
-    # token overrides any user-specific key above, since WIF auth is
-    # account-scoped rather than per-user.
-    if provider_cfg.get("auth_mechanism") == "wif":
-        from services.anthropic_wif import get_anthropic_1p_bearer_token
-        kwargs["api_key"] = await get_anthropic_1p_bearer_token(
-            # Streaming has no retry loop, so a token that dies mid-stream
-            # can't be recovered -- require it to cover the whole call.
-            min_validity_seconds=int(stream_timeout),
-        )
-
-    # Custom OpenAI-compatible endpoint (llmao proxy). Same
-    # reasoning as the non-streaming path: fail loudly rather than defaulting
-    # to api.openai.com with OPENAI_API_KEY.
-    _api_base_var = provider_cfg.get("api_base_env_var")
-    if _api_base_var:
-        _api_base = os.environ.get(_api_base_var)
-        if not _api_base:
-            raise ValueError(
-                f"provider '{provider}' requires {_api_base_var} to be set."
-            )
-        kwargs["api_base"] = _api_base
-        _key_var = provider_cfg.get("api_key_env_var")
-        if _key_var:
-            _key = os.environ.get(_key_var)
-            if not _key:
-                raise ValueError(
-                    f"provider '{provider}' requires {_key_var} to be set."
-                )
-            kwargs["api_key"] = _key
-
+    stream, first = await _completion_with_retries(req, _open, context="stream_llm")
+    if first is None:
+        return
+    chunks = [first]
     try:
-        response = await litellm.acompletion(**kwargs)
-        async for chunk in response:
+        yield first
+        async for chunk in stream:
+            chunks.append(chunk)
             yield chunk
     except Exception as e:
-        observability = get_observability_service()
-        observability.log_exception(
+        get_observability_service().log_exception(
             e,
-            user_id=user_id,
+            user_id=req.user_id,
             metadata={
                 "context": "stream_llm",
-                "model": model_string,
-                "provider": provider,
-            }
+                "model": req.model_string,
+                "provider": req.provider,
+                "chunks_received": len(chunks),
+            },
         )
         raise
+    _charge_usage(req, _rebuild_stream(chunks, req))
+
+
+def _stream_usage_supported(req: _LLMRequest) -> bool:
+    """Whether litellm passes stream_options through for this model."""
+    try:
+        supported = litellm.get_supported_openai_params(
+            model=req.model,
+            custom_llm_provider=req.provider_cfg.get(
+                "litellm_provider_prefix", req.provider
+            ),
+        )
+    except Exception:
+        return False
+    return bool(supported) and "stream_options" in supported
+
+
+def _rebuild_stream(chunks: List[Any], req: _LLMRequest) -> Any:
+    """Reassemble streamed chunks into one ModelResponse (content, reasoning,
+    tool calls, usage and cost), or None when there is nothing to build."""
+    if not chunks:
+        return None
+    try:
+        return litellm.stream_chunk_builder(
+            chunks, messages=req.kwargs.get("messages")
+        )
+    except Exception:
+        return None
