@@ -1040,7 +1040,10 @@ async def _completion_with_retries(req: _LLMRequest, make_attempt, context: str)
                 if _is_overloaded:
                     _kind = "overloaded (529)"
                 elif _is_gateway_error(_err_str):
-                    _kind = "bad gateway (502)"
+                    # litellm raises BadGatewayError only for a literal HTTP
+                    # 502, which comes from a proxy between us and the model
+                    # timing out or losing its upstream -- not from the model.
+                    _kind = "bad gateway (502 from a proxy in front of the model)"
                 elif _is_transient_class:
                     # Name the class that opened the budget, so the next
                     # time this fires the log says which exception it was
@@ -1529,7 +1532,49 @@ async def _stream_and_rebuild(req: _LLMRequest) -> Any:
             llm_provider=req.provider,
             model=req.model_string,
         )
+    _warn_if_budget_spent_thinking(response, req)
     return response
+
+
+def _warn_if_budget_spent_thinking(response: Any, req: _LLMRequest) -> None:
+    """Say so when a streamed answer is empty because output ran out.
+
+    A reasoning model can spend its whole max_tokens thinking and stop with
+    finish_reason "length" and no content. A non-streamed call through
+    llmao's gateway gets a clear error for that from the gateway's
+    empty-completion guard, which does not cover streams. The call still
+    returns the empty content: agents already handle an empty answer (most
+    retry with thinking off), and raising would take that away from them.
+    """
+    try:
+        choice = response.choices[0]
+        content = choice.message.content
+        finish = choice.finish_reason
+        reasoning = getattr(choice.message, "reasoning_content", None) or ""
+    except Exception:
+        return
+    if (content or "").strip() or finish != "length":
+        return
+    max_tokens = req.kwargs.get("max_tokens")
+    message = (
+        f"{req.model_string}: empty answer, output limit reached "
+        f"(finish_reason=length, max_tokens={max_tokens}, "
+        f"{len(reasoning):,} chars of reasoning). The model spent its output "
+        f"budget thinking; raise max_tokens or lower the reasoning effort."
+    )
+    print(f"  WARNING: {message}", flush=True)
+    get_observability_service().log(
+        level="WARNING",
+        event_type="llm_output_budget_spent_thinking",
+        message=message,
+        user_id=req.user_id,
+        metadata={
+            "provider": req.provider,
+            "model": req.model,
+            "max_tokens": max_tokens,
+            "reasoning_chars": len(reasoning),
+        },
+    )
 
 
 def _stream_usage_supported(req: _LLMRequest) -> bool:

@@ -181,3 +181,50 @@ async def test_the_call_timeout_bounds_the_whole_stream(env, monkeypatch):
     with pytest.raises(llm_service.litellm.Timeout, match="not complete within"):
         await _call(stream=True, timeout=0.1)
     assert calls["n"] == 1 + llm_service.MAX_TIMEOUT_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_an_answer_lost_to_thinking_is_reported(env, monkeypatch, capsys):
+    """llmao's gateway flags this for non-streamed calls; streams bypass it."""
+    obs = Mock()
+    monkeypatch.setattr(llm_service, "get_observability_service", lambda: obs)
+    thinking_only = [
+        _chunk(role="assistant", content="", reasoning_content="Thinking and thinking..."),
+        _chunk(finish="length"),
+    ]
+
+    async def fake(**kwargs):
+        return _agen(thinking_only)
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    (content, _), _ = await _call(stream=True)
+    assert content == ""   # still returned: agents retry with thinking off
+    assert "output limit reached" in capsys.readouterr().out
+    events = [c.kwargs.get("event_type") for c in obs.log.call_args_list]
+    assert "llm_output_budget_spent_thinking" in events
+
+
+@pytest.mark.asyncio
+async def test_a_complete_answer_is_not_reported(env, monkeypatch, capsys):
+    async def fake(**kwargs):
+        return _agen(ANSWER)
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    await _call(stream=True)
+    assert "output limit reached" not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_proxy_502_is_named_as_a_proxy_error(env, monkeypatch, capsys):
+    calls = {"n": 0}
+
+    async def fake(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise llm_service.litellm.BadGatewayError(
+                message="<title>502 Proxy Error</title>", model=MODEL, llm_provider="openai")
+        return _Resp()
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    await _call()
+    assert "502 from a proxy in front of the model" in capsys.readouterr().out
