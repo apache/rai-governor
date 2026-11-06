@@ -81,7 +81,8 @@ def _make_app(mock_execute):
     app = create_app()
 
     def override_current_user(request: Request):
-        user = {"uid": "test-user", "email": "test@example.com"}
+        # A site admin: running agent code is limited to them (ISSUE-023).
+        user = {"uid": "test-user", "email": "test@example.com", "is_site_admin": True}
         request.state.user = user
         return user
 

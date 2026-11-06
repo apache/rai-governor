@@ -48,6 +48,15 @@ class Settings:
     ADMIN_PANEL_ENABLED: bool = _get_bool_env("ADMIN_PANEL_ENABLED", False)
     ADMIN_PANEL_PASSWORD: str = os.getenv("ADMIN_PANEL_PASSWORD", "password")
 
+    # Who may run agent code (ISSUE-023). Agent code runs in the API process
+    # with the API's credentials, so the default is site admins only.
+    #   site_admins  site admins, plus the uids in AGENT_EXEC_ALLOWED_UIDS
+    #   all_users    any signed-in user (the behaviour before ISSUE-023)
+    AGENT_EXEC_ALLOWED: str = os.getenv("AGENT_EXEC_ALLOWED", "site_admins").strip().lower()
+    AGENT_EXEC_ALLOWED_UIDS: frozenset = frozenset(
+        u.strip() for u in os.getenv("AGENT_EXEC_ALLOWED_UIDS", "").split(",") if u.strip()
+    )
+
     # S3/MinIO Settings
     S3_ENDPOINT_URL: str | None = os.getenv("S3_ENDPOINT_URL")
     # Renamed from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. Those are the

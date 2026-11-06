@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from pydantic.config import ConfigDict
 
 from config import settings
+from auth.agent_exec import DENIED_DETAIL as AGENT_EXEC_DENIED_DETAIL, can_execute_agent_code
 from services.agent_trace import Trace
 from dependencies import (
     _execute_agent_code,
@@ -184,6 +185,18 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
         detail="Not authenticated. Session cookie missing or invalid.",
         headers={"X-Auth-Reason": "not_authenticated"},
     )
+
+
+def require_agent_exec(user: dict) -> None:
+    """403 unless this user may run agent code (ISSUE-023)."""
+    if not can_execute_agent_code(user):
+        raise HTTPException(status_code=403, detail=AGENT_EXEC_DENIED_DETAIL)
+
+
+async def get_agent_exec_user(user: dict = Depends(get_current_user)) -> dict:
+    """``get_current_user`` for routes that run agent code."""
+    require_agent_exec(user)
+    return user
 
 
 class ListMcpToolsRequest(BaseModel):
@@ -433,6 +446,9 @@ def get_effective_api_key(
 @router.post("/chat")
 async def chat(request: ChatRequest, req: Request, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
     """Submit a chat request and get a ticket ID"""
+    if request.provider == "gofannon":
+        # provider "gofannon" runs a deployed agent's code (ISSUE-023).
+        require_agent_exec(user)
     ticket_id = str(uuid.uuid4())
     background_tasks.add_task(process_chat, ticket_id, request, user, req)
     return ChatResponse(
@@ -680,7 +696,7 @@ async def list_deployments_route(db: DatabaseService = Depends(get_db), user: di
 async def run_agent_code_stream(
     request: RunCodeRequest,
     req: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_agent_exec_user),
     db: DatabaseService = Depends(get_db),
     logger: ObservabilityService = Depends(get_logger),
 ):
@@ -990,7 +1006,7 @@ async def start_agent_run(
     request: RunCodeRequest,
     req: Request,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_agent_exec_user),
     db: DatabaseService = Depends(get_db),
     logger: ObservabilityService = Depends(get_logger),
 ):
@@ -1339,7 +1355,7 @@ async def force_complete_run(
 async def run_agent_code(
     request: RunCodeRequest,
     req: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_agent_exec_user),
     db: DatabaseService = Depends(get_db),
     logger: ObservabilityService = Depends(get_logger)
 ):
@@ -1419,7 +1435,7 @@ async def run_deployed_agent_route(
     friendly_name: str, 
     request: Request, 
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_agent_exec_user)
 ):
     """Run a deployed agent by its friendly_name. Requires authentication."""
     input_dict = await request.json()
@@ -1440,7 +1456,7 @@ async def run_deployed_agent_route(
 async def start_deployed_agent_run(
     friendly_name: str,
     request: Request,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_agent_exec_user),
     db: DatabaseService = Depends(get_db),
     logger: ObservabilityService = Depends(get_logger),
 ):
