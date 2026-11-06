@@ -33,9 +33,14 @@ import { useEffect, useRef, useState } from 'react';
 // quickly, sparse enough not to waste bandwidth on long runs.
 const HEALTH_CHECK_INTERVAL_MS = 30000;
 
+// ISSUE-024: when the stream closes and the session is still valid, try
+// again on this schedule before falling back to 'disconnected' and the
+// manual Reconnect button. About a minute in total.
+export const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
+
 export default function useRun(runId) {
   const [events, setEvents] = useState([]);
-  // connecting | running | success | error | stopped | disconnected | not_found | idle
+  // connecting | running | reconnecting | success | error | stopped | disconnected | not_found | idle
   const [status, setStatus] = useState('connecting');
   const [final, setFinal] = useState(null);
   const sourceRef = useRef(null);
@@ -43,6 +48,10 @@ export default function useRun(runId) {
   // Bumped by consumer to force a reconnect after re-auth or on
   // explicit user action. Changing this triggers the effect below.
   const [reconnectTick, setReconnectTick] = useState(0);
+  // Automatic reconnect attempts since the stream last opened cleanly.
+  const attemptRef = useRef(0);
+  const retryTimerRef = useRef(null);
+  const attemptRunIdRef = useRef(runId);
 
   useEffect(() => {
     if (!runId) {
@@ -51,9 +60,30 @@ export default function useRun(runId) {
     }
 
     let cancelled = false;
+    if (attemptRunIdRef.current !== runId) {
+      // A different run: its retries start from the beginning.
+      attemptRunIdRef.current = runId;
+      attemptRef.current = 0;
+    }
     setEvents([]);
     setFinal(null);
-    setStatus('connecting');
+    setStatus((s) => (s === 'reconnecting' && attemptRef.current > 0 ? s : 'connecting'));
+
+    // Schedule the next automatic attempt, or give up to 'disconnected'.
+    const retryOrDisconnect = () => {
+      if (cancelled) return;
+      const delay = RECONNECT_DELAYS_MS[attemptRef.current];
+      if (delay === undefined) {
+        setStatus('disconnected');
+        return;
+      }
+      attemptRef.current += 1;
+      setStatus('reconnecting');
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        if (!cancelled) setReconnectTick((n) => n + 1);
+      }, delay);
+    };
 
     const doPreflightAndOpen = async () => {
       // Pre-flight auth check. fetchInterceptor handles 401 by
@@ -65,13 +95,19 @@ export default function useRun(runId) {
           credentials: 'include',
         });
       } catch {
-        // Network error or fetch aborted. Treat as disconnected;
-        // consumer can retry via reconnect().
-        if (!cancelled) setStatus('disconnected');
+        // Network error or fetch aborted: the network may be coming back,
+        // so retry on the schedule before reporting 'disconnected'.
+        retryOrDisconnect();
         return;
       }
       if (cancelled) return;
 
+      if (preflight.status >= 500) {
+        // Proxy or server trouble (502 on a deploy, a restarting worker):
+        // retry rather than report the run as failed (ISSUE-024).
+        retryOrDisconnect();
+        return;
+      }
       if (!preflight.ok) {
         if (preflight.status === 404) {
           // Run doesn't exist or user doesn't own it. Distinct
@@ -103,7 +139,12 @@ export default function useRun(runId) {
 
       es.addEventListener('run_id', () => {
         if (cancelled) return;
-        setStatus((s) => (s === 'connecting' ? 'running' : s));
+        // Every connection, including EventSource's own silent reconnects,
+        // starts with run_id and then replays the whole trace. Start the
+        // list over so a reconnect does not show every event twice.
+        setEvents([]);
+        attemptRef.current = 0;
+        setStatus((s) => (s === 'connecting' || s === 'reconnecting' ? 'running' : s));
       });
 
       es.addEventListener('trace', (e) => {
@@ -156,16 +197,14 @@ export default function useRun(runId) {
             if (r.status === 401 || r.status === 403) {
               setStatus('disconnected');
             } else {
-              // Auth is fine but SSE died. Could be network glitch;
-              // consumer can offer Reconnect. 'error' is fine here
-              // — reconnect() will re-establish.
-              setStatus((s) =>
-                s === 'running' || s === 'connecting' ? 'error' : s
-              );
+              // Auth is fine but the stream closed: a network drop or a
+              // proxy timeout. The run keeps going on the server, so
+              // reopen the stream rather than report an error (ISSUE-024).
+              retryOrDisconnect();
             }
           })
           .catch(() => {
-            if (!cancelled) setStatus('disconnected');
+            retryOrDisconnect();
           });
       };
 
@@ -200,6 +239,10 @@ export default function useRun(runId) {
 
     return () => {
       cancelled = true;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
       if (healthCheckRef.current) {
         clearInterval(healthCheckRef.current);
         healthCheckRef.current = null;
@@ -215,7 +258,10 @@ export default function useRun(runId) {
   // as a general "try again" affordance. Changing reconnectTick
   // triggers the useEffect to run again, closing the current stream
   // (via cleanup) and opening a fresh one (via the new effect body).
-  const reconnect = () => setReconnectTick((n) => n + 1);
+  const reconnect = () => {
+    attemptRef.current = 0;
+    setReconnectTick((n) => n + 1);
+  };
 
   return { events, status, final, reconnect };
 }

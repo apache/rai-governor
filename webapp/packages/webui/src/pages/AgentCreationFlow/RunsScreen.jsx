@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAgentFlow } from './AgentCreationFlowContextValue';
 import agentService from '../../services/agentService';
 import runService from '../../services/runService';
 import useRun from '../../hooks/useRun';
+import { finalizeHandedOffRun, handOffRun, mergeHandedOffRuns } from './runHandoff';
 import {
   Box,
   Typography,
@@ -207,6 +208,10 @@ const RunsScreen = () => {
   // polling cycle to fetch a new status. Cleared on status change so
   // a stop that fails (e.g. orphaned worker) re-enables the button.
   const [stopRequested, setStopRequested] = useState(false);
+  // Run id of the run this tab is streaming, set from its first stream
+  // event. A ref, not state: handleRun's catch block reads it after the
+  // stream drops, when its closure still holds the state from the start.
+  const startedRunIdRef = useRef(null);
   // Cross-session past runs for this agent. Sourced from the run
   // registry via GET /runs?agent_id=<id>. The local `runs` state above
   // only tracks the live in-session run; this state powers the
@@ -393,6 +398,7 @@ const RunsScreen = () => {
   };
 
   const handleRun = async () => {
+    startedRunIdRef.current = null;
     setIsLoading(true);
     setError(null);
     setOutput(null);
@@ -471,6 +477,7 @@ const RunsScreen = () => {
         // capture runId from the first 'run_id' event
         // so the Stop button becomes enabled.
         if (event && event.type === 'run_id' && event.data && event.data.runId) {
+          startedRunIdRef.current = event.data.runId;
           setCurrentRunId(event.data.runId);
           // Align the URL with the just-started run so:
           // - the page now visibly represents the run you're streaming
@@ -623,6 +630,24 @@ const RunsScreen = () => {
           }
           return next;
         });
+        return;
+      }
+
+      // ISSUE-024: the stream dropped after the run started. The run is
+      // still going on the server, and the URL already points at it, so
+      // hand it to useRun to reattach (replay, then live) instead of
+      // reporting a failure. Before a run id arrives there is no run to
+      // follow, and the failure below stands.
+      if (startedRunIdRef.current) {
+        observabilityService.log({
+          eventType: 'run-stream-handoff',
+          level: 'WARNING',
+          message: `Run stream dropped (${err?.name || 'Error'}: ${err?.message || ''}); reattaching.`,
+          metadata: { runId: startedRunIdRef.current },
+        });
+        const handedOffId = startedRunIdRef.current;
+        setRuns((prev) => handOffRun(prev, handedOffId));
+        reconnectStream();
         return;
       }
 
@@ -914,6 +939,12 @@ const RunsScreen = () => {
     );
   };
 
+  // A handed-off run (ISSUE-024) that the followed stream reports as
+  // finished keeps that outcome in local state from now on.
+  useEffect(() => {
+    setRuns((prev) => finalizeHandedOffRun(prev, streamedEvents, streamStatus, runId));
+  }, [streamStatus, runId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A streamed run reaching a terminal state carries the same payload the
   // in-session handleRun path sets directly. Mirror it so a deep-linked or
   // refreshed run populates the output panel rather than showing an empty one.
@@ -925,6 +956,9 @@ const RunsScreen = () => {
     if (streamFinal.error) setError(streamFinal.error);
     if (streamFinal.schemaWarnings?.length) setSchemaWarnings(streamFinal.schemaWarnings);
     if (streamFinal.opsLog?.length) setOpsLog(streamFinal.opsLog);
+    // A handed-off run (ISSUE-024) finishes here, not in handleRun: refresh
+    // the past-runs list the way handleRun does on completion.
+    setCompletionTick((n) => n + 1);
   }, [streamFinal]);
 
   // RunProgressLog takes an array of run objects, not a flat event list, so
@@ -935,7 +969,7 @@ const RunsScreen = () => {
   // the run the user just started and its record carries timing the stream
   // does not.
   const displayRuns = useMemo(() => {
-    if (runs.length > 0) return runs;
+    if (runs.length > 0) return mergeHandedOffRuns(runs, streamedEvents, streamStatus, runId);
     if (streamedEvents.length === 0) return runs;
     const terminal = ['success', 'error', 'stopped'];
     return [{
@@ -944,7 +978,7 @@ const RunsScreen = () => {
       outcome: terminal.includes(streamStatus) ? streamStatus : 'running',
       events: streamedEvents,
     }];
-  }, [runs, streamedEvents, streamStatus, fetchedRun]);
+  }, [runs, streamedEvents, streamStatus, fetchedRun, runId]);
 
   return (
     <Box sx={{
@@ -1124,6 +1158,13 @@ const RunsScreen = () => {
           layout doesn't jump when a run completes. Collapses below the
           main panel on narrow screens. */}
       <Box sx={{ width: { xs: '100%', lg: 380 }, flexShrink: 0, mt: { xs: 2, lg: 0 }, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {streamStatus === 'reconnecting' && (
+          <Alert severity="info">
+            <AlertTitle>Reconnecting to the run</AlertTitle>
+            The connection dropped. The run is still going on the server;
+            the log will catch up when the connection is back.
+          </Alert>
+        )}
         {streamStatus === 'disconnected' && (
           <Alert
             severity="warning"

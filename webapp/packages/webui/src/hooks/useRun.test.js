@@ -13,7 +13,7 @@
 // this one with "Cannot read properties of undefined".
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import useRun from './useRun';
+import useRun, { RECONNECT_DELAYS_MS } from './useRun';
 
 class FakeEventSource {
   static instances = [];
@@ -145,5 +145,83 @@ describe('useRun', () => {
 
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
     expect(FakeEventSource.instances[1].url).toContain('/runs/r-1/stream');
+  });
+
+  // --- ISSUE-024: reconnect after a dropped stream ----------------------
+
+  it('does not duplicate events when the stream reconnects and replays', async () => {
+    const { result } = renderHook(() => useRun('r-1'));
+    const es = await openedStream();
+    act(() => es._emit('run_id', { runId: 'r-1' }));
+    act(() => es._emit('trace', { n: 1 }));
+    act(() => es._emit('trace', { n: 2 }));
+    // EventSource reconnects on its own; the server replays from the start.
+    act(() => es._emit('run_id', { runId: 'r-1' }));
+    act(() => es._emit('trace', { n: 1 }));
+    act(() => es._emit('trace', { n: 2 }));
+    act(() => es._emit('trace', { n: 3 }));
+    await waitFor(() => expect(result.current.events.map((e) => e.n)).toEqual([1, 2, 3]));
+  });
+
+  it('reopens a closed stream on its own while the session is valid', async () => {
+    const { result } = renderHook(() => useRun('r-1'));
+    const es = await openedStream();
+    act(() => es._emit('run_id', { runId: 'r-1' }));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      es.readyState = 2;
+      act(() => es.onerror());
+      await waitFor(() => expect(result.current.status).toBe('reconnecting'));
+      await act(async () => { vi.advanceTimersByTime(RECONNECT_DELAYS_MS[0]); });
+      await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+      const again = FakeEventSource.instances[1];
+      act(() => again._emit('run_id', { runId: 'r-1' }));
+      await waitFor(() => expect(result.current.status).toBe('running'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to disconnected after the last automatic attempt', async () => {
+    const { result } = renderHook(() => useRun('r-1'));
+    await openedStream();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      for (let i = 0; i <= RECONNECT_DELAYS_MS.length; i += 1) {
+        const es = FakeEventSource.instances.at(-1);
+        es.readyState = 2;
+        act(() => es.onerror());
+        if (i < RECONNECT_DELAYS_MS.length) {
+          await waitFor(() => expect(result.current.status).toBe('reconnecting'));
+          await act(async () => { vi.advanceTimersByTime(RECONNECT_DELAYS_MS[i]); });
+          await waitFor(() => expect(FakeEventSource.instances).toHaveLength(i + 2));
+        }
+      }
+      await waitFor(() => expect(result.current.status).toBe('disconnected'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a preflight that hits a 5xx instead of reporting an error', async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn(() => {
+      calls += 1;
+      return Promise.resolve(calls === 1
+        ? { ok: false, status: 502, json: () => Promise.resolve({}) }
+        : { ok: true, status: 200, json: () => Promise.resolve({}) });
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { result } = renderHook(() => useRun('r-1'));
+      await waitFor(() => expect(result.current.status).toBe('reconnecting'));
+      expect(FakeEventSource.instances).toHaveLength(0);
+      await act(async () => { vi.advanceTimersByTime(RECONNECT_DELAYS_MS[0]); });
+      const es = await openedStream();
+      act(() => es._emit('run_id', { runId: 'r-1' }));
+      await waitFor(() => expect(result.current.status).toBe('running'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
