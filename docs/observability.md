@@ -57,15 +57,16 @@ Logging providers are enabled and configured via environment variables. The syst
 
 ### 2. AWS CloudWatch Logs
 
--   **Trigger**: The presence of all four required AWS environment variables.
--   **Authentication**: Uses standard AWS credentials.
+-   **Trigger**: `AWS_DEFAULT_REGION` and `CLOUDWATCH_LOG_GROUP_NAME` are both set.
+-   **Authentication**: boto3's standard credential chain: the instance role on EC2, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` elsewhere. On EC2, leave the `AWS_*` keys unset; they override the instance role for every AWS call. The object store uses `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`, never these.
 -   **Why CloudWatch Logs instead of CloudTrail?**: CloudTrail is an audit service for AWS API activity (e.g., who created an EC2 instance). CloudWatch Logs is the appropriate service for ingesting application-level logs like errors, user actions, and performance metrics, which aligns with our goals.
 -   **Variables**:
     ```ini
-    AWS_ACCESS_KEY_ID="your_aws_access_key"
-    AWS_SECRET_ACCESS_KEY="your_aws_secret_key"
     AWS_DEFAULT_REGION="us-east-1"
     CLOUDWATCH_LOG_GROUP_NAME="gofannon-app-logs"
+    # Off EC2 only:
+    AWS_ACCESS_KEY_ID="your_aws_access_key"
+    AWS_SECRET_ACCESS_KEY="your_aws_secret_key"
     ```
     The service will automatically create the log group if it doesn't exist. Log streams will be created dynamically based on the service name (`webui` or `user-service`).
 
@@ -154,10 +155,11 @@ COUCHDB_PASSWORD=password
 
 # --- Observability Settings ---
 
-# To enable AWS CloudWatch logging, provide all four variables below. These
-# are used for CloudWatch only — object storage reads S3_ACCESS_KEY_ID and
-# S3_SECRET_ACCESS_KEY instead, and setting the AWS keys for that purpose
-# will also redirect every other AWS call away from the instance role.
+# To enable AWS CloudWatch logging, set the region and log group. Credentials
+# come from boto3's standard chain: the instance role on EC2, or the AWS keys
+# below elsewhere. On EC2 leave the AWS keys unset; they override the
+# instance role for every AWS call. Object storage reads S3_ACCESS_KEY_ID and
+# S3_SECRET_ACCESS_KEY, never these.
 # AWS_ACCESS_KEY_ID=your_aws_access_key
 # AWS_SECRET_ACCESS_KEY=your_aws_secret_key
 # AWS_DEFAULT_REGION=us-east-1

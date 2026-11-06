@@ -68,14 +68,9 @@ class GoogleCloudLoggingProvider(LogProvider):
 
 class AWSCloudWatchLogsProvider(LogProvider):
     """Logs to AWS CloudWatch Logs."""
-    def __init__(self, region_name: str, access_key_id: str, secret_access_key: str, log_group_name: str):
+    def __init__(self, region_name: str, log_group_name: str):
         try:
-            self.client = boto3.client(
-                'logs',
-                region_name=region_name,
-                aws_access_key_id=access_key_id,
-                aws_secret_access_key=secret_access_key
-            )
+            self.client = boto3.client('logs', region_name=region_name)
             self.log_group_name = log_group_name
             self._ensure_log_group_exists()
             print(f"AWS CloudWatch Logs provider initialized for log group '{log_group_name}'.")
@@ -174,16 +169,13 @@ class ObservabilityService:
             except Exception as e:
                 print(f"Skipping Google Cloud Logging provider due to initialization error: {e}")
 
-        # AWS CloudWatch Logs
-        # NOTE: CloudWatch is REAL AWS and should use the instance role, not
-        # the S3/MinIO credentials. This branch is dead in production
-        # (CLOUDWATCH_LOG_GROUP_NAME is unset); fix properly if enabled.
-        if all([settings.S3_ACCESS_KEY_ID, settings.S3_SECRET_ACCESS_KEY, settings.AWS_DEFAULT_REGION, settings.CLOUDWATCH_LOG_GROUP_NAME]):
+        # AWS CloudWatch Logs. Real AWS, so boto3's default credential chain:
+        # the instance role on EC2, AWS_* elsewhere. Never the object store's
+        # S3_* keys (ISSUE-020).
+        if settings.AWS_DEFAULT_REGION and settings.CLOUDWATCH_LOG_GROUP_NAME:
             try:
                 self.providers.append(AWSCloudWatchLogsProvider(
                     region_name=settings.AWS_DEFAULT_REGION,
-                    access_key_id=settings.S3_ACCESS_KEY_ID,
-                    secret_access_key=settings.S3_SECRET_ACCESS_KEY,
                     log_group_name=settings.CLOUDWATCH_LOG_GROUP_NAME
                 ))
             except Exception as e:
