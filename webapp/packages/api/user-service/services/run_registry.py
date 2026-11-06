@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -85,6 +86,20 @@ COUCH_RETENTION_SECONDS = 7 * 24 * 3600  # 7 days
 RUN_REGISTRY_DB = "gofannon_runs"
 
 DONE_SENTINEL = object()
+
+# ISSUE-022: worker liveness. Each worker writes a heartbeat doc every
+# WORKER_HEARTBEAT_SECONDS. A run still marked "running" whose worker has
+# not written one for WORKER_DEAD_AFTER_SECONDS belongs to a worker that is
+# gone (restart, deploy, crash), so it can never finish and is marked error.
+WORKERS_DB = "gofannon_workers"
+WORKER_HEARTBEAT_SECONDS = float(os.getenv("WORKER_HEARTBEAT_SECONDS", "30"))
+WORKER_DEAD_AFTER_SECONDS = float(os.getenv("WORKER_DEAD_AFTER_SECONDS", "120"))
+# Heartbeat docs of workers silent this long are deleted.
+WORKER_DOC_RETENTION_SECONDS = 24 * 3600
+ORPHANED_RUN_ERROR = (
+    "The API worker running this agent stopped (restart, deploy or crash) "
+    "before the run finished. Nothing more will arrive; run it again."
+)
 
 
 # Indexes created on first persistence call. Idempotent at the
@@ -654,6 +669,103 @@ class RunRegistry:
                 local.stop_requested = True
             flipped += 1
         return flipped
+
+    def heartbeat(self) -> None:
+        """Record that this worker is alive (ISSUE-022)."""
+        db = self._get_db()
+        if db is None:
+            return
+        doc = {
+            "_id": WORKER_ID,
+            "type": "worker",
+            "worker_id": WORKER_ID,
+            "last_seen": naive_utc_now().isoformat(),
+            "pid": os.getpid(),
+        }
+        try:
+            try:
+                existing = db.get(WORKERS_DB, WORKER_ID)
+                if existing and existing.get("_rev"):
+                    doc["_rev"] = existing["_rev"]
+            except Exception:
+                pass
+            db.save(WORKERS_DB, WORKER_ID, doc)
+        except Exception as e:
+            print(f"[run_registry] heartbeat failed: {e}", flush=True)
+
+    def reconcile_orphans(self, now=None) -> int:
+        """Mark running runs owned by dead workers as error. Returns the count.
+
+        A worker is alive when its heartbeat is newer than
+        WORKER_DEAD_AFTER_SECONDS. Runs owned by this worker are never
+        touched here. Runs with no recorded worker are only touched once
+        they are older than the same limit, so a run that has just started
+        is never caught between its first write and its worker's first
+        heartbeat.
+        """
+        db = self._get_db()
+        if db is None:
+            return 0
+        now = now or naive_utc_now()
+        try:
+            running = db.find(RUN_REGISTRY_DB, selector={"status": "running"}, limit=None)
+            workers = db.find(WORKERS_DB, selector={"type": "worker"}, limit=None)
+        except Exception as e:
+            print(f"[run_registry] orphan sweep query failed: {e}", flush=True)
+            return 0
+
+        last_seen = {}
+        for w in workers:
+            try:
+                seen = datetime.fromisoformat(w["last_seen"])
+            except Exception:
+                continue
+            age = (now - seen).total_seconds()
+            if age > WORKER_DOC_RETENTION_SECONDS:
+                try:
+                    db.delete(WORKERS_DB, w["_id"])
+                except Exception:
+                    pass
+                continue
+            last_seen[w.get("worker_id") or w["_id"]] = age
+
+        def alive(worker_id: str) -> bool:
+            return worker_id == WORKER_ID or (
+                worker_id in last_seen and last_seen[worker_id] <= WORKER_DEAD_AFTER_SECONDS
+            )
+
+        closed = 0
+        for doc in running:
+            worker_id = doc.get("worker_id") or ""
+            if alive(worker_id):
+                continue
+            if not worker_id:
+                try:
+                    started = datetime.fromisoformat(doc["started_at"])
+                except Exception:
+                    started = now
+                if (now - started).total_seconds() <= WORKER_DEAD_AFTER_SECONDS:
+                    continue
+            doc = dict(doc)
+            doc["status"] = "error"
+            doc["error"] = doc.get("error") or ORPHANED_RUN_ERROR
+            doc["completed_at"] = now.isoformat()
+            doc["orphaned_from_worker"] = worker_id or None
+            try:
+                db.save(RUN_REGISTRY_DB, doc["_id"], doc)
+            except Exception as e:
+                # A conflict means the run changed under us, most likely
+                # because its worker was alive after all and finished it.
+                print(f"[run_registry] could not close orphan {doc['_id']}: {e}", flush=True)
+                continue
+            cached = self._records.get(doc["_id"])
+            if cached is not None and cached.task is None:
+                cached.status = "error"
+                cached.error = doc["error"]
+                cached.completed_at = now
+                cached._persisted_complete = True
+            closed += 1
+        return closed
 
     def evict_old_completed(self) -> int:
         """Delete CouchDB records for runs completed more than

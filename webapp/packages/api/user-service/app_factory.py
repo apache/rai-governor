@@ -97,15 +97,68 @@ async def lifespan(app: FastAPI):
                 )
                 await asyncio.sleep(interval)
 
+    from services.run_registry import (
+        WORKER_HEARTBEAT_SECONDS,
+        WORKER_DEAD_AFTER_SECONDS,
+    )
+
+    async def _heartbeat():
+        # ISSUE-022: the first beat is written before this worker serves a
+        # request, so its runs are never mistaken for orphans.
+        while True:
+            try:
+                await asyncio.to_thread(get_run_registry().heartbeat)
+                await asyncio.sleep(WORKER_HEARTBEAT_SECONDS)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.log(
+                    "heartbeat_error",
+                    f"Worker heartbeat failed: {exc}",
+                    level="WARNING",
+                )
+                await asyncio.sleep(WORKER_HEARTBEAT_SECONDS)
+
+    async def _orphan_sweeper():
+        # ISSUE-022: runs left "running" by a worker that is gone (restart,
+        # deploy, crash) are marked error. Sweep soon after startup, which is
+        # when a deploy leaves them behind, then every minute.
+        await asyncio.sleep(10.0)
+        while True:
+            try:
+                closed = await asyncio.to_thread(get_run_registry().reconcile_orphans)
+                if closed:
+                    logger.log(
+                        "orphaned_runs_closed",
+                        f"Marked {closed} runs as error: their worker stopped "
+                        f"heartbeating over {WORKER_DEAD_AFTER_SECONDS:.0f}s ago.",
+                        level="INFO",
+                        metadata={"count": closed, "worker_id": WORKER_ID},
+                    )
+                await asyncio.sleep(60.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.log(
+                    "orphan_sweep_error",
+                    f"Orphan sweep failed: {exc}",
+                    level="WARNING",
+                )
+                await asyncio.sleep(60.0)
+
+    await asyncio.to_thread(get_run_registry().heartbeat)
     poller_task = asyncio.create_task(_stop_poller())
     evictor_task = asyncio.create_task(_evictor())
+    heartbeat_task = asyncio.create_task(_heartbeat())
+    sweeper_task = asyncio.create_task(_orphan_sweeper())
+    background = (poller_task, evictor_task, heartbeat_task, sweeper_task)
 
     try:
         yield
     finally:
-        for t in (poller_task, evictor_task):
+        for t in background:
             t.cancel()
-        for t in (poller_task, evictor_task):
+        for t in background:
             try:
                 await t
             except (asyncio.CancelledError, Exception):
