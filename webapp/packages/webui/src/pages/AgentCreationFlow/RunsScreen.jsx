@@ -5,6 +5,7 @@ import agentService from '../../services/agentService';
 import runService from '../../services/runService';
 import useRun from '../../hooks/useRun';
 import { finalizeHandedOffRun, handOffRun, mergeHandedOffRuns } from './runHandoff';
+import { pollIntervalMs } from './runPolling';
 import {
   Box,
   Typography,
@@ -322,17 +323,27 @@ const RunsScreen = () => {
   //
   // Auto-stops when nothing's running so we don't peg the API with
   // pointless requests on a long-idle page.
+  //
+  // A run followed over its stream is not polled: the stream's done frame
+  // refreshes the page. Other running runs are polled every 30 s, and
+  // nothing is polled while the tab is hidden (see runPolling.js).
+  const pollMs = pollIntervalMs({ runId, streamStatus, fetchedRun, historicalRuns });
   useEffect(() => {
-    const anyRunning = (
-      (fetchedRun && fetchedRun.status === 'running') ||
-      historicalRuns.some((r) => r.outcome === 'running')
-    );
-    if (!anyRunning) return;
-    const id = setInterval(() => {
+    if (!pollMs) return;
+    const tick = () => {
+      if (document.visibilityState === 'hidden') return;
       setCompletionTick((n) => n + 1);
-    }, 5000);
-    return () => clearInterval(id);
-  }, [fetchedRun, historicalRuns]);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    const id = setInterval(tick, pollMs);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [pollMs]);
 
   // runId in the URL), pre-fill with that run's input values so
   // 'tweak and re-run' is one click.
