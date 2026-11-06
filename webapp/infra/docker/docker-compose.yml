@@ -86,6 +86,7 @@ services:
       - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:-password}
     volumes:
       - couchdb-data:/opt/couchdb/data
+      - ./couchdb-single-node.ini:/opt/couchdb/etc/local.d/10-single-node.ini
     networks:
       - gofannon-net
     healthcheck:
