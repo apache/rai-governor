@@ -12,6 +12,7 @@ from config.provider_config import PROVIDER_CONFIG
 from services.database_service import get_database_service
 from services.user_service import get_user_service
 from typing import Any, AsyncGenerator, Dict, List, Tuple, Optional
+import httpx
 import litellm
 
 from services.litellm_logger import ensure_litellm_logging
@@ -106,6 +107,18 @@ litellm.suppress_debug_info = True
 
 # Default timeout (seconds) for LLM calls. Override with LLM_TIMEOUT_SECONDS env var.
 DEFAULT_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "600"))
+
+# Limit (seconds) on opening the TCP/TLS connection, separate from the total.
+# With one scalar timeout, an upstream that drops SYNs held each attempt for
+# the full LLM_TIMEOUT_SECONDS before failing (ISSUE-021). litellm applies a
+# separate connect limit for the openai (which includes llmao), azure and
+# bedrock providers; for others it uses the total, as before.
+LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
+
+
+def _http_timeout(total: float) -> httpx.Timeout:
+    """``total`` for reading and writing; at most LLM_CONNECT_TIMEOUT to connect."""
+    return httpx.Timeout(total, connect=min(LLM_CONNECT_TIMEOUT, total))
 
 # Max retries on timeout. Override with LLM_TIMEOUT_RETRIES env var.
 #
@@ -718,7 +731,7 @@ async def call_llm(
 
     # Set timeout for the LLM call
     effective_timeout = timeout or DEFAULT_LLM_TIMEOUT
-    kwargs["timeout"] = effective_timeout
+    kwargs["timeout"] = _http_timeout(effective_timeout)
 
     if user_service is None:
         user_service = get_user_service(get_database_service(settings))
@@ -1057,7 +1070,8 @@ async def call_llm(
                     wait_secs = 5 * timeout_attempts_used
                     print(
                         f"  Timeout on attempt {attempt + 1} "
-                        f"for {model_string} (timeout={effective_timeout}s). "
+                        f"for {model_string} (timeout={effective_timeout}s, "
+                        f"connect={min(LLM_CONNECT_TIMEOUT, effective_timeout)}s). "
                         f"Retrying in {wait_secs}s...",
                         flush=True,
                     )
@@ -1271,12 +1285,16 @@ async def stream_llm(
 
     # Filter out None values from parameters
     filtered_params = {k: v for k, v in parameters.items() if v is not None}
+    stream_timeout = float(filtered_params.pop("timeout", DEFAULT_LLM_TIMEOUT))
 
     kwargs = {
         "model": model_string,
         "messages": messages,
         "stream": True,
         **filtered_params,
+        # Without this, streaming fell back to litellm's 600 s default with no
+        # separate connect limit (ISSUE-021).
+        "timeout": _http_timeout(stream_timeout),
     }
 
     # Reasoning, mirroring the gate in call_llm.
@@ -1359,7 +1377,7 @@ async def stream_llm(
         kwargs["api_key"] = await get_anthropic_1p_bearer_token(
             # Streaming has no retry loop, so a token that dies mid-stream
             # can't be recovered -- require it to cover the whole call.
-            min_validity_seconds=int(kwargs.get("timeout") or 0),
+            min_validity_seconds=int(stream_timeout),
         )
 
     # Custom OpenAI-compatible endpoint (llmao proxy). Same
