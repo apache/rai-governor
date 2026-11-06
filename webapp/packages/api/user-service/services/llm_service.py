@@ -117,9 +117,12 @@ DEFAULT_LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "600"))
 LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT_SECONDS", "10"))
 
 
-# How long a streamed call may go without receiving anything before it is
-# treated as stalled (seconds). Only applies when call_llm streams on the
-# wire; the call's own timeout still bounds it as a whole.
+# How long a streamed call may go between chunks, once it has started
+# sending, before it is treated as stalled (seconds). Only applies when
+# call_llm streams on the wire. Waiting for the FIRST chunk is not limited by
+# it: a request queued on a busy model server sends nothing until it is
+# scheduled, and retrying it would only queue it again. The call's own timeout
+# bounds that wait and the call as a whole.
 LLM_STREAM_IDLE_TIMEOUT = float(os.getenv("LLM_STREAM_IDLE_TIMEOUT_SECONDS", "300"))
 
 
@@ -1500,20 +1503,48 @@ async def _stream_and_rebuild(req: _LLMRequest) -> Any:
     same content, reasoning, tool calls, usage and cost as a non-streamed
     one, so everything after the call is unchanged.
 
-    Timeouts: each read may wait up to LLM_STREAM_IDLE_TIMEOUT (capped at
-    the call's timeout), which catches a stream that stalls; the call's
-    timeout still bounds the whole attempt.
+    Timeouts, in two phases:
+
+    - Until the first chunk, only the call's timeout applies. A request
+      waiting in a busy model server's queue sends nothing, and that is not
+      a failure: retrying it would put it back in the same queue.
+    - After the first chunk, a gap longer than LLM_STREAM_IDLE_TIMEOUT
+      (capped at the call's timeout) is a stalled stream and raises
+      litellm.Timeout, retried under the timeout budget.
+
+    The call's timeout bounds the whole attempt throughout.
     """
     kwargs = dict(req.kwargs)
     kwargs["stream"] = True
     if _stream_usage_supported(req):
         kwargs["stream_options"] = {"include_usage": True}
-    kwargs["timeout"] = _http_timeout(min(LLM_STREAM_IDLE_TIMEOUT, req.timeout))
+    # The HTTP read limit is the whole call's; the gap between chunks is
+    # enforced below, after the first one.
+    kwargs["timeout"] = _http_timeout(req.timeout)
+    idle_limit = min(LLM_STREAM_IDLE_TIMEOUT, req.timeout)
     chunks: List[Any] = []
 
     async def _consume():
         stream = await litellm.acompletion(**kwargs)
-        async for chunk in stream:
+        it = stream.__aiter__()
+        try:
+            chunks.append(await it.__anext__())
+        except StopAsyncIteration:
+            return
+        while True:
+            try:
+                chunk = await asyncio.wait_for(it.__anext__(), timeout=idle_limit)
+            except StopAsyncIteration:
+                return
+            except asyncio.TimeoutError as e:
+                raise litellm.Timeout(
+                    message=(
+                        f"stream stalled: nothing for {idle_limit:.0f}s after "
+                        f"{len(chunks)} chunks"
+                    ),
+                    model=req.model_string,
+                    llm_provider=req.provider,
+                ) from e
             chunks.append(chunk)
 
     try:

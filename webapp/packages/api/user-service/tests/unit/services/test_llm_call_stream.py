@@ -100,8 +100,9 @@ async def test_streamed_call_returns_the_same_shape(env, monkeypatch):
     assert thoughts == {"reasoning_content": "Think. Done thinking."}
     assert seen["stream"] is True
     assert seen["stream_options"] == {"include_usage": True}
-    # Reads may wait the idle limit; the call's timeout bounds the whole.
-    assert seen["timeout"].read == min(llm_service.LLM_STREAM_IDLE_TIMEOUT, 900)
+    # The HTTP read limit is the call's own; gaps between chunks are limited
+    # separately, after the first chunk.
+    assert seen["timeout"].read == 900
     us.add_usage.assert_called_once()
     assert us.add_usage.call_args.args[1] > 0
 
@@ -289,3 +290,45 @@ async def test_stream_llm_reports_a_cut_off_answer_at_the_end(env, monkeypatch, 
         user_service=_user(), user_id="u")]
     assert len(got) == 2   # chunks still reach the caller unchanged
     assert "answer cut off at the output limit" in capsys.readouterr().out
+
+
+async def _agen_delays(items, delays):
+    for item, delay in zip(items, delays):
+        await asyncio.sleep(delay)
+        yield item
+
+
+@pytest.mark.asyncio
+async def test_a_slow_first_chunk_is_waited_for_not_retried(env, monkeypatch):
+    """A request queued on a busy server sends nothing until scheduled.
+    Timing it out and retrying would only queue it again."""
+    monkeypatch.setattr(llm_service, "LLM_STREAM_IDLE_TIMEOUT", 0.05)
+    calls = {"n": 0}
+
+    async def fake(**kwargs):
+        calls["n"] += 1
+        # First chunk after 3x the idle limit, the rest promptly.
+        return _agen_delays(ANSWER, [0.15] + [0.0] * (len(ANSWER) - 1))
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    (content, _), _ = await _call(stream=True, timeout=5)
+    assert content == "Hello world"
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_stalls_after_starting_is_retried(env, monkeypatch):
+    monkeypatch.setattr(llm_service, "LLM_STREAM_IDLE_TIMEOUT", 0.05)
+    calls = {"n": 0}
+
+    async def fake(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Starts, then goes quiet for 3x the idle limit.
+            return _agen_delays(ANSWER, [0.0, 0.15] + [0.0] * (len(ANSWER) - 2))
+        return _agen(ANSWER)
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    (content, _), _ = await _call(stream=True, timeout=5)
+    assert calls["n"] == 2
+    assert content == "Hello world"
