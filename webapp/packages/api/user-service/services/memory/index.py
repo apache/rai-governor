@@ -13,6 +13,8 @@ import re
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
+
 from services.database_service import DatabaseService
 
 from .blob_store import entry_key
@@ -62,8 +64,20 @@ class MemoryIndex:
             self.db.ensure_index(INDEX_DB, fields, index_name="memory_" + "_".join(fields))
 
     def upsert(self, entry: Entry) -> Dict[str, Any]:
+        """Write the entry's row, replacing the one there.
+
+        CouchDB refuses a save over an existing document without its _rev
+        (409), so a replaced row (a review, a supersede) takes the current _rev
+        and saves again.
+        """
         row = row_for(entry)
-        self.db.save(INDEX_DB, row["_id"], row)
+        try:
+            self.db.save(INDEX_DB, row["_id"], dict(row))
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            current = self.db.get(INDEX_DB, row["_id"])
+            self.db.save(INDEX_DB, row["_id"], {**row, "_rev": current.get("_rev")})
         return row
 
     def get(self, entry_id: str) -> Optional[Dict[str, Any]]:

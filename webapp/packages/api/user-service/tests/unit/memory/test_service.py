@@ -162,3 +162,29 @@ async def test_s3_layout_matches_tooling_memory():
     e = await svc.write(_req(), author="x")
     assert ("bucket", f"memory/record/dom-scan/{e.front.id}.md") in s3.objects
     assert entry_key("dom-scan", e.front.id) == f"record/dom-scan/{e.front.id}.md"
+
+
+class _RevDB(MemoryDBService):
+    """Refuses a save over an existing document without its _rev, as CouchDB does."""
+
+    def save(self, db_name, doc_id, doc):
+        from fastapi import HTTPException
+
+        current = self.dbs.get(db_name, {}).get(doc_id)
+        if current is not None and doc.get("_rev") != current["_rev"]:
+            raise HTTPException(status_code=409, detail="Document update conflict")
+        rev = int((current or {}).get("_rev", "0-x").split("-")[0]) + 1
+        doc = {**doc, "_rev": f"{rev}-x"}
+        return super().save(db_name, doc_id, doc)
+
+
+@pytest.mark.asyncio
+async def test_superseding_and_reviewing_replace_index_rows_on_couchdb():
+    from services.memory.service import ReviewAction
+
+    svc = MemoryService(InMemoryBlobStore(), MemoryIndex(_RevDB()))
+    old = await svc.write(_req(), author="human:gofannon:alice")
+    new = await svc.write(_req(supersedes=old.front.id), author="human:gofannon:alice")
+    assert svc.index.get(old.front.id)["status"] == "superseded"
+    await svc.review(new.front.id, ReviewAction.CURATE, "human:gofannon:bob", "read it")
+    assert svc.index.get(new.front.id)["trust_tier"] == "curated"
