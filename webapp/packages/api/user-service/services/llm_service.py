@@ -1383,7 +1383,7 @@ async def call_llm(
         response = await _completion_with_retries(
             req, _attempt, context="litellm.acompletion"
         )
-        _warn_if_cut_off(response, req)
+        _warn_if_incomplete(response, req)
         message = response.choices[0].message
         content = message.content if isinstance(message.content, str) else ""
         
@@ -1491,7 +1491,7 @@ async def stream_llm(
         raise
     rebuilt = _rebuild_stream(chunks, req)
     if rebuilt is not None:
-        _warn_if_cut_off(rebuilt, req)
+        _warn_if_incomplete(rebuilt, req)
     _charge_usage(req, rebuilt)
 
 
@@ -1570,19 +1570,22 @@ async def _stream_and_rebuild(req: _LLMRequest) -> Any:
     return response
 
 
-def _warn_if_cut_off(response: Any, req: _LLMRequest) -> None:
-    """Say so when an answer stopped at max_tokens (finish_reason "length").
+def _warn_if_incomplete(response: Any, req: _LLMRequest) -> None:
+    """Say so when an answer is cut off or empty.
 
-    Two cases, both silent before:
+    - Cut off (finish_reason "length", some answer): the answer stops
+      mid-way. The caller gets half an answer, such as a finding block or
+      JSON object with no end, and nothing says it is incomplete.
+    - Empty at the limit (finish_reason "length", no answer): a reasoning
+      model spent all of max_tokens thinking. llmao's gateway reports this
+      as an error for non-streamed calls only.
+    - Empty otherwise (finish_reason "stop" or anything else, no answer, no
+      tool calls): either the model said nothing, or a reasoning parser
+      filed the whole answer as reasoning because it never saw the end of
+      thinking. The reasoning length tells the two apart.
 
-    - Empty: a reasoning model spent all of max_tokens thinking. llmao's
-      gateway reports this as an error for non-streamed calls only.
-    - Cut off: the answer stops mid-way. The caller gets half an answer,
-      such as a finding block or JSON object with no end, and nothing says
-      it is incomplete.
-
-    The response is returned unchanged either way. Agents already handle an
-    empty answer (most retry with thinking off), and raising would take
+    The response is returned unchanged in every case. Agents already handle
+    an empty answer (most retry with thinking off), and raising would take
     that away from them.
     """
     try:
@@ -1592,17 +1595,36 @@ def _warn_if_cut_off(response: Any, req: _LLMRequest) -> None:
         reasoning = getattr(choice.message, "reasoning_content", None) or ""
     except Exception:
         return
-    if finish != "length":
-        return
     if isinstance(content, list):
         content = "".join(
             b.get("text", "") for b in content
             if isinstance(b, dict) and b.get("type") == "text"
         )
     content = content if isinstance(content, str) else ""
+    if finish != "length":
+        if content.strip():
+            return
+        try:
+            if response.choices[0].message.tool_calls:
+                return   # a tool call is the answer
+        except Exception:
+            pass
     max_tokens = req.kwargs.get("max_tokens")
     label = f"{req.provider}/{req.model}"
-    if content.strip():
+    if finish != "length":
+        event_type = "llm_output_empty"
+        if reasoning.strip():
+            why = ("The answer may have been filed as reasoning: a reasoning "
+                   "parser that misses the end of thinking puts everything "
+                   "there.")
+        else:
+            why = "The model returned nothing."
+        message = (
+            f"{label}: empty answer (finish_reason={finish}, "
+            f"max_tokens={max_tokens}, {len(reasoning):,} chars of reasoning). "
+            f"{why}"
+        )
+    elif content.strip():
         event_type = "llm_output_truncated"
         message = (
             f"{label}: answer cut off at the output limit (finish_reason=length, "
@@ -1628,6 +1650,7 @@ def _warn_if_cut_off(response: Any, req: _LLMRequest) -> None:
             "provider": req.provider,
             "model": req.model,
             "max_tokens": max_tokens,
+            "finish_reason": finish,
             "answer_chars": len(content),
             "reasoning_chars": len(reasoning),
         },

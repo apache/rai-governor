@@ -332,3 +332,47 @@ async def test_a_stream_that_stalls_after_starting_is_retried(env, monkeypatch):
     (content, _), _ = await _call(stream=True, timeout=5)
     assert calls["n"] == 2
     assert content == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_answer_that_stopped_normally_is_reported(env, monkeypatch, capsys):
+    """bundle 1.1.1, 2026-11-06: a HEAVY batch came back empty with
+    finish_reason=stop and nothing in the log said why."""
+    obs = Mock()
+    monkeypatch.setattr(llm_service, "get_observability_service", lambda: obs)
+
+    async def fake(**kwargs):
+        return _plain("", "stop")   # 40 chars of reasoning, no answer
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    (content, _), _ = await _call()
+    assert content == ""
+    out = capsys.readouterr().out
+    assert "empty answer (finish_reason=stop" in out
+    assert "filed as reasoning" in out
+    assert [c.kwargs.get("event_type") for c in obs.log.call_args_list] == ["llm_output_empty"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_answer_with_no_reasoning_says_the_model_returned_nothing(env, monkeypatch, capsys):
+    async def fake(**kwargs):
+        msg = SimpleNamespace(content="", tool_calls=None, reasoning_content=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")],
+                               _hidden_params={})
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    await _call()
+    assert "The model returned nothing" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_tool_call_with_no_text_is_not_reported(env, monkeypatch, capsys):
+    async def fake(**kwargs):
+        call = SimpleNamespace(model_dump=lambda: {"id": "t1"})
+        msg = SimpleNamespace(content="", tool_calls=[call], reasoning_content=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="tool_calls")],
+                               _hidden_params={})
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", fake)
+    await _call()
+    assert "WARNING" not in capsys.readouterr().out
