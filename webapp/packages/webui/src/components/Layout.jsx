@@ -1,20 +1,31 @@
 // webapp/packages/webui/src/components/Layout.jsx
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AppBar,
   Toolbar,
   Typography,
   Box,
   CssBaseline,
+  Button,
 } from '@mui/material';
 import ProfileMenu from './ProfileMenu';
 import AnvilIcon from './AnvilIcon';
 import FloatingChat from './FloatingChat';
+import memoryService from '../services/memoryService';
 
 const Layout = ({ children }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Shown only where the API has memory on (MEMORY_ENABLED).
+  const [memoryOn, setMemoryOn] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    memoryService.isEnabled().then((on) => { if (live) setMemoryOn(on); });
+    return () => { live = false; };
+  }, []);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -53,6 +64,20 @@ const Layout = ({ children }) => {
               Gofannon
             </Typography>
           </Box>
+          {memoryOn && (
+            <Button
+              onClick={() => navigate('/memories')}
+              sx={{
+                ml: 3,
+                color: '#fff',
+                textTransform: 'none',
+                bgcolor: location.pathname.startsWith('/memories') ? '#27272a' : 'transparent',
+                '&:hover': { bgcolor: '#27272a' },
+              }}
+            >
+              Memory
+            </Button>
+          )}
           <Box sx={{ flexGrow: 1 }} />
           <ProfileMenu />
         </Toolbar>

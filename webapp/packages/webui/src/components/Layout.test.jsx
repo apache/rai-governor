@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Layout from './Layout';
+import memoryService from '../services/memoryService';
 
 // Mock child components
 vi.mock('./ProfileMenu', () => ({
@@ -19,6 +20,10 @@ vi.mock('./AnvilIcon', () => ({
 
 vi.mock('./FloatingChat', () => ({
   default: () => <div data-testid="floating-chat">Floating Chat</div>,
+}));
+
+vi.mock('../services/memoryService', () => ({
+  default: { isEnabled: vi.fn(() => Promise.resolve(false)) },
 }));
 
 const renderWithRouter = (ui, { route = '/' } = {}) => {
@@ -135,5 +140,15 @@ describe('Layout', () => {
     const main = container.querySelector('main');
     expect(main).toBeInTheDocument();
     expect(screen.getByText('Content')).toBeInTheDocument();
+  });
+
+  it('links to Memory only when the API has it on', async () => {
+    renderWithRouter(<Layout><div>x</div></Layout>);
+    await Promise.resolve();
+    expect(screen.queryByRole('button', { name: 'Memory' })).not.toBeInTheDocument();
+
+    memoryService.isEnabled.mockResolvedValueOnce(true);
+    renderWithRouter(<Layout><div>y</div></Layout>);
+    expect(await screen.findByRole('button', { name: 'Memory' })).toBeInTheDocument();
   });
 });

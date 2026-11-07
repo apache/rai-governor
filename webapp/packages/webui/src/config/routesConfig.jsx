@@ -11,6 +11,8 @@ import ViewDemoAppPage from '../pages/ViewDemoAppPage';
 import DataStoresPage from '../pages/DataStoresPage';
 import DataStoreBrowser from '../pages/DataStoreBrowser';
 import RunsPage from '../pages/RunsPage';
+import MemoryPage from '../pages/MemoryPage';
+import MemoryEntryPage from '../pages/MemoryEntryPage';
 import RunsScreen from '../pages/AgentCreationFlow/RunsScreen';
 import DeployScreen from '../pages/AgentCreationFlow/DeployScreen';
 import SelectApisScreen from '../pages/DemoCreationFlow/SelectApisScreen';
@@ -67,6 +69,19 @@ export const defaultRoutes = [
     // live at /runs/*; the user-facing page lives at /jobs.
     path: '/jobs',
     element: <RunsPage />,
+  },
+  {
+    // Not /memory: the API owns that prefix (see the /jobs note above).
+    path: '/memories',
+    element: <MemoryPage />,
+  },
+  {
+    path: '/memories/entries/:id',
+    element: <MemoryEntryPage />,
+  },
+  {
+    path: '/memories/:domain',
+    element: <MemoryPage />,
   },
   {
     path: '/profile/:section?',
