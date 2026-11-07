@@ -49,6 +49,34 @@ An entry starts **raw** (empty disc). A review moves it on:
 
 Every review is recorded with who made it, why, and which version of the entry it judged. Each review that changes the entry keeps the version it replaced.
 
+## In agent code
+
+Agent code has a `memory` object beside `data_store`. `memory.enabled` is false unless memory is on, and every call raises while it is off, so check it first:
+
+```python
+async def run(input_dict, tools):
+    if memory.enabled:
+        known = await memory.search("order report", type="fact")      # summaries
+        brief = await memory.recall("what is known about the order report?")
+        entry_id = await memory.write(
+            summary="String-built SQL in the order report query",     # one line
+            body="# SQLi in OrderReport\n\nThe sort parameter is concatenated.\n",
+            type="fact",
+            source=["https://github.com/apache/example/blob/3f9c2e1/OrderReport.java#L88"],
+            origin="asvs:apache/example",   # groups entries from one source
+            model=model,                    # the model that produced it
+        )
+```
+
+| Call | Returns |
+|---|---|
+| `search(query, domain, type, trust_tier, origin, limit)` | summaries of live entries |
+| `get(id)` | `{"frontmatter", "body"}`, or `None` |
+| `recall(question, domain)` | `{"brief", "cited", "entries", "matched"}`; billed to whoever runs the agent |
+| `write(summary, body, type, domain, title, source, confidence, review_by, supersedes, origin, model)` | the new entry's id |
+
+`domain` defaults to the first of `MEMORY_DOMAINS`. Agents write at raw, as `agent:<agent name> (model: <model>)`, and only when the person running them may write memory; otherwise `write` raises `PermissionError`. `memory.written` lists the ids this run wrote.
+
 ## API
 
 All under `/memory`, with a session.

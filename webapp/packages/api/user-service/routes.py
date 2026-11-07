@@ -724,6 +724,7 @@ async def run_agent_code_stream(
     user_basic_info = {
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
+        "is_site_admin": bool(user.get("is_site_admin")),
     }
 
     # Trace + queue. The queue is unbounded — emitters never block —
@@ -1027,6 +1028,7 @@ async def start_agent_run(
     user_basic_info = {
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
+        "is_site_admin": bool(user.get("is_site_admin")),
     }
 
     async def runner():
@@ -1435,6 +1437,7 @@ async def run_agent_code(
         user_basic_info = {
             "email": user.get("email"),
             "name": user.get("name") or user.get("displayName"),
+            "is_site_admin": bool(user.get("is_site_admin")),
         }
         # Per-request trace. Lives only for this invocation; events
         # are collected as the agent runs and shipped back in the
@@ -1512,6 +1515,7 @@ async def run_deployed_agent_route(
     user_basic_info = {
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
+        "is_site_admin": bool(user.get("is_site_admin")),
     }
     return await run_deployed_agent_logic(
         friendly_name, 
@@ -1604,6 +1608,7 @@ async def start_deployed_agent_run(
     user_basic_info = {
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
+        "is_site_admin": bool(user.get("is_site_admin")),
     }
 
     async def runner():
@@ -1672,6 +1677,7 @@ async def generate_demo_app_code(request: GenerateDemoCodeRequest, user: dict = 
         user_basic_info = {
             "email": user.get("email"),
             "name": user.get("name") or user.get("displayName"),
+            "is_site_admin": bool(user.get("is_site_admin")),
         }
         code_response = await generate_demo_code(
             request,

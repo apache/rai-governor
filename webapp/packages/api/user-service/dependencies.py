@@ -403,6 +403,18 @@ async def _execute_agent_code(
         ops_log=data_store_ops_log,
     )
 
+    # Memory (ISSUE-033): always present; memory.enabled is False unless
+    # MEMORY_ENABLED is on.
+    from services.memory.agent_proxy import AgentMemory
+
+    agent_memory = AgentMemory(
+        db,
+        agent_name=agent_name or "unknown",
+        user_id=user_id,
+        is_site_admin=bool((user_basic_info or {}).get("is_site_admin")),
+        user_service=user_service,
+    )
+
     exec_globals = {
         "RemoteMCPClient": RemoteMCPClient,
         "call_llm": call_llm_with_context,  # Use wrapped LLM service with user context
@@ -416,6 +428,7 @@ async def _execute_agent_code(
         "http_client": httpx.AsyncClient(follow_redirects=True),  # Follow redirects automatically
         "gofannon_client": GofannonClient(gofannon_agents, db, llm_settings),
         "data_store": data_store_proxy,
+        "memory": agent_memory,
         "__builtins__": __builtins__,
     }
 
@@ -481,6 +494,7 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
     user_basic_info = {
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
+        "is_site_admin": bool(user.get("is_site_admin")),
     }
     try:
         # Update ticket status
@@ -1027,6 +1041,7 @@ async def run_deployed_agent(
             user_id=user_id,
             user_basic_info=user_basic_info,
             llm_settings=llm_settings,
+            agent_name=agent.name,
             env_vars=getattr(agent, "env_vars", []),
         )
         return result
