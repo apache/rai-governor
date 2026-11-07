@@ -1805,22 +1805,7 @@ async def list_data_store_namespaces(
     )
 
 
-@router.get("/data-store/namespaces/{namespace}", response_model=NamespaceStats)
-async def get_namespace_stats(
-    namespace: str,
-    db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
-):
-    """Stats for a single namespace (record count, size, agents, last update)."""
-    user_id = user.get("uid", "anonymous")
-    docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace})
-    stats = _namespace_stats_from_docs(docs)
-    if namespace not in stats:
-        return NamespaceStats(namespace=namespace, recordCount=0, sizeBytes=0, agents=[])
-    return NamespaceStats(namespace=namespace, **stats[namespace])
-
-
-@router.get("/data-store/namespaces/{namespace}/records", response_model=List[DataStoreRecord])
+@router.get("/data-store/namespaces/{namespace:path}/records", response_model=List[DataStoreRecord])
 async def list_records(
     namespace: str,
     db: DatabaseService = Depends(get_db),
@@ -1837,7 +1822,7 @@ async def list_records(
     return [DataStoreRecord(**doc) for doc in docs]
 
 
-@router.get("/data-store/namespaces/{namespace}/records/{key:path}", response_model=DataStoreRecord)
+@router.get("/data-store/namespaces/{namespace:path}/records/{key:path}", response_model=DataStoreRecord)
 async def get_record(
     namespace: str,
     key: str,
@@ -1852,7 +1837,25 @@ async def get_record(
     return DataStoreRecord(**doc)
 
 
-@router.put("/data-store/namespaces/{namespace}/records/{key:path}", response_model=DataStoreRecord)
+# Declared after the /records routes: with {namespace:path} this pattern
+# also matches ".../records" and ".../records/<key>", and FastAPI takes the
+# first route that matches.
+@router.get("/data-store/namespaces/{namespace:path}", response_model=NamespaceStats)
+async def get_namespace_stats(
+    namespace: str,
+    db: DatabaseService = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Stats for a single namespace (record count, size, agents, last update)."""
+    user_id = user.get("uid", "anonymous")
+    docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace})
+    stats = _namespace_stats_from_docs(docs)
+    if namespace not in stats:
+        return NamespaceStats(namespace=namespace, recordCount=0, sizeBytes=0, agents=[])
+    return NamespaceStats(namespace=namespace, **stats[namespace])
+
+
+@router.put("/data-store/namespaces/{namespace:path}/records/{key:path}", response_model=DataStoreRecord)
 async def set_record(
     namespace: str,
     key: str,
@@ -1875,7 +1878,7 @@ async def set_record(
     return DataStoreRecord(**doc)
 
 
-@router.delete("/data-store/namespaces/{namespace}/records/{key:path}", status_code=204)
+@router.delete("/data-store/namespaces/{namespace:path}/records/{key:path}", status_code=204)
 async def delete_record(
     namespace: str,
     key: str,
@@ -1890,7 +1893,7 @@ async def delete_record(
     return
 
 
-@router.delete("/data-store/namespaces/{namespace}", response_model=ClearNamespaceResponse)
+@router.delete("/data-store/namespaces/{namespace:path}", response_model=ClearNamespaceResponse)
 async def clear_namespace(
     namespace: str,
     store: DataStoreService = Depends(_get_data_store_dep),
