@@ -6,6 +6,7 @@ from botocore.exceptions import ClientError
 import json
 import os
 from typing import Any, Dict, List, Optional
+import re
 import traceback
 
 from config import settings
@@ -269,15 +270,40 @@ class ObservabilityService:
             metadata = {}
         
         metadata['exception_type'] = type(exc).__name__
-        metadata['traceback'] = traceback.format_exc()
+        metadata['traceback'] = compact_html_pages(traceback.format_exc())
         
         self.log(
             event_type="error",
             level="ERROR",
-            message=str(exc),
+            message=compact_html_pages(str(exc)),
             user_id=user_id,
             metadata=metadata
         )
+
+_HTML_PAGE_RE = re.compile(r"<!DOCTYPE html[^>]*>.*?</html>|<html[\s>].*?</html>",
+                           re.IGNORECASE | re.DOTALL)
+_HTML_TITLE_RE = re.compile(r"<title>\s*(.*?)\s*</title>", re.IGNORECASE | re.DOTALL)
+
+
+def compact_html_pages(text: str) -> str:
+    """Replace each HTML error page in `text` with its title.
+
+    A gateway in front of a model (llm.apache.org's httpd, a load balancer)
+    answers an outage with an HTML page, and the provider library puts the
+    whole page in the exception text. The traceback carries it once per
+    chained exception, so one failed call logged the same 503 page five times.
+    The title ("503 Service Unavailable") is all of it worth keeping.
+    """
+    if not text or "<" not in text:
+        return text
+
+    def _one(m):
+        t = _HTML_TITLE_RE.search(m.group(0))
+        title = " ".join(t.group(1).split()) if t else "no title"
+        return f"[HTML error page: {title}]"
+
+    return _HTML_PAGE_RE.sub(_one, text)
+
 
 # --- Singleton Factory ---
 _observability_instance = None
