@@ -53,6 +53,8 @@ class BlobStore(Protocol):
 
     def history(self, domain: str, entry_id: str) -> List[str]: ...
 
+    def get_version_text(self, domain: str, entry_id: str, version: str) -> Optional[str]: ...
+
 
 class _KeyValue:
     """The four object operations both stores share."""
@@ -84,6 +86,11 @@ class _KeyValue:
 
     def history(self, domain: str, entry_id: str) -> List[str]:
         return sorted(self._list(history_prefix(domain, entry_id)))
+
+    def get_version_text(self, domain: str, entry_id: str, version: str) -> Optional[str]:
+        """A replaced version by its name, ``<stamp>-<digest>`` as history() lists it."""
+        _check(version)
+        return self._read(f"{history_prefix(domain, entry_id)}{version}.md")
 
 
 class InMemoryBlobStore(_KeyValue):

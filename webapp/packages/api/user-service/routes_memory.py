@@ -1,8 +1,9 @@
-"""Memory pilot endpoints: search, get, recall, write.
+"""Memory pilot endpoints: search, get, recall, write, and review.
 
 Mounted only when MEMORY_ENABLED is true. Reads need a session; writes need a
 site admin or a uid in MEMORY_WRITERS until workspace scoping (ISSUE-002)
-gives domains real owners. Only domains in MEMORY_DOMAINS exist.
+gives domains real owners, and so do reviews; nobody reviews an entry they
+wrote. Only domains in MEMORY_DOMAINS exist.
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ from routes import get_current_user
 from services.memory.entry import Confidence, EntryError, EntryType
 from services.memory.service import (
     NotFound,
+    OwnEntry,
+    Refused,
+    ReviewAction,
     WriteRequest,
     get_memory_service,
     human_author,
@@ -37,10 +41,13 @@ def _domain(domain: str) -> str:
     return domain
 
 
+def _can_write(user: dict) -> bool:
+    return bool(user.get("is_site_admin") or user.get("uid") in _csv("MEMORY_WRITERS"))
+
+
 def _require_writer(user: dict) -> None:
-    if user.get("is_site_admin") or user.get("uid") in _csv("MEMORY_WRITERS"):
-        return
-    raise HTTPException(status_code=403, detail="Not allowed to write memory")
+    if not _can_write(user):
+        raise HTTPException(status_code=403, detail="Not allowed to write memory")
 
 
 class WriteBody(BaseModel):
@@ -59,6 +66,29 @@ class RecallBody(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
 
 
+class ReviewBody(BaseModel):
+    action: ReviewAction
+    why: str = Field("", max_length=2000)
+    review_by: Optional[date] = None
+
+
+@router.get("/domains")
+async def domains(
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """The domains this deployment has, with counts, and what the caller may do."""
+    service = get_memory_service(db)
+    out = []
+    for name in _csv("MEMORY_DOMAINS", "dom-scan"):
+        out.append({"domain": name, **await service.counts(name)})
+    can = _can_write(user)
+    return {
+        "domains": out,
+        "you": {"author": human_author(user["uid"]), "canWrite": can, "canReview": can},
+    }
+
+
 @router.get("/{domain}/search")
 async def search(
     domain: str,
@@ -66,16 +96,22 @@ async def search(
     type: Optional[EntryType] = None,
     trust_tier: Optional[str] = None,
     due_by: Optional[date] = None,
+    include_inactive: bool = False,
+    order: str = Query("newest", pattern="^(newest|oldest)$"),
     limit: int = Query(20, ge=1, le=200),
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
+    """include_inactive adds demoted and superseded entries; order=oldest is the review queue's."""
     filters: Dict[str, Any] = {}
     if type:
         filters["type"] = type.value
     if trust_tier:
         filters["trust_tier"] = trust_tier
-    hits = await get_memory_service(db).search(_domain(domain), q, filters, due_by, limit)
+    hits = await get_memory_service(db).search(
+        _domain(domain), q, filters, due_by, limit,
+        include_inactive=include_inactive, oldest_first=order == "oldest",
+    )
     return {"domain": domain, "query": q, "hits": hits}
 
 
@@ -91,6 +127,57 @@ async def get_entry(
         raise HTTPException(status_code=404, detail="No such entry")
     _domain(entry.front.domain)
     return {"frontmatter": entry.front.to_dict(), "body": entry.body}
+
+
+@router.get("/entries/{entry_id}/history")
+async def entry_history(
+    entry_id: str,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    try:
+        out = await get_memory_service(db).history(entry_id)
+    except NotFound:
+        raise HTTPException(status_code=404, detail="No such entry")
+    _domain(out["domain"])
+    return out
+
+
+@router.get("/entries/{entry_id}/versions/{version}")
+async def entry_version(
+    entry_id: str,
+    version: str,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    try:
+        entry = await get_memory_service(db).get_version(entry_id, version)
+    except NotFound:
+        raise HTTPException(status_code=404, detail="No such version")
+    _domain(entry.front.domain)
+    return {"version": version, "frontmatter": entry.front.to_dict(), "body": entry.body}
+
+
+@router.post("/entries/{entry_id}/review")
+async def review_entry(
+    entry_id: str,
+    body: ReviewBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    _require_writer(user)
+    service = get_memory_service(db)
+    try:
+        _domain((await service.get(entry_id)).front.domain)
+        return await service.review(
+            entry_id, body.action, human_author(user["uid"]), body.why, body.review_by
+        )
+    except NotFound:
+        raise HTTPException(status_code=404, detail="No such entry")
+    except OwnEntry as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Refused as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/{domain}/entries", status_code=201)

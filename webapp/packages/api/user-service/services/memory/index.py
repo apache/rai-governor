@@ -80,6 +80,7 @@ class MemoryIndex:
         due_by: Optional[date] = None,
         include_inactive: bool = False,
         limit: int = 20,
+        oldest_first: bool = False,
     ) -> List[Dict[str, Any]]:
         selector: Dict[str, Any] = {"domain": domain}
         for key, value in (filters or {}).items():
@@ -91,10 +92,7 @@ class MemoryIndex:
         terms = query_terms(query)
         hits = []
         for row in rows:
-            if not include_inactive and row.get("status") in (
-                Status.SUPERSEDED.value,
-                Status.ERASED.value,
-            ):
+            if not include_inactive and row.get("status") in _INACTIVE:
                 continue
             if due_by is not None:
                 if not row.get("review_by") or row["review_by"] > due_by.isoformat():
@@ -108,10 +106,29 @@ class MemoryIndex:
                 if score == 0:
                     continue
             hits.append((score, row.get("created") or "", row))
-        # Most query words matched first, newest first among equals.
-        hits.sort(key=lambda h: (h[0], h[1]), reverse=True)
+        # Most query words matched first; among equals newest first, or oldest
+        # first for a review queue. Two stable sorts: date, then score.
+        hits.sort(key=lambda h: h[1], reverse=not oldest_first)
+        hits.sort(key=lambda h: h[0], reverse=True)
         return [row for _, _, row in hits[: max(1, min(limit, 200))]]
 
+    def counts(self, domain: str, today: date) -> Dict[str, int]:
+        """Live entries in a domain: how many, how many raw, due, and either (the review queue)."""
+        live = raw = due = queue = 0
+        for row in self.db.find(INDEX_DB, {"domain": domain}, limit=None):
+            if row.get("status") in _INACTIVE:
+                continue
+            live += 1
+            is_raw = row.get("trust_tier") == "raw"
+            is_due = bool(row.get("review_by")) and row["review_by"] <= today.isoformat()
+            raw += is_raw
+            due += is_due
+            queue += is_raw or is_due
+        return {"entries": live, "raw": raw, "due": due, "review": queue}
+
+
+# Not live: tooling-memory serves none of these (core Entry::is_active).
+_INACTIVE = (Status.DEMOTED.value, Status.SUPERSEDED.value, Status.ERASED.value)
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9_.-]*[a-z0-9]|[a-z0-9]")
 

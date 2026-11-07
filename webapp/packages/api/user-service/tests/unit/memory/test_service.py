@@ -112,6 +112,7 @@ async def test_recall_goes_through_call_llm_and_cites(svc):
         llm.return_value = (f"String-built SQL [{e.front.id}].", None)
         out = await svc.recall("sql", "dom-scan", user_id="alice")
     assert out["cited"] == [e.front.id]
+    assert [x["summary"] for x in out["entries"]] == [e.front.summary]
     assert out["matched"] == 1
     assert llm.await_args.kwargs["user_id"] == "alice"
     sent = llm.await_args.kwargs["messages"]
@@ -124,7 +125,7 @@ async def test_recall_goes_through_call_llm_and_cites(svc):
 async def test_recall_with_no_match_makes_no_model_call(svc):
     with patch("services.llm_service.call_llm", new_callable=AsyncMock) as llm:
         out = await svc.recall("anything", "dom-scan")
-    assert out == {"brief": "", "cited": [], "matched": 0}
+    assert out == {"brief": "", "cited": [], "entries": [], "matched": 0}
     llm.assert_not_awaited()
 
 
