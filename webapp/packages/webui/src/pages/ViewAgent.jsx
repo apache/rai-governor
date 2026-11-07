@@ -38,6 +38,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PublishIcon from '@mui/icons-material/Publish';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import SaveIcon from '@mui/icons-material/Save';
 import WebIcon from '@mui/icons-material/Web';
 import ArticleIcon from '@mui/icons-material/Article';
@@ -53,6 +54,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 
 import { useAgentFlow } from './AgentCreationFlow/AgentCreationFlowContextValue';
 import agentService from '../services/agentService';
+import pipelineService from '../services/pipelineService';
 import chatService from '../services/chatService';
 import CodeEditor from '../components/CodeEditor';
 import SpecViewerModal from '../components/SpecViewerModal';
@@ -276,6 +278,14 @@ const ViewAgent = () => {
       navigate(`/agent/${agentId}/runs`);
     } else {
       navigate('/create-agent/sandbox');
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      await pipelineService.downloadExport(agentId);
+    } catch (err) {
+      setError(`Export failed: ${err.message}`);
     }
   };
 
@@ -1280,6 +1290,17 @@ const ViewAgent = () => {
                     <Button variant="outlined" color="secondary" startIcon={<PublishIcon />} onClick={handleDeploy}>
                         Deploy Agent
                     </Button>
+
+                    {!isCreationFlow && (
+                        <Button
+                            variant="outlined"
+                            startIcon={<FileDownloadIcon />}
+                            onClick={handleExport}
+                            title="Download this agent and every agent it calls as a pipeline folder (zip)"
+                        >
+                            Export pipeline
+                        </Button>
+                    )}
 
                     {isCreationFlow ? (
                         <Button

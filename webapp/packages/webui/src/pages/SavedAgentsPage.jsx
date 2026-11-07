@@ -28,7 +28,11 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CloudIcon from '@mui/icons-material/Cloud';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import agentService from '../services/agentService';
+import PipelineImportDialog from '../components/PipelineImportDialog';
+import { sourceText } from '../services/pipelineService';
+
 
 const SavedAgentsPage = () => {
   const navigate = useNavigate();
@@ -36,6 +40,7 @@ const SavedAgentsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState({ open: false, agentId: null, agentName: '' });
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     const fetchAgents = async () => {
@@ -102,6 +107,14 @@ const SavedAgentsPage = () => {
           Saved Agents
         </Typography>
         <Button
+          variant="outlined"
+          startIcon={<FileDownloadIcon />}
+          onClick={() => setImportOpen(true)}
+          sx={{ mr: 1 }}
+        >
+          Import pipeline
+        </Button>
+        <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => navigate('/create-agent', { state: { fresh: true } })}
@@ -109,6 +122,15 @@ const SavedAgentsPage = () => {
           Create Agent
         </Button>
       </Box>
+
+      <PipelineImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={(result) => {
+          if (result.entryId) navigate(`/agent/${result.entryId}`);
+          else window.location.reload();
+        }}
+      />
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       
@@ -151,7 +173,17 @@ const SavedAgentsPage = () => {
                   >
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {agent.name}
+                        {agent.baseName || agent.name}
+                        {agent.pipelineLabel && (
+                          <Tooltip title={`${agent.pipeline}@${agent.pipelineLabel} · ${sourceText(agent.pipelineSource)}`} arrow>
+                            <Chip
+                              label={`@${agent.pipelineLabel}`}
+                              size="small"
+                              variant="outlined"
+                              sx={{ ml: 1, fontSize: '0.7rem', height: 20 }}
+                            />
+                          </Tooltip>
+                        )}
                       </Typography>
                     </TableCell>
                     <TableCell>
