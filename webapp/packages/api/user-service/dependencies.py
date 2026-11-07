@@ -178,6 +178,13 @@ async def _execute_agent_code(
                     all_agents = [Agent(**self.db.get("agents", agent_id)) for agent_id in agent_ids]
                     for agent in all_agents:
                         self.agent_map[agent.name] = agent
+                    # An imported pipeline copy stores agents as
+                    # "<name>@<label>", but its code calls the plain name.
+                    # The ids above point into the caller's own copy, so the
+                    # plain name resolves there (ISSUE-011).
+                    for agent in all_agents:
+                        if agent.base_name and agent.base_name not in self.agent_map:
+                            self.agent_map[agent.base_name] = agent
                 except Exception as e:
                     print(f"Error loading dependent agents: {e}")
                     raise ValueError("Could not load one or more dependent Gofannon agents.")

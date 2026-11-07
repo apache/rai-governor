@@ -84,6 +84,13 @@ class CreateAgentRequest(BaseModel):
     )
     # ISSUE-008: per-agent env vars surfaced through _EnvironProxy at runtime.
     env_vars: List[AgentEnvVar] = Field(default_factory=list, alias="envVars")
+    # Set on agents created by a pipeline import (ISSUE-011): which pipeline,
+    # which copy of it, the name the pipeline's code calls this agent by, and
+    # where the copy came from. None on agents made in the UI.
+    pipeline: Optional[str] = None
+    pipeline_label: Optional[str] = Field(None, alias="pipelineLabel")
+    base_name: Optional[str] = Field(None, alias="baseName")
+    pipeline_source: Optional[Dict[str, Any]] = Field(None, alias="pipelineSource")
 
     model_config = ConfigDict(
         populate_by_name=True,   

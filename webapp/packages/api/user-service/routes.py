@@ -1894,3 +1894,10 @@ async def clear_namespace(
     user_id = user.get("uid", "anonymous")
     count = store.clear_namespace(user_id, namespace)
     return ClearNamespaceResponse(namespace=namespace, deleted_count=count)
+
+
+# Pipeline import/export (ISSUE-011). Imported last: it uses get_current_user
+# from this module.
+from routes_pipelines import router as _pipelines_router  # noqa: E402
+
+router.include_router(_pipelines_router)
