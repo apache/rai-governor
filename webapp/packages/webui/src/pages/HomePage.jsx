@@ -20,12 +20,14 @@ import {
   ToggleButtonGroup,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CloudIcon from '@mui/icons-material/Cloud';
 import EditIcon from '@mui/icons-material/Edit';
 import StorageIcon from '@mui/icons-material/Storage';
 import agentService from '../services/agentService';
+import PipelineImportDialog from '../components/PipelineImportDialog';
 import demoService from '../services/demoService';
 import dataStoreService from '../services/dataStoreService';
 
@@ -46,6 +48,7 @@ const HomePage = () => {
   const [dataStoresError, setDataStoresError] = useState(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [agentFilter, setAgentFilter] = useState('all');
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     // Race a fetch against a 10s timeout. If the timeout wins, the
@@ -204,14 +207,25 @@ const HomePage = () => {
                 </ToggleButton>
               </ToggleButtonGroup>
             </Box>
-            <Button 
-              variant="contained" 
-              size="small" 
-              startIcon={<AddIcon />}
-              onClick={() => navigate('/create-agent', { state: { fresh: true } })}
-            >
-              Create
-            </Button>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<FileUploadIcon />}
+                onClick={() => setImportOpen(true)}
+                title="Import a pipeline from GitHub or a folder"
+              >
+                Import
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<AddIcon />}
+                onClick={() => navigate('/create-agent', { state: { fresh: true } })}
+              >
+                Create
+              </Button>
+            </Box>
           </Box>
           <TableContainer sx={{ maxHeight: 500 }}>
             {loadingAgents ? (
@@ -523,6 +537,15 @@ const HomePage = () => {
           </TableContainer>
         </Paper>
       </Box>
+
+      <PipelineImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={(result) => {
+          if (result.entryId) navigate(`/agent/${result.entryId}`);
+          else setRetryNonce((n) => n + 1);
+        }}
+      />
     </Box>
   );
 };

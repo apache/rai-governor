@@ -1,6 +1,6 @@
 # Pipelines: import and export
 
-A pipeline is a set of agents that call each other: one entry agent and every agent it reaches through its gofannon agents. A single agent is a pipeline of one. Pipelines live in git as plain files and move in and out of gofannon from the **Saved Agents** page (Import pipeline) and an agent's page (Export pipeline).
+A pipeline is a set of agents that call each other: one entry agent and every agent it reaches through its gofannon agents. A single agent is a pipeline of one. Pipelines live in git as plain files and move in and out of gofannon from the home page (**Import** on the Agents card) and an agent's page (**Export pipeline**, beside Run and Deploy).
 
 ## The folder
 
@@ -39,7 +39,7 @@ Open the entry agent and click **Export pipeline**. You get `<pipeline>.zip` wit
 
 ## Importing
 
-**Import pipeline** on the Saved Agents page takes either source:
+**Import** on the home page's Agents card (also **Import pipeline** on the Saved Agents page) takes either source:
 
 - **GitHub:** repository (`owner/name`), branch, tag or commit, and the folder holding `pipeline.yaml`. A token is needed for private repos and avoids GitHub's limit of 60 requests an hour without one. It is used for that import only and never stored.
 - **Folder:** pick the folder holding `pipeline.yaml` (or one above it, if it holds only one). This works in Chrome and Firefox.
