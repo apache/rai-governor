@@ -214,6 +214,10 @@ class RunCodeRequest(BaseModel):
     # group nested-agent activity. Falls back to "sandbox_agent" if not
     # provided (legacy clients).
     friendly_name: Optional[str] = Field(default=None, alias="friendlyName")
+    # The project the run is for (ISSUE-002): its members see the run, and
+    # its data-store records and memory are the project's. None = the
+    # caller's own run, as before.
+    project: Optional[str] = None
     # ISSUE-008 follow-up: per-agent env vars threaded from the editor so the
     # runtime overlay sees them. Without this the /agents/run-code endpoints
     # had no way to know which env_vars belong to the code being run, since

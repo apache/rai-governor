@@ -12,6 +12,7 @@ from pydantic.config import ConfigDict
 
 from config import settings
 from auth.agent_exec import DENIED_DETAIL as AGENT_EXEC_DENIED_DETAIL, can_execute_agent_code
+from auth.project_access import can_see_run, check_project, member_projects
 from services.agent_trace import Trace
 from dependencies import (
     _execute_agent_code,
@@ -747,6 +748,7 @@ async def run_agent_code_stream(
         event: done
         data: {{outcome, result, error, schema_warnings, ops_log}}
     """
+    project = check_project(user, request.project)
     logger.log(
         "user_action",
         "Attempting to run agent code in sandbox (streaming).",
@@ -790,6 +792,7 @@ async def run_agent_code_stream(
         agent_name=request.friendly_name or "sandbox_agent",
         agent_id=request.agent_id,
         input_dict=request.input_dict,
+        project=project,
     )
     _cancel_token = CancelToken()
     register_cancel_token(_run_record.run_id, _cancel_token)
@@ -825,6 +828,7 @@ async def run_agent_code_stream(
                     agent_name=request.friendly_name or "sandbox_agent",
                     trace=trace,
                     env_vars=request.env_vars,
+                    project=project,
                 )
             result, ops_log = await execute_in_thread(
                 _build_agent_coro,
@@ -1052,10 +1056,12 @@ async def start_agent_run(
     """
     from services.run_registry import get_run_registry
 
+    project = check_project(user, request.project)
     registry = get_run_registry()
     record = registry.new_record(
         user_id=user.get("uid") or "anonymous",
         agent_name=request.friendly_name or "sandbox_agent",
+        project=project,
     )
 
     user_basic_info = {
@@ -1077,6 +1083,7 @@ async def start_agent_run(
                 user_basic_info=user_basic_info,
                 agent_name=record.agent_name,
                 trace=record.trace,
+                project=project,
             )
             warnings = validate_output_against_schema(result, request.output_schema)
             registry.mark_complete(
@@ -1163,7 +1170,8 @@ async def list_runs(
     """
     from services.run_registry import get_run_registry
     registry = get_run_registry()
-    records = registry.list_for_user(user.get("uid") or "", agent_id=agent_id)
+    records = registry.list_for_user(user.get("uid") or "", agent_id=agent_id,
+                                     projects=member_projects(user))
     return {"runs": [r.to_summary() for r in records]}
 
 
@@ -1173,7 +1181,7 @@ async def get_run(run_id: str, user: dict = Depends(get_current_user)):
     from services.run_registry import get_run_registry
     registry = get_run_registry()
     record = registry.get(run_id)
-    if record is None or record.user_id != user.get("uid"):
+    if record is None or not can_see_run(user, record.user_id, record.project):
         # 404 not 403 — don't leak existence to non-owners.
         raise HTTPException(status_code=404, detail="Run not found")
     return record.to_full()
@@ -1191,7 +1199,7 @@ async def stream_run(run_id: str, user: dict = Depends(get_current_user)):
     from services.run_registry import get_run_registry, DONE_SENTINEL
     registry = get_run_registry()
     record = registry.get(run_id)
-    if record is None or record.user_id != user.get("uid"):
+    if record is None or not can_see_run(user, record.user_id, record.project):
         raise HTTPException(status_code=404, detail="Run not found")
 
     if not registry.is_live_here(record):
@@ -1353,7 +1361,7 @@ async def stop_run(
     # worker happens to own the run) and the CouchDB stop_requested
     # write that the owning worker's polling task picks up.
     from services.run_registry import get_run_registry
-    outcome = get_run_registry().request_stop(run_id, user.get("uid") or "")
+    outcome = get_run_registry().request_stop(run_id, user.get("uid") or "", user=user)
     if outcome == "not_found":
         raise HTTPException(status_code=404, detail="Run not found or already complete")
     if outcome == "forbidden":
@@ -1396,7 +1404,7 @@ async def force_complete_run(
 
     registry = get_run_registry()
     record = registry.get(run_id)
-    if record is None or record.user_id != (user.get("uid") or ""):
+    if record is None or not can_see_run(user, record.user_id, record.project):
         # Same 404-for-forbidden policy as stop_run: don't leak the
         # existence of other users' runs.
         raise HTTPException(status_code=404, detail="Run not found")
@@ -1466,6 +1474,7 @@ async def run_agent_code(
 ):
     """Executes agent code in a sandboxed environment."""
     logger.log("user_action", "Attempting to run agent code in sandbox.", user_id=user.get("uid"), metadata={"request": get_sanitized_request_data(req)})
+    project = check_project(user, request.project)
     try:
         user_basic_info = {
             "email": user.get("email"),
@@ -1493,6 +1502,7 @@ async def run_agent_code(
                 agent_name=request.friendly_name or "sandbox_agent",
                 trace=trace,
                 env_vars=request.env_vars,
+                project=project,
             )
         except Exception as _exc:
             logger.log(
@@ -1541,9 +1551,14 @@ async def run_deployed_agent_route(
     friendly_name: str, 
     request: Request, 
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_agent_exec_user)
+    user: dict = Depends(get_agent_exec_user),
+    project: Optional[str] = None,
 ):
-    """Run a deployed agent by its friendly_name. Requires authentication."""
+    """Run a deployed agent by its friendly_name. Requires authentication.
+
+    ``?project=<name>`` runs it for a project the caller belongs to: its
+    data-store records and memory are the project's (ISSUE-002)."""
+    project = check_project(user, project)
     input_dict = await request.json()
     user_basic_info = {
         "email": user.get("email"),
@@ -1556,6 +1571,7 @@ async def run_deployed_agent_route(
         db, 
         user_id=user.get("uid"),
         user_basic_info=user_basic_info,
+        project=project,
     )
 
 
@@ -1566,8 +1582,12 @@ async def start_deployed_agent_run(
     user: dict = Depends(get_agent_exec_user),
     db: DatabaseService = Depends(get_db),
     logger: ObservabilityService = Depends(get_logger),
+    project: Optional[str] = None,
 ):
     """Run a DEPLOYED agent by friendly_name, detached. Returns ``{runId}``.
+
+    ``?project=<name>`` runs it for a project the caller belongs to; the
+    project's members can then see and stop the run (ISSUE-002).
 
     This is the pairing of the two halves that already existed separately:
 
@@ -1597,6 +1617,7 @@ async def start_deployed_agent_run(
     from services.log_redaction import redact_in_place
     from services.run_registry import get_run_registry
 
+    project = check_project(user, project)
     input_dict = await request.json()
     if not isinstance(input_dict, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
@@ -1625,6 +1646,7 @@ async def start_deployed_agent_run(
     registry = get_run_registry()
     record = registry.new_record(
         user_id=user.get("uid") or "anonymous",
+        project=project,
         agent_name=friendly_name,
         agent_id=agent_id,
         # The registry persists input_dict to CouchDB verbatim and returns it
@@ -1657,6 +1679,7 @@ async def start_deployed_agent_run(
                 env_vars=getattr(agent, "env_vars", []),
                 agent_name=friendly_name,
                 trace=record.trace,
+                project=project,
             )
             warnings = validate_output_against_schema(
                 result, getattr(agent, "output_schema", None)
@@ -1814,13 +1837,27 @@ def _namespace_stats_from_docs(docs: List[Dict[str, Any]]) -> Dict[str, Dict[str
     }
 
 
+def _store_owner(user: dict, project: Optional[str], write: bool) -> str:
+    """Whose data-store records a request reads or changes: the caller's own,
+    or with ``?project=<name>`` that project's (ISSUE-002). Members read a
+    project's records; changing or clearing them is for its PMC and site
+    admins."""
+    from auth.project_access import data_owner, is_admin
+
+    project = check_project(user, project)
+    if project and write and not is_admin(user, project):
+        raise HTTPException(status_code=403, detail=f"Changing {project}'s records is for its PMC")
+    return data_owner(user, project)
+
+
 @router.get("/data-store/namespaces", response_model=NamespaceListResponse)
 async def list_data_store_namespaces(
     db = Depends(get_async_db),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """List every namespace with aggregate stats for the current user."""
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=False)
     # list_all + filter: simpler than adding a new service method, and
     # record counts are typically small. Could move to indexed query later.
     all_docs = await db.find("agent_data_store", {"userId": user_id})
@@ -1843,6 +1880,7 @@ async def list_records(
     namespace: str,
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """List every record in a namespace (full docs, not paginated).
 
@@ -1850,7 +1888,7 @@ async def list_records(
     endpoint may be needed later; for now the UI handles up-to-several-thousand
     rows without issue.
     """
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=False)
     docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace})
     return [DataStoreRecord(**doc) for doc in docs]
 
@@ -1861,9 +1899,10 @@ async def get_record(
     key: str,
     store: DataStoreService = Depends(_get_data_store_dep),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """Get a single record by key. Uses :path so keys can contain slashes."""
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=False)
     doc = store.get(user_id, namespace, key)
     if not doc:
         raise HTTPException(status_code=404, detail=f"Record '{key}' not found in '{namespace}'")
@@ -1878,9 +1917,10 @@ async def get_namespace_stats(
     namespace: str,
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """Stats for a single namespace (record count, size, agents, last update)."""
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=False)
     docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace})
     stats = _namespace_stats_from_docs(docs)
     if namespace not in stats:
@@ -1895,11 +1935,12 @@ async def set_record(
     request: SetRecordRequest,
     store: DataStoreService = Depends(_get_data_store_dep),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """Admin edit of a record. Not intended for agent writes — those go
     through AgentDataStoreProxy during execution.
     """
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=True)
     doc = store.set(
         user_id=user_id,
         namespace=namespace,
@@ -1917,9 +1958,10 @@ async def delete_record(
     key: str,
     store: DataStoreService = Depends(_get_data_store_dep),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """Delete a single record."""
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=True)
     deleted = store.delete(user_id, namespace, key)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Record '{key}' not found in '{namespace}'")
@@ -1931,9 +1973,10 @@ async def clear_namespace(
     namespace: str,
     store: DataStoreService = Depends(_get_data_store_dep),
     user: dict = Depends(get_current_user),
+    project: Optional[str] = None,
 ):
     """Delete every record in a namespace."""
-    user_id = user.get("uid", "anonymous")
+    user_id = _store_owner(user, project, write=True)
     count = store.clear_namespace(user_id, namespace)
     return ClearNamespaceResponse(namespace=namespace, deleted_count=count)
 

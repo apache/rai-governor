@@ -160,8 +160,13 @@ async def _execute_agent_code(
     agent_name: Optional[str] = None,
     trace: Optional[Trace] = None,
     env_vars: Optional[List["AgentEnvVar"]] = None,
+    project: Optional[str] = None,
 ):
     """Helper function for recursive execution of agent code.
+
+    ``project``, when set, is the project the run is for (ISSUE-002): its
+    data-store records and memory are the project's, shared by its members,
+    instead of the invoking user's. It flows to nested agent calls.
 
     When ``trace`` is non-None, structural events (agent_start, llm_call,
     data_store, agent_end, error) plus user-origin events (stdout, log)
@@ -220,6 +225,7 @@ async def _execute_agent_code(
                 agent_name=agent_to_run.name,
                 trace=active_trace,
                 env_vars=getattr(agent_to_run, "env_vars", []),
+                project=project,
             )
 
             return result
@@ -402,9 +408,11 @@ async def _execute_agent_code(
     # sandbox UI can show live operation timelines.
     data_store_service = get_data_store_service(db)
     data_store_ops_log: List[Dict[str, Any]] = []
+    from auth.project_access import data_owner
+
     data_store_proxy = AgentDataStoreProxy(
         service=data_store_service,
-        user_id=user_id or "anonymous",
+        user_id=data_owner({"uid": user_id}, project),
         agent_name=agent_name or "unknown",
         default_namespace="default",
         ops_log=data_store_ops_log,
@@ -1032,6 +1040,7 @@ async def run_deployed_agent(
     user_id: Optional[str] = None,
     user_basic_info: Optional[Dict[str, Any]] = None,
     llm_settings: Optional[LlmSettings] = None,
+    project: Optional[str] = None,
 ):
     try:
         deployment_doc = db.get("deployments", friendly_name)
@@ -1051,6 +1060,7 @@ async def run_deployed_agent(
             llm_settings=llm_settings,
             agent_name=agent.name,
             env_vars=getattr(agent, "env_vars", []),
+            project=project,
         )
         return result
     except HTTPException as e:

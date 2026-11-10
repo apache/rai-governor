@@ -35,7 +35,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set
 
 from services.agent_trace import Trace
 from time_utils import naive_utc_now
@@ -109,6 +109,11 @@ ORPHANED_RUN_ERROR = (
 _indexes_ensured = False
 
 
+# Most run docs one owner's list reads. Retention (days) keeps an owner well
+# under it; an int, because some backends' find() takes no None.
+LIST_SCAN_CAP = 10000
+
+
 def _ensure_indexes(db) -> None:
     """Create the indexes the registry needs. Idempotent."""
     global _indexes_ensured
@@ -124,6 +129,9 @@ def _ensure_indexes(db) -> None:
     # Eviction: 'find completed runs older than N days'.
     db.ensure_index(RUN_REGISTRY_DB, ["status", "completed_at"],
                     index_name="by_status_completed")
+    # List endpoint, a project's runs (ISSUE-002).
+    db.ensure_index(RUN_REGISTRY_DB, ["project", "started_at"],
+                    index_name="by_project")
     _indexes_ensured = True
 
 
@@ -202,6 +210,8 @@ class RunRecord:
     # can pre-fill the form when revisiting a past run via deep link.
     # None for old records that predate this field.
     input_dict: Optional[Dict[str, Any]] = None
+    # The project the run is for (ISSUE-002); its members see and stop it.
+    project: Optional[str] = None
     started_at: datetime = field(default_factory=naive_utc_now)
     status: Literal["running", "success", "error", "stopped"] = "running"
     trace: _FanoutTrace = field(default_factory=_FanoutTrace)
@@ -249,6 +259,7 @@ class RunRecord:
             "runId": self.run_id,
             "agentId": self.agent_id,
             "agentName": self.agent_name,
+            "project": self.project,
             "status": self.status,
             "startedAt": self.started_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
@@ -289,6 +300,7 @@ class RunRecord:
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "agent_name": self.agent_name,
+            "project": self.project,
             "input_dict": self.input_dict,
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
@@ -321,6 +333,7 @@ class RunRecord:
             user_id=doc["user_id"],
             agent_name=doc["agent_name"],
             agent_id=doc.get("agent_id"),
+            project=doc.get("project"),
             input_dict=doc.get("input_dict"),
         )
         # Override defaults set by dataclass init
@@ -481,6 +494,7 @@ class RunRegistry:
         agent_name: str,
         agent_id: Optional[str] = None,
         input_dict: Optional[Dict[str, Any]] = None,
+        project: Optional[str] = None,
     ) -> RunRecord:
         """Create a record with a fresh run_id, cache locally, and
         persist a stub to CouchDB so other workers can see it."""
@@ -491,6 +505,7 @@ class RunRegistry:
             agent_name=agent_name,
             agent_id=agent_id,
             input_dict=input_dict,
+            project=project,
         )
         # worker_id is set by the dataclass default to WORKER_ID, so
         # this record is implicitly owned by this worker.
@@ -534,8 +549,12 @@ class RunRegistry:
         user_id: str,
         limit: int = 100,
         agent_id: Optional[str] = None,
+        projects: Iterable[str] = (),
     ) -> List[RunRecord]:
         """List records for a user, optionally filtered by agent_id.
+
+        ``projects`` adds the runs of those projects, whoever started them
+        (the projects the user belongs to, ISSUE-002).
 
         Queries CouchDB (the source of truth) rather than scanning
         the local cache, so this returns runs owned by any worker.
@@ -546,31 +565,37 @@ class RunRegistry:
         if db is None:
             # In-memory fallback for tests and dev without CouchDB.
             self._evict_expired_local()
-            out = [r for r in self._records.values() if r.user_id == user_id]
+            projects = set(projects)
+            out = [r for r in self._records.values()
+                   if r.user_id == user_id or (r.project and r.project in projects)]
             if agent_id is not None:
                 out = [r for r in out if r.agent_id == agent_id]
             out.sort(key=lambda r: r.started_at, reverse=True)
             return out[:limit]
 
-        selector = {"user_id": user_id, "type": "run"}
+        # One equality query per owner, merged: only CouchDB has $or, and
+        # the other backends' find() compares by equality.
+        selectors = [{"user_id": user_id, "type": "run"}]
+        selectors += [{"project": p, "type": "run"} for p in sorted(set(projects))]
         if agent_id is not None:
-            selector["agent_id"] = agent_id
+            for sel in selectors:
+                sel["agent_id"] = agent_id
         try:
-            # CouchDBService.find doesn't expose Mango sort; fetch
-            # what matches the selector (cap-bounded by limit) and
-            # sort in Python. started_at is an ISO-8601 string so
-            # reverse lex sort gives newest-first. For limit=100
-            # the cost is negligible.
-            docs = db.find(
-                RUN_REGISTRY_DB,
-                selector=selector,
-                limit=limit,
-            )
+            # find() doesn't expose Mango sort and returns in storage
+            # order: take each owner's runs whole (retention keeps that to
+            # days) and sort here, or an owner with more than `limit` runs
+            # loses its newest. started_at is ISO-8601, so reverse string
+            # order is newest first.
+            by_id: Dict[str, Dict[str, Any]] = {}
+            for sel in selectors:
+                for d in db.find(RUN_REGISTRY_DB, selector=sel, limit=LIST_SCAN_CAP):
+                    by_id[d.get("run_id") or d.get("_id")] = d
+            docs = list(by_id.values())
         except Exception as e:
             print(f"[run_registry] list_for_user query failed: {e}", flush=True)
             return []
         docs.sort(key=lambda d: d.get("started_at", ""), reverse=True)
-        return [RunRecord.from_couch_doc(d) for d in docs]
+        return [RunRecord.from_couch_doc(d) for d in docs[:limit]]
 
     def mark_complete(
         self,
@@ -608,7 +633,7 @@ class RunRegistry:
         self._persist(record, include_events=True)
         record._persisted_complete = True
 
-    def request_stop(self, run_id: str, user_id: str) -> str:
+    def request_stop(self, run_id: str, user_id: str, user: Optional[dict] = None) -> str:
         """Flag the run as stop-requested.
 
         Returns one of:
@@ -622,8 +647,15 @@ class RunRegistry:
         'forbidden' as success (HTTP 202).
         """
         # Try local cache first (fast path).
+        from auth.project_access import can_see_run
+
+        def allowed(owner, project):
+            if user is not None:
+                return can_see_run(user, owner, project)
+            return owner == user_id
+
         local = self._records.get(run_id)
-        if local is not None and local.user_id != user_id:
+        if local is not None and not allowed(local.user_id, local.project):
             return "forbidden"
 
         db = self._get_db()
@@ -635,7 +667,7 @@ class RunRegistry:
                 doc = None
         if doc is None and local is None:
             return "not_found"
-        if doc is not None and doc.get("user_id") != user_id:
+        if doc is not None and not allowed(doc.get("user_id"), doc.get("project")):
             return "forbidden"
 
         # Update CouchDB unconditionally so the polling task on the
