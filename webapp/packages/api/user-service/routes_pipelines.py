@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from dependencies import get_db, get_logger
-from routes import get_current_user
+from routes import get_author_user
 from services import pipeline_io as pio
 from services.database_service import DatabaseService
 from services.observability_service import ObservabilityService
@@ -72,7 +72,7 @@ def _run_import(files, label, source, dry_run, db, user, logger):
 async def import_from_github(
     body: GithubImport,
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger),
 ):
     try:
@@ -93,7 +93,7 @@ async def import_from_upload(
     label: Optional[str] = Form(None),
     dry_run: bool = Form(True, alias="dryRun"),
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger),
 ):
     entries = []
@@ -114,7 +114,7 @@ async def import_from_upload(
 async def export_pipeline(
     agent_id: str,
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
 ):
     def get_agent(aid):
         try:

@@ -8,6 +8,17 @@ from app_factory import create_app
 from dependencies import get_user_service_dep, get_db
 from routes import get_current_user
 
+import pytest
+
+from config import settings
+
+
+@pytest.fixture(autouse=True)
+def _anyone_may_author(monkeypatch):
+    # These tests follow the user's identity into the LLM call; who may
+    # call the authoring routes is test_author_gate's concern.
+    monkeypatch.setattr(settings, "AGENT_EXEC_ALLOWED", "all_users")
+
 
 class FakeUserService:
     """Fake user service that tracks API key calls."""

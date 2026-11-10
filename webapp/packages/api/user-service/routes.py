@@ -199,6 +199,22 @@ async def get_agent_exec_user(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+AUTHOR_DENIED_DETAIL = (
+    "Writing and managing agents, pipelines, deployments and demo apps is "
+    "limited to site administrators on this server."
+)
+
+
+async def get_author_user(user: dict = Depends(get_current_user)) -> dict:
+    """``get_current_user`` for routes that read or change agents, pipelines,
+    deployments and demo apps. Same people as may run agent code
+    (AGENT_EXEC_ALLOWED): authoring an agent is no use to someone who can't
+    run it, and agent config can hold secrets."""
+    if not can_execute_agent_code(user):
+        raise HTTPException(status_code=403, detail=AUTHOR_DENIED_DETAIL)
+    return user
+
+
 class ListMcpToolsRequest(BaseModel):
     mcp_url: str
     auth_token: Optional[str] = None
@@ -533,7 +549,7 @@ async def create_agent(
     request: CreateAgentRequest,
     req: Request,
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger)
 ):
     """Saves a new agent configuration to the database."""
@@ -557,7 +573,7 @@ async def create_agent(
 async def list_agents(
     req: Request,
     db = Depends(get_async_db),  # async shim — don't block event loop
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger)
 ):
     """Lists all saved agents."""
@@ -567,7 +583,7 @@ async def list_agents(
 
 
 @router.get("/agents/{agent_id}", response_model=Agent)
-async def get_agent(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def get_agent(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Retrieves a specific agent by its ID."""
     agent_doc = db.get("agents", agent_id)
     return Agent(**agent_doc)
@@ -577,7 +593,7 @@ async def get_agent(agent_id: str, db: DatabaseService = Depends(get_db), user: 
 async def get_agent_chain(
     agent_id: str,
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
 ):
     """Return the transitive call graph for an agent.
 
@@ -593,7 +609,7 @@ async def delete_agent(
     agent_id: str,
     req: Request,
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger)
 ):
     """Deletes an agent by its ID.
@@ -620,7 +636,7 @@ async def update_agent(
     request: UpdateAgentRequest,
     req: Request,
     db: DatabaseService = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger)
 ):
     """Updates an existing agent configuration."""
@@ -658,7 +674,7 @@ async def update_agent(
 async def list_mcp_tools(
     request: ListMcpToolsRequest,
     mcp_service: McpClientService = Depends(get_mcp_client_service),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_author_user)
 ):
     """Connects to a remote MCP server and lists its available tools."""
     tools = await mcp_service.list_tools_for_server(request.mcp_url, request.auth_token)
@@ -666,7 +682,7 @@ async def list_mcp_tools(
 
 
 @router.post("/agents/generate-code", response_model=GenerateCodeResponse)
-async def generate_agent_code(request: GenerateCodeRequest, user: dict = Depends(get_current_user)):
+async def generate_agent_code(request: GenerateCodeRequest, user: dict = Depends(get_author_user)):
     """Generates agent code based on the provided configuration."""
     from agent_factory import generate_agent_code as generate_code_function
     user_basic_info = {
@@ -678,32 +694,32 @@ async def generate_agent_code(request: GenerateCodeRequest, user: dict = Depends
 
 
 @router.post("/specs/fetch")
-async def fetch_spec_from_url(request: FetchSpecRequest, user: dict = Depends(get_current_user)):
+async def fetch_spec_from_url(request: FetchSpecRequest, user: dict = Depends(get_author_user)):
     """Fetches OpenAPI/Swagger spec content from a public URL."""
     return await fetch_spec_content(request.url)
 
 
 @router.post("/agents/{agent_id}/deploy", status_code=201)
-async def deploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def deploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Registers an agent for internal REST deployment."""
     return await deploy_agent(agent_id, db)
 
 
 @router.delete("/agents/{agent_id}/undeploy", status_code=204)
-async def undeploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def undeploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Removes an agent from the internal REST deployment registry."""
     await undeploy_agent(agent_id, db)
     return
 
 
 @router.get("/agents/{agent_id}/deployment")
-async def get_agent_deployment_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def get_agent_deployment_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Checks if an agent is deployed and returns its public-facing name."""
     return await get_agent_deployment(agent_id, db)
 
 
 @router.get("/deployments", response_model=List[DeployedApi])
-async def list_deployments_route(db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def list_deployments_route(db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Lists all deployed agents/APIs with their relevant details."""
     deployments = await list_deployments_logic(db)
     return [DeployedApi(**dep) for dep in deployments]
@@ -1685,7 +1701,7 @@ async def start_deployed_agent_run(
 
 
 @router.post("/demos/generate-code", response_model=GenerateDemoCodeResponse)
-async def generate_demo_app_code(request: GenerateDemoCodeRequest, user: dict = Depends(get_current_user)):
+async def generate_demo_app_code(request: GenerateDemoCodeRequest, user: dict = Depends(get_author_user)):
     """
     Generates HTML/CSS/JS for a demo app based on a prompt and selected APIs.
     """
@@ -1707,7 +1723,7 @@ async def generate_demo_app_code(request: GenerateDemoCodeRequest, user: dict = 
 
 
 @router.post("/demos", response_model=DemoApp, status_code=201)
-async def create_demo_app(request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def create_demo_app(request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Saves a new demo app configuration."""
     demo_app_data = request.model_dump(by_alias=True)
     demo_app = DemoApp(**demo_app_data)
@@ -1718,21 +1734,21 @@ async def create_demo_app(request: CreateDemoAppRequest, db: DatabaseService = D
 
 
 @router.get("/demos", response_model=List[DemoApp])
-async def list_demo_apps(db = Depends(get_async_db), user: dict = Depends(get_current_user)):
+async def list_demo_apps(db = Depends(get_async_db), user: dict = Depends(get_author_user)):
     """Lists all saved demo apps."""
     all_docs = await db.list_all("demos")
     return [DemoApp(**doc) for doc in all_docs]
 
 
 @router.get("/demos/{demo_id}", response_model=DemoApp)
-async def get_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def get_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Retrieves a specific demo app."""
     doc = db.get("demos", demo_id)
     return DemoApp(**doc)
 
 
 @router.put("/demos/{demo_id}", response_model=DemoApp)
-async def update_demo_app(demo_id: str, request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def update_demo_app(demo_id: str, request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Updates an existing demo app."""
     demo_app_data = request.model_dump(by_alias=True)
     updated_model = DemoApp(_id=demo_id, **demo_app_data)
@@ -1743,7 +1759,7 @@ async def update_demo_app(demo_id: str, request: CreateDemoAppRequest, db: Datab
 
 
 @router.delete("/demos/{demo_id}", status_code=204)
-async def delete_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+async def delete_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Deletes a demo app."""
     db.delete("demos", demo_id)
     return

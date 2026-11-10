@@ -340,7 +340,7 @@ def _app_client(db):
     app = create_app()
 
     def current(request: Request):
-        return {"uid": "asf:dev", "email": "dev@example.com"}
+        return {"uid": "asf:dev", "email": "dev@example.com", "is_site_admin": True}
 
     app.dependency_overrides[get_current_user] = current
     app.dependency_overrides[get_db] = lambda: db
