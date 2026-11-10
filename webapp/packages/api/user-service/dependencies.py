@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import traceback
 import warnings
 from typing import Any, Dict, List, Optional
@@ -139,8 +140,11 @@ def get_user_service_dep(db: DatabaseService = Depends(get_db)) -> UserService:
 def require_admin_access(admin_password: str | None = Header(default=None, alias="X-Admin-Password")):
     if not settings.ADMIN_PANEL_ENABLED:
         raise HTTPException(status_code=403, detail="Admin panel is disabled")
+    # The setting defaults to "password"; enabled with it, the panel is open.
+    if (settings.ADMIN_PANEL_PASSWORD or "").strip().lower() in ("", "password"):
+        raise HTTPException(status_code=403, detail="Admin panel is enabled but ADMIN_PANEL_PASSWORD is not set")
 
-    if admin_password != settings.ADMIN_PANEL_PASSWORD:
+    if not secrets.compare_digest((admin_password or "").encode(), settings.ADMIN_PANEL_PASSWORD.encode()):
         raise HTTPException(status_code=401, detail="Invalid admin password")
 
 
@@ -169,13 +173,16 @@ async def _execute_agent_code(
     user_service = get_user_service(db) if user_id else None
 
     class GofannonClient:
+        # The database is held in this closure, not on the instance: agent
+        # code gets gofannon_client, and a .db attribute handed it every
+        # collection. Not a boundary while agent code runs in-process
+        # (ISSUE-023); it removes the obvious route.
         def __init__(self, agent_ids: List[str], db_service: DatabaseService, llm_settings: Optional[LlmSettings] = None):
-            self.db = db_service
             self.llm_settings = llm_settings
             self.agent_map = {}
             if agent_ids:
                 try:
-                    all_agents = [Agent(**self.db.get("agents", agent_id)) for agent_id in agent_ids]
+                    all_agents = [Agent(**db_service.get("agents", agent_id)) for agent_id in agent_ids]
                     for agent in all_agents:
                         self.agent_map[agent.name] = agent
                     # An imported pipeline copy stores agents as
@@ -206,7 +213,7 @@ async def _execute_agent_code(
                 input_dict=input_dict,
                 tools=agent_to_run.tools,
                 gofannon_agents=agent_to_run.gofannon_agents,
-                db=self.db,
+                db=db,
                 user_id=user_id,
                 user_basic_info=user_basic_info,
                 llm_settings=self.llm_settings,
@@ -502,6 +509,7 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
             "status": "processing",
             "created_at": naive_utc_now().isoformat(),  # Use isoformat for JSON serialization
             "request": request.dict(by_alias=True),
+            "user_id": user.get("uid"),
         }
         db_service.save("tickets", ticket_id, dict(ticket_data))
 

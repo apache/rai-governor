@@ -457,11 +457,23 @@ async def chat(request: ChatRequest, req: Request, background_tasks: BackgroundT
     )
 
 
+def _require_owner(doc: dict, user: dict, what: str) -> None:
+    """404 unless the caller owns ``doc``. A record from before owners were
+    recorded has none; only site admins see those."""
+    owner = doc.get("user_id")
+    if owner == user.get("uid") and owner is not None:
+        return
+    if owner is None and user.get("is_site_admin"):
+        return
+    raise HTTPException(status_code=404, detail=f"{what} not found")
+
+
 @router.get("/chat/{ticket_id}")
 async def get_chat_status(ticket_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Get the status and result of a chat request"""
     try:
         ticket_data = db.get("tickets", ticket_id)
+        _require_owner(ticket_data, user, "Ticket")
         return ChatResponse(
             ticket_id=ticket_data.get("_id", ticket_id),
             status=ticket_data["status"],
@@ -481,9 +493,12 @@ async def update_session_config(session_id: str, config: ProviderConfig, db: Dat
         session_doc = db.get("sessions", session_id)
     except HTTPException as e:
         if e.status_code == 404:
-            session_doc = {"created_at": naive_utc_now().isoformat()}
+            session_doc = {"created_at": naive_utc_now().isoformat(), "user_id": user.get("uid")}
         else:
             raise
+    else:
+        _require_owner(session_doc, user, "Session")
+        session_doc.setdefault("user_id", user.get("uid"))
 
     session_doc["provider_config"] = config.dict()
     session_doc["updated_at"] = naive_utc_now().isoformat()
@@ -496,12 +511,14 @@ async def update_session_config(session_id: str, config: ProviderConfig, db: Dat
 async def get_session_config(session_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Get session configuration"""
     session_doc = db.get("sessions", session_id)
+    _require_owner(session_doc, user, "Session")
     return session_doc.get("provider_config")
 
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Delete a session"""
+    _require_owner(db.get("sessions", session_id), user, "Session")
     db.delete("sessions", session_id)
     return {"message": "Session deleted"}
 
