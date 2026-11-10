@@ -61,7 +61,9 @@ export default function MemoryPage() {
             sx={{ minWidth: 260, bgcolor: '#fff' }}
           >
             {domains.map((d) => (
-              <MenuItem key={d.domain} value={d.domain}>{d.domain} · {d.entries} entries</MenuItem>
+              <MenuItem key={d.domain} value={d.domain}>
+                {d.domain}{d.kind === 'project' ? ' (project)' : ''} · {d.entries} entries
+              </MenuItem>
             ))}
           </TextField>
         )}
@@ -69,8 +71,13 @@ export default function MemoryPage() {
 
       {error && <Alert severity="error">{error}</Alert>}
       {!info && !error && <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress size={28} /></Box>}
-      {info && !current && (
-        <Alert severity="warning">No memory domain {domain}. This deployment has: {domains.map((d) => d.domain).join(', ')}.</Alert>
+      {info && domains.length === 0 && (
+        <Alert severity="info">
+          There is no memory you can read yet. Each project has its own, which its committers can read once a run or its PMC has written to it.
+        </Alert>
+      )}
+      {info && domains.length > 0 && !current && (
+        <Alert severity="warning">No memory domain {domain} that you can read. You can read: {domains.map((d) => d.domain).join(', ')}.</Alert>
       )}
 
       {current && (
@@ -92,7 +99,8 @@ export default function MemoryPage() {
           {tab === 'ask' && <AskTab key={domain} domain={domain} />}
           {tab === 'review' && (
             <ReviewTab
-              key={domain} domain={domain} you={info.you}
+              key={domain} domain={domain} kind={current.kind}
+              you={{ ...info.you, canReview: current.canReview ?? info.you?.canReview }}
               initialEntry={params.get('entry')} onReviewed={loadDomains}
             />
           )}

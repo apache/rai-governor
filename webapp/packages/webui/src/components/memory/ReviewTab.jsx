@@ -23,7 +23,7 @@ import EntryPanel from './EntryPanel';
 import { TrustDisc } from './memoryBits';
 import { choicesFor, isOverdue, plusDays } from './memoryFormat';
 
-function Decision({ entry, you, onDone, onSkip }) {
+function Decision({ entry, you, kind, onDone, onSkip }) {
   const choices = choicesFor(entry.trust_tier);
   const [action, setAction] = useState(choices[0].action);
   const [why, setWhy] = useState('');
@@ -109,7 +109,11 @@ function Decision({ entry, you, onDone, onSkip }) {
         </Alert>
       )}
       {!own && !you?.canReview && (
-        <Alert severity="info" sx={{ mt: 2 }}>Only memory writers review entries.</Alert>
+        <Alert severity="info" sx={{ mt: 2 }}>
+          {kind === 'project'
+            ? "Only the project's PMC reviews entries in its domain."
+            : 'Only memory writers review entries.'}
+        </Alert>
       )}
     </Paper>
   );
@@ -121,7 +125,7 @@ const FILTERS = [
   { key: 'due', label: 'Review overdue', test: (h) => isOverdue(h) },
 ];
 
-export default function ReviewTab({ domain, you, initialEntry, onReviewed }) {
+export default function ReviewTab({ domain, kind, you, initialEntry, onReviewed }) {
   const [rows, setRows] = useState(null);
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState(initialEntry || null);
@@ -218,6 +222,7 @@ export default function ReviewTab({ domain, you, initialEntry, onReviewed }) {
               key={current.id}
               entry={current}
               you={you}
+              kind={kind}
               onDone={reviewed}
               onSkip={next}
             />

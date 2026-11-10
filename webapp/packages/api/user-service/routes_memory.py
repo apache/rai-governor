@@ -1,14 +1,16 @@
 """Memory pilot endpoints: search, get, recall, write, and review.
 
-Mounted only when MEMORY_ENABLED is true. Reads need a session; writes need a
-site admin or a uid in MEMORY_WRITERS until workspace scoping (ISSUE-002)
-gives domains real owners, and so do reviews; nobody reviews an entry they
-wrote. Only domains in MEMORY_DOMAINS exist.
+Mounted only when MEMORY_ENABLED is true. Who may read, write and review a
+domain is services/memory/access.py: shared domains (MEMORY_DOMAINS) are for
+site admins and MEMORY_WRITERS unless listed in MEMORY_OPEN_DOMAINS; a
+project's domain, named for it, is for its members to read and its PMC to
+write and review (ISSUE-002). Nobody reviews an entry they wrote. A domain
+the caller can't read answers 404, like one that doesn't exist, and so does
+an entry in one, with the same message as a missing entry.
 """
 
 from __future__ import annotations
 
-import os
 from datetime import date
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from dependencies import get_db, get_user_service_dep
+from auth.project_access import member_projects
 from routes import get_current_user
+from services.memory import access
 from services.memory.entry import Confidence, EntryError, EntryType
 from services.memory.service import (
     NotFound,
@@ -31,23 +35,27 @@ from services.memory.service import (
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
-def _csv(name: str, default: str = "") -> List[str]:
-    return [s.strip() for s in os.getenv(name, default).split(",") if s.strip()]
-
-
-def _domain(domain: str) -> str:
-    if domain not in _csv("MEMORY_DOMAINS", "dom-scan"):
+def _domain(domain: str, user: dict) -> str:
+    """The domain, if it exists and the caller may read it; else 404."""
+    if not access.exists(domain) or not access.can_read(user, domain):
         raise HTTPException(status_code=404, detail=f"No memory domain {domain!r}")
     return domain
 
 
-def _can_write(user: dict) -> bool:
-    return bool(user.get("is_site_admin") or user.get("uid") in _csv("MEMORY_WRITERS"))
+def _entry_domain(domain: str, user: dict, missing: str = "No such entry") -> str:
+    """An entry's domain, if the caller may read it; else the 404 a missing
+    entry gets, so the answer doesn't say the id exists elsewhere."""
+    if not access.exists(domain) or not access.can_read(user, domain):
+        raise HTTPException(status_code=404, detail=missing)
+    return domain
 
 
-def _require_writer(user: dict) -> None:
-    if not _can_write(user):
-        raise HTTPException(status_code=403, detail="Not allowed to write memory")
+def _writable(domain: str, user: dict) -> str:
+    """For writing by hand and reviewing: 404 if unreadable, 403 if read-only."""
+    _domain(domain, user)
+    if not access.can_write(user, domain):
+        raise HTTPException(status_code=403, detail=f"Not allowed to write or review {domain}")
+    return domain
 
 
 class WriteBody(BaseModel):
@@ -77,15 +85,31 @@ async def domains(
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
-    """The domains this deployment has, with counts, and what the caller may do."""
+    """The domains the caller may read, with counts and what they may do in each.
+
+    Shared domains first, then project domains: the caller's projects, and
+    for site admins every project domain that has entries.
+    """
     service = get_memory_service(db)
+    names = [d for d in access.shared_domains() if access.can_read(user, d)]
+    projects = set(member_projects(user))
+    if user.get("is_site_admin"):
+        projects |= {d for d in await service.domains() if access.project_of(d)}
+    names += sorted(p for p in projects if access.project_of(p))
     out = []
-    for name in _csv("MEMORY_DOMAINS", "dom-scan"):
-        out.append({"domain": name, **await service.counts(name)})
-    can = _can_write(user)
+    for name in names:
+        can = access.can_write(user, name)
+        out.append({
+            "domain": name,
+            "kind": "shared" if access.is_shared(name) else "project",
+            "canWrite": can,
+            "canReview": can,
+            **await service.counts(name),
+        })
+    any_can = any(d["canWrite"] for d in out)
     return {
         "domains": out,
-        "you": {"author": human_author(user["uid"]), "canWrite": can, "canReview": can},
+        "you": {"author": human_author(user["uid"]), "canWrite": any_can, "canReview": any_can},
     }
 
 
@@ -109,7 +133,7 @@ async def search(
     if trust_tier:
         filters["trust_tier"] = trust_tier
     hits = await get_memory_service(db).search(
-        _domain(domain), q, filters, due_by, limit,
+        _domain(domain, user), q, filters, due_by, limit,
         include_inactive=include_inactive, oldest_first=order == "oldest",
     )
     return {"domain": domain, "query": q, "hits": hits}
@@ -125,7 +149,7 @@ async def get_entry(
         entry = await get_memory_service(db).get(entry_id)
     except NotFound:
         raise HTTPException(status_code=404, detail="No such entry")
-    _domain(entry.front.domain)
+    _entry_domain(entry.front.domain, user)
     return {"frontmatter": entry.front.to_dict(), "body": entry.body}
 
 
@@ -139,7 +163,7 @@ async def entry_history(
         out = await get_memory_service(db).history(entry_id)
     except NotFound:
         raise HTTPException(status_code=404, detail="No such entry")
-    _domain(out["domain"])
+    _entry_domain(out["domain"], user)
     return out
 
 
@@ -154,7 +178,7 @@ async def entry_version(
         entry = await get_memory_service(db).get_version(entry_id, version)
     except NotFound:
         raise HTTPException(status_code=404, detail="No such version")
-    _domain(entry.front.domain)
+    _entry_domain(entry.front.domain, user, missing="No such version")
     return {"version": version, "frontmatter": entry.front.to_dict(), "body": entry.body}
 
 
@@ -165,10 +189,10 @@ async def review_entry(
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_writer(user)
     service = get_memory_service(db)
     try:
-        _domain((await service.get(entry_id)).front.domain)
+        domain = _entry_domain((await service.get(entry_id)).front.domain, user)
+        _writable(domain, user)
         return await service.review(
             entry_id, body.action, human_author(user["uid"]), body.why, body.review_by
         )
@@ -187,12 +211,21 @@ async def write_entry(
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
-    _require_writer(user)
-    req = WriteRequest(domain=_domain(domain), **body.model_dump())
+    req = WriteRequest(domain=_writable(domain, user), **body.model_dump())
+    service = get_memory_service(db)
+    gone = HTTPException(status_code=404, detail="The superseded entry does not exist")
+    if req.supersedes:
+        # One answer for missing and elsewhere, so this doesn't say an id
+        # exists in a domain the caller can't read.
+        try:
+            if (await service.get(req.supersedes)).front.domain != domain:
+                raise gone
+        except NotFound:
+            raise gone
     try:
-        entry = await get_memory_service(db).write(req, author=human_author(user["uid"]))
+        entry = await service.write(req, author=human_author(user["uid"]))
     except NotFound:
-        raise HTTPException(status_code=404, detail="The superseded entry does not exist")
+        raise gone
     except EntryError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return {"frontmatter": entry.front.to_dict()}
@@ -207,5 +240,5 @@ async def recall(
     user_service=Depends(get_user_service_dep),
 ) -> Dict[str, Any]:
     return await get_memory_service(db).recall(
-        body.question, _domain(domain), user_service=user_service, user_id=user["uid"]
+        body.question, _domain(domain, user), user_service=user_service, user_id=user["uid"]
     )

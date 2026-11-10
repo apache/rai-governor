@@ -28,12 +28,13 @@ def client(monkeypatch):
 BODY = {"body": "# SQLi\n\nline 10\n", "summary": "String-built SQL in a.py"}
 
 
-def test_reader_cannot_write(client):
-    r = client.post("/memory/dom-scan/entries", json=BODY)
-    assert r.status_code == 403
+def test_reader_cannot_write(client, monkeypatch):
+    assert client.post("/memory/dom-scan/entries", json=BODY).status_code == 404
+    monkeypatch.setenv("MEMORY_OPEN_DOMAINS", "dom-scan")
+    assert client.post("/memory/dom-scan/entries", json=BODY).status_code == 403
 
 
-def test_writer_writes_then_anyone_signed_in_reads(client):
+def test_writer_writes_then_readers_of_an_open_domain_read(client, monkeypatch):
     client.user["uid"] = "writer"
     r = client.post("/memory/dom-scan/entries", json={**BODY, "trust_tier": "verified"})
     assert r.status_code == 201
@@ -42,6 +43,9 @@ def test_writer_writes_then_anyone_signed_in_reads(client):
     assert front["author"] == "human:gofannon:writer"
 
     client.user["uid"] = "reader"
+    assert client.get("/memory/dom-scan/search", params={"q": "sql"}).status_code == 404
+    assert client.get(f"/memory/entries/{front['id']}").status_code == 404
+    monkeypatch.setenv("MEMORY_OPEN_DOMAINS", "dom-scan")
     hits = client.get("/memory/dom-scan/search", params={"q": "sql"}).json()["hits"]
     assert [h["id"] for h in hits] == [front["id"]]
     got = client.get(f"/memory/entries/{front['id']}").json()

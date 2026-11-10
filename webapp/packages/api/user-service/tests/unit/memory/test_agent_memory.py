@@ -60,7 +60,12 @@ async def test_memory_is_there_but_off_unless_enabled(monkeypatch):
 @pytest.mark.asyncio
 async def test_only_a_memory_writer_runs_agents_that_write(env, monkeypatch):
     monkeypatch.setattr(dependencies, "get_user_service", lambda db: None)
-    with pytest.raises(PermissionError, match="may not write memory"):
+    # Someone else's run for no project reaches no shared domain at all now
+    # (ISSUE-002); with the domain open to all, it reads but can't write.
+    with pytest.raises(PermissionError, match="reach no memory domain"):
+        await _run(env, user_id="asf:someone")
+    monkeypatch.setenv("MEMORY_OPEN_DOMAINS", "dom-scan")
+    with pytest.raises(PermissionError, match="may not write to dom-scan"):
         await _run(env, user_id="asf:someone")
     out = await _run(env, user_id="asf:someone", admin=True)
     assert out["tier"] == "raw"

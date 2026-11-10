@@ -90,6 +90,8 @@ def test_reader_reads_but_cannot_write(monkeypatch):
     client = _client(monkeypatch, ADMIN)
     entry = _write(client).json()["frontmatter"]
     client.app.dependency_overrides[get_current_user] = lambda: READER
+    assert client.get(f"/memory/entries/{entry['id']}").status_code == 404
+    monkeypatch.setenv("MEMORY_OPEN_DOMAINS", "dom-scan")
     assert client.get(f"/memory/entries/{entry['id']}").status_code == 200
     assert _write(client).status_code == 403
 

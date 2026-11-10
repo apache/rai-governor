@@ -6,10 +6,20 @@ MEMORY_ENABLED on, and then every call raises, so agent code checks it first:
     if memory.enabled:
         await memory.write(summary="...", body="...", model=model)
 
-Agents write at raw trust like everyone else, as
-``agent:<name> (model: <id>)``, and only when the person running them may
-write memory (a site admin or a MEMORY_WRITERS uid). A run started by anyone
-else can read and recall, but its writes raise PermissionError.
+Agents write at raw trust like everyone else, as ``agent:<name> (model: <id>)``.
+
+Which domains a run reaches (ISSUE-002, rules in access.py):
+
+- A run for a project reads and writes that project's domain, and it is the
+  default. Its launcher was checked as a member when the run started. Of
+  the shared domains it reads only the MEMORY_OPEN_DOMAINS ones, whoever
+  launched it: its output is the project's, and a closed shared domain
+  holds what admin runs found in other projects' private repositories.
+- A run for no project, as before: the shared domains the launcher could
+  reach by hand (site admins and MEMORY_WRITERS read and write them, anyone
+  reads the open ones), first one default.
+
+A write to a domain the run can't write raises PermissionError.
 """
 
 from __future__ import annotations
@@ -18,6 +28,7 @@ import os
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from . import access
 from .entry import Confidence, EntryType
 from .service import NotFound, WriteRequest, agent_author, get_memory_service
 
@@ -42,10 +53,24 @@ class AgentMemory:
         user_id: Optional[str] = None,
         is_site_admin: bool = False,
         user_service=None,
+        project: Optional[str] = None,
     ) -> None:
         self.enabled = memory_enabled()
-        self.domains = _csv("MEMORY_DOMAINS", "dom-scan") if self.enabled else []
-        self.can_write = self.enabled and (is_site_admin or (user_id or "") in _csv("MEMORY_WRITERS"))
+        self.project = project if project and access.project_of(project) else None
+        if self.project:
+            # Not the launcher's reach: what a project run reads ends up in
+            # the project's output.
+            domains = [self.project] + access.open_domains()
+            writable = [self.project]
+        else:
+            shared_writer = is_site_admin or (user_id or "") in _csv("MEMORY_WRITERS")
+            domains = [d for d in access.shared_domains()
+                       if shared_writer or d in access.open_domains()]
+            writable = access.shared_domains() if shared_writer else []
+        # The default domain is first.
+        self.domains = domains if self.enabled else []
+        self._writable = set(writable)
+        self.can_write = self.enabled and bool(self._writable)
         self._db = db
         self._agent_name = agent_name
         self._user_id = user_id
@@ -61,9 +86,13 @@ class AgentMemory:
     def _domain(self, domain: Optional[str]) -> str:
         if not self.enabled:
             raise MemoryOff("memory is off on this deployment (MEMORY_ENABLED)")
+        if not self.domains:
+            raise PermissionError("this run can reach no memory domain")
         domain = domain or self.domains[0]
         if domain not in self.domains:
-            raise ValueError(f"no memory domain {domain!r}; this deployment has {self.domains}")
+            if access.exists(domain):
+                raise PermissionError(f"this run may not reach memory domain {domain!r}; it has {self.domains}")
+            raise ValueError(f"no memory domain {domain!r}; this run has {self.domains}")
         return domain
 
     async def search(
@@ -122,10 +151,10 @@ class AgentMemory:
         run can find and supersede them. ``review_by`` is YYYY-MM-DD.
         """
         domain = self._domain(domain)
-        if not self.can_write:
+        if domain not in self._writable:
             raise PermissionError(
-                "the person running this agent may not write memory "
-                "(site admins and MEMORY_WRITERS may)"
+                f"this run may not write to {domain}: a project's runs write to its "
+                "domain, and shared domains take site admins' and MEMORY_WRITERS' runs"
             )
         req = WriteRequest(
             domain=domain,

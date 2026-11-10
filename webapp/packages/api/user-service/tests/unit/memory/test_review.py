@@ -60,8 +60,11 @@ def test_the_author_cannot_review_their_own_entry(client):
     assert client.db.list_all(REVIEWS_DB) == []
 
 
-def test_a_reader_cannot_review(client):
+def test_a_reader_cannot_review(client, monkeypatch):
     eid = _write(client)
+    # A shared domain is unreadable to non-writers unless opened (ISSUE-002).
+    assert _review(client, "carol", eid, action="keep").status_code == 404
+    monkeypatch.setenv("MEMORY_OPEN_DOMAINS", "dom-scan")
     assert _review(client, "carol", eid, action="keep").status_code == 403
 
 
@@ -123,9 +126,11 @@ def test_domains_counts_and_who_you_are(client):
     _review(client, "bob", a, action="curate", why="fine", review_by="2999-01-01")
     out = _as(client, "bob").get("/memory/domains").json()
     assert out["domains"] == [
-        {"domain": "dom-scan", "entries": 3, "raw": 2, "due": 1, "review": 2}]
+        {"domain": "dom-scan", "kind": "shared", "canWrite": True, "canReview": True,
+         "entries": 3, "raw": 2, "due": 1, "review": 2}]
     assert out["you"] == {"author": "human:gofannon:bob", "canWrite": True, "canReview": True}
-    assert _as(client, "carol").get("/memory/domains").json()["you"]["canReview"] is False
+    carol = _as(client, "carol").get("/memory/domains").json()
+    assert carol["domains"] == [] and carol["you"]["canReview"] is False
 
 
 def test_search_returns_author_and_orders_oldest_first(client):

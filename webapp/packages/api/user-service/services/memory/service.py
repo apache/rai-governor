@@ -152,6 +152,9 @@ class MemoryService:
         )
         return [_summary(r) for r in rows]
 
+    async def domains(self) -> List[str]:
+        return await asyncio.to_thread(self.index.domains)
+
     async def counts(self, domain: str, today: Optional[date] = None) -> Dict[str, int]:
         today = today or datetime.now(timezone.utc).date()
         return await asyncio.to_thread(self.index.counts, domain, today)

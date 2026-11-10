@@ -126,6 +126,11 @@ class MemoryIndex:
         hits.sort(key=lambda h: h[0], reverse=True)
         return [row for _, _, row in hits[: max(1, min(limit, 200))]]
 
+    def domains(self) -> List[str]:
+        """Every domain that has an entry. list_all, because find() takes
+        equality selectors only on some backends."""
+        return sorted({row["domain"] for row in self.db.list_all(INDEX_DB) if row.get("domain")})
+
     def counts(self, domain: str, today: date) -> Dict[str, int]:
         """Live entries in a domain: how many, how many raw, due, and either (the review queue)."""
         live = raw = due = queue = 0

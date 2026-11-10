@@ -428,6 +428,7 @@ async def _execute_agent_code(
         user_id=user_id,
         is_site_admin=bool((user_basic_info or {}).get("is_site_admin")),
         user_service=user_service,
+        project=project,
     )
 
     exec_globals = {

@@ -9,8 +9,9 @@ Memory is off unless the API has `MEMORY_ENABLED=true`. While it is off, nothing
 | Variable | Default | |
 |---|---|---|
 | `MEMORY_ENABLED` | `false` | the switch |
-| `MEMORY_DOMAINS` | `dom-scan` | the domains that exist, comma-separated |
-| `MEMORY_WRITERS` | none | uids besides site admins who may write and review, e.g. `asf:akm` |
+| `MEMORY_DOMAINS` | `dom-scan` | the shared domains, comma-separated; names start with `dom-` |
+| `MEMORY_WRITERS` | none | uids besides site admins who may read, write and review the shared domains, e.g. `asf:akm` |
+| `MEMORY_OPEN_DOMAINS` | none | shared domains anyone signed in may read; leave empty while they hold anything from a private repository |
 | `MEMORY_RECALL_PROVIDER` | `llmao` | the model that writes Ask's briefs |
 | `MEMORY_RECALL_MODEL` | `qwen3.8-27b` | |
 | `MEMORY_S3_BUCKET` | `S3_BUCKET_NAME` | where entries are stored; keep it private |
@@ -18,13 +19,21 @@ Memory is off unless the API has `MEMORY_ENABLED=true`. While it is off, nothing
 
 Entries are stored in the S3-compatible store when `STORAGE_PROVIDER=s3`. Otherwise they are kept in process memory: fine for trying it out, but lost on restart, and each worker has its own copy. The index (`memory_index`) and review records (`memory_reviews`) go in the database and are created on first use.
 
-During the pilot, anyone signed in can read every entry in every domain. Don't record anything that isn't public or already fixed.
-
 ## Who can do what
 
-- **Anyone signed in** can browse, read and ask.
-- **Site admins and `MEMORY_WRITERS`** can also write entries and review them.
-- **Nobody reviews an entry they wrote.** The approver is never the proposer.
+There are two kinds of domain.
+
+- **Shared domains** are the ones in `MEMORY_DOMAINS`. Site admins and `MEMORY_WRITERS` read, write and review them. Anyone else signed in reads only those also in `MEMORY_OPEN_DOMAINS`, because admin runs can record findings from private repositories there.
+- **A project's domain** is named for the project, by its LDAP name (`whimsy`), and exists from its first write. The project's committers and PMC read it; its PMC and site admins write and review it.
+
+| | Shared domain | Open shared domain | Project domain |
+|---|---|---|---|
+| Read, search, ask | site admins, `MEMORY_WRITERS` | anyone signed in | the project's committers and PMC |
+| Write and review | site admins, `MEMORY_WRITERS` | site admins, `MEMORY_WRITERS` | the project's PMC, site admins |
+
+A domain you can't read answers 404, as one that doesn't exist does. A `dom-` name that isn't in `MEMORY_DOMAINS` doesn't exist.
+
+**Nobody reviews an entry they wrote.** The approver is never the proposer.
 
 ## The Memory page
 
@@ -75,7 +84,7 @@ async def run(input_dict, tools):
 | `recall(question, domain)` | `{"brief", "cited", "entries", "matched"}`; billed to whoever runs the agent |
 | `write(summary, body, type, domain, title, source, confidence, review_by, supersedes, origin, model)` | the new entry's id |
 
-`domain` defaults to the first of `MEMORY_DOMAINS`. Agents write at raw, as `agent:<agent name> (model: <model>)`, and only when the person running them may write memory; otherwise `write` raises `PermissionError`. `memory.written` lists the ids this run wrote.
+`memory.domains` lists what the run can reach; the first is the default. A run for a project (`project` on `/agents/run-code/start`, `?project=` on `/rest/<name>`) reads and writes that project's domain, and it is the default. Of the shared domains it reads only the open ones (`MEMORY_OPEN_DOMAINS`), whoever runs it, because its output is the project's. A run for no project has the shared domains the person running it could reach by hand (their writers read and write them, anyone reads the open ones), first one default. Agents write at raw, as `agent:<agent name> (model: <model>)`. A domain the run can't reach raises `PermissionError`; one that doesn't exist raises `ValueError`. `memory.written` lists the ids this run wrote.
 
 ## API
 

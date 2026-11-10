@@ -46,9 +46,34 @@ describe('MemoryPage', () => {
     expect(await screen.findByText('Memory is not enabled on this deployment.')).toBeInTheDocument();
   });
 
+  it('takes review rights from the domain shown, not from the whole page', async () => {
+    // ISSUE-002: a PMC member of one project reviews its domain only.
+    memoryService.domains.mockResolvedValue({
+      domains: [
+        { domain: 'whimsy', kind: 'project', canWrite: false, canReview: false, entries: 1, raw: 1, due: 0, review: 1 },
+        { domain: 'tomcat', kind: 'project', canWrite: true, canReview: true, entries: 0, raw: 0, due: 0, review: 0 },
+      ],
+      you: { author: 'human:asf:bob', canWrite: true, canReview: true },
+    });
+    memoryService.search.mockResolvedValue({ hits: [{ id: 'mem-whimsy-a1', summary: 'SQLi in board.rb', trust_tier: 'raw', author: 'agent:x', created: '2026-11-01' }] });
+    memoryService.get.mockResolvedValue({ frontmatter: { id: 'mem-whimsy-a1', domain: 'whimsy', author: 'agent:x', trust_tier: 'raw', summary: 'SQLi in board.rb' }, body: '# SQLi' });
+    memoryService.history.mockResolvedValue({ id: 'mem-whimsy-a1', domain: 'whimsy', versions: [], reviews: [] });
+    page('/memories/whimsy?tab=review');
+    expect(await screen.findByText("Only the project's PMC reviews entries in its domain.")).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveTextContent('whimsy (project)');
+  });
+
   it('names the domains there are when the URL names another', async () => {
     memoryService.domains.mockResolvedValue(DOMAINS);
     page('/memories/dom-nope');
     expect(await screen.findByText(/No memory domain dom-nope/)).toBeInTheDocument();
+  });
+
+  it('says there is nothing to read when no domain is readable', async () => {
+    memoryService.domains.mockResolvedValue({ domains: [], you: { author: 'human:asf:eve' } });
+    page('/memories');
+    expect(await screen.findByText(/no memory you can read yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/No memory domain/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
 });
