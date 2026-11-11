@@ -38,7 +38,7 @@ describe('ReviewTab', () => {
     expect(await screen.findByText('Summary mem-scan-a')).toBeInTheDocument();
     expect(screen.getByText('Summary mem-scan-b')).toBeInTheDocument();
     expect(screen.queryByText('Summary mem-scan-c')).not.toBeInTheDocument();
-    expect(memoryService.search).toHaveBeenCalledWith('dom-scan', { order: 'oldest', limit: 200 });
+    expect(memoryService.search).toHaveBeenCalledWith('dom-scan', { order: 'oldest', queue: true, limit: 1000 });
     expect(screen.getByText('Raw · 1')).toBeInTheDocument();
     expect(screen.getByText('Review overdue · 1')).toBeInTheDocument();
   });
@@ -69,5 +69,17 @@ describe('ReviewTab', () => {
     expect(choicesFor('raw').map((c) => c.action)).toEqual(['curate', 'verify', 'keep', 'demote']);
     expect(choicesFor('curated').map((c) => c.action)).toEqual(['keep', 'verify', 'demote']);
     expect(choicesFor('verified').map((c) => c.action)).toEqual(['keep', 'demote']);
+  });
+
+  it('an entry opened by link that is not in the queue still gets a decision', async () => {
+    memoryService.search.mockResolvedValue({ hits: [hit('mem-scan-a')] });
+    memoryService.get.mockImplementation(async (id) => ({
+      frontmatter: { id, title: `Title ${id}`, trust_tier: 'curated', type: 'fact',
+        author: 'agent:asvs_audit (model: qwen)', created: '2026-11-03T00:00:00Z', review_by: '2099-01-01' },
+      body: 'body',
+    }));
+    renderWithRouter(<ReviewTab domain="dom-scan" you={BOB} initialEntry="mem-scan-linked" />);
+    expect(await screen.findByText('Your decision')).toBeInTheDocument();
+    expect(memoryService.get).toHaveBeenCalledWith('mem-scan-linked');
   });
 });

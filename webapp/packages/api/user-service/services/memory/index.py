@@ -10,7 +10,7 @@ needed, and the index is derived, so it can be rebuilt into another store
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -101,8 +101,13 @@ class MemoryIndex:
         include_inactive: bool = False,
         limit: int = 20,
         oldest_first: bool = False,
+        review_queue: bool = False,
     ) -> List[Dict[str, Any]]:
         selector: Dict[str, Any] = {"domain": domain}
+        # The review queue: raw entries, and others past their review date.
+        # Chosen before the limit, or a domain's older reviewed entries fill
+        # the window and newer raw ones never reach the Review tab.
+        today = datetime.now(timezone.utc).date().isoformat()
         for key, value in (filters or {}).items():
             if key not in FILTER_FIELDS:
                 raise ValueError(f"cannot filter on {key!r}")
@@ -117,6 +122,11 @@ class MemoryIndex:
             if due_by is not None:
                 if not row.get("review_by") or row["review_by"] > due_by.isoformat():
                     continue
+            if review_queue and not (
+                (row.get("trust_tier") or "raw") == "raw"
+                or (row.get("review_by") and row["review_by"] <= today)
+            ):
+                continue
             score = 0
             if terms:
                 words = set(_WORD_RE.findall(

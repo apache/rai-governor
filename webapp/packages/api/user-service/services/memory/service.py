@@ -160,11 +160,12 @@ class MemoryService:
         limit: int = 20,
         include_inactive: bool = False,
         oldest_first: bool = False,
+        review_queue: bool = False,
     ) -> List[Dict[str, Any]]:
         """Summaries only, never bodies."""
         rows = await asyncio.to_thread(
             self.index.search,
-            domain, query, filters, due_by, include_inactive, limit, oldest_first,
+            domain, query, filters, due_by, include_inactive, limit, oldest_first, review_queue,
         )
         return [_summary(r) for r in rows]
 

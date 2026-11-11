@@ -129,11 +129,13 @@ async def search(
     order: str = Query("newest", pattern="^(newest|oldest)$"),
     limit: int = Query(20, ge=1, le=1000),
     run: Optional[str] = Query(None, max_length=64),
+    queue: bool = False,
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
     """include_inactive adds demoted and superseded entries; order=oldest is the review queue's;
-    run limits it to the entries one run wrote."""
+    run limits it to the entries one run wrote; queue keeps only what's waiting for review
+    (raw, or past its review date)."""
     filters: Dict[str, Any] = {}
     if run:
         filters["run"] = run
@@ -143,7 +145,7 @@ async def search(
         filters["trust_tier"] = trust_tier
     hits = await get_memory_service(db).search(
         _domain(domain, user), q, filters, due_by, limit,
-        include_inactive=include_inactive, oldest_first=order == "oldest",
+        include_inactive=include_inactive, oldest_first=order == "oldest", review_queue=queue,
     )
     return {"domain": domain, "query": q, "hits": hits}
 

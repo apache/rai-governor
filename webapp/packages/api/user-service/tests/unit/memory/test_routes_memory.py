@@ -62,3 +62,27 @@ def test_multiline_summary_is_rejected(client):
     client.user["is_site_admin"] = True
     r = client.post("/memory/dom-scan/entries", json={**BODY, "summary": "a\nb"})
     assert r.status_code == 422
+
+
+def test_the_review_queue_is_chosen_before_the_limit(client):
+    """250 older reviewed entries and one newer raw one: the oldest 200 of
+    everything holds only reviewed ones, so the Review tab showed nothing.
+    The queue keeps raw and overdue entries before it counts."""
+    from datetime import date, timedelta
+    from services.memory.index import INDEX_DB
+    db = client.app.dependency_overrides[get_db]()
+    later = (date.today() + timedelta(days=60)).isoformat()
+    past = (date.today() - timedelta(days=3)).isoformat()
+    for i in range(250):
+        db.save(INDEX_DB, f"kept-{i:03d}", {"_id": f"kept-{i:03d}", "id": f"kept-{i:03d}", "domain": "dom-scan",
+                                             "trust_tier": "curated", "review_by": later,
+                                             "created": f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}"})
+    db.save(INDEX_DB, "overdue", {"_id": "overdue", "id": "overdue", "domain": "dom-scan", "trust_tier": "verified",
+                                  "review_by": past, "created": "2026-02-01T00:00:00"})
+    db.save(INDEX_DB, "new-raw", {"_id": "new-raw", "id": "new-raw", "domain": "dom-scan", "trust_tier": "raw",
+                                  "created": "2026-03-01T00:00:00"})
+    client.user["uid"] = "writer"
+    old_way = client.get("/memory/dom-scan/search", params={"order": "oldest", "limit": 200}).json()["hits"]
+    assert {h["id"] for h in old_way}.isdisjoint({"overdue", "new-raw"})
+    queue = client.get("/memory/dom-scan/search", params={"order": "oldest", "queue": "true", "limit": 1000}).json()["hits"]
+    assert [h["id"] for h in queue] == ["overdue", "new-raw"]

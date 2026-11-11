@@ -135,7 +135,9 @@ export default function ReviewTab({ domain, kind, you, initialEntry, onReviewed 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const out = await memoryService.search(domain, { order: 'oldest', limit: 200 });
+      // Only what's waiting for review, chosen on the server: the oldest 200
+      // of everything could be all reviewed entries in a busy domain.
+      const out = await memoryService.search(domain, { order: 'oldest', queue: true, limit: 1000 });
       setRows(out.hits);
     } catch (e) {
       setError(e.message);
@@ -172,7 +174,20 @@ export default function ReviewTab({ domain, kind, you, initialEntry, onReviewed 
     setSelected(nextId);
   };
 
-  const current = (rows || []).find((r) => r.id === selected);
+  // An entry opened by link may not be in the queue (kept, not yet due):
+  // read it on its own so it can still be decided on.
+  const [linked, setLinked] = useState(null);
+  const inRows = (rows || []).find((r) => r.id === selected);
+  useEffect(() => {
+    if (!rows || !selected || inRows) { setLinked(null); return undefined; }
+    let live = true;
+    memoryService.get(selected).then(
+      (out) => { if (live) setLinked({ ...out.frontmatter, id: out.frontmatter.id || selected }); },
+      () => { if (live) setLinked(null); },
+    );
+    return () => { live = false; };
+  }, [rows, selected, inRows]);
+  const current = inRows || (linked?.id === selected ? linked : null);
 
   if (rows === null) {
     return <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}><CircularProgress size={28} /></Box>;
