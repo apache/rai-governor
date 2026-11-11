@@ -48,16 +48,7 @@ const SavedAgentsPage = () => {
         setLoading(true);
         setError(null);
         const data = await agentService.getAgents();
-        const withDeployment = await Promise.all(
-          data.map(async (agent) => {
-            try {
-              const deployment = await agentService.getDeployment(agent._id);
-              return { ...agent, isDeployed: deployment?.is_deployed, deployedName: deployment?.friendly_name };
-            } catch {
-              return { ...agent, isDeployed: false };
-            }
-          })
-        );
+        const withDeployment = await agentService.withDeploymentStatus(data);
         setAgents(
           withDeployment.sort((a, b) =>
             (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })

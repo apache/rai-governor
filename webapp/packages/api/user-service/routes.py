@@ -264,7 +264,7 @@ def read_root():
 
 
 @router.post("/log/client", status_code=202)
-async def log_client_event(
+def log_client_event(
     payload: ClientLogPayload,
     request: Request,
     logger: ObservabilityService = Depends(get_logger)
@@ -453,7 +453,7 @@ def get_effective_api_key(
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest, req: Request, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
+def chat(request: ChatRequest, req: Request, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
     """Submit a chat request and get a ticket ID"""
     if request.provider == "gofannon":
         # provider "gofannon" runs a deployed agent's code (ISSUE-023).
@@ -478,7 +478,7 @@ def _require_owner(doc: dict, user: dict, what: str) -> None:
 
 
 @router.get("/chat/{ticket_id}")
-async def get_chat_status(ticket_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+def get_chat_status(ticket_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Get the status and result of a chat request"""
     try:
         ticket_data = db.get("tickets", ticket_id)
@@ -496,7 +496,7 @@ async def get_chat_status(ticket_id: str, db: DatabaseService = Depends(get_db),
 
 
 @router.post("/sessions/{session_id}/config")
-async def update_session_config(session_id: str, config: ProviderConfig, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+def update_session_config(session_id: str, config: ProviderConfig, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Update session configuration"""
     try:
         session_doc = db.get("sessions", session_id)
@@ -517,7 +517,7 @@ async def update_session_config(session_id: str, config: ProviderConfig, db: Dat
 
 
 @router.get("/sessions/{session_id}/config")
-async def get_session_config(session_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+def get_session_config(session_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Get session configuration"""
     session_doc = db.get("sessions", session_id)
     _require_owner(session_doc, user, "Session")
@@ -525,7 +525,7 @@ async def get_session_config(session_id: str, db: DatabaseService = Depends(get_
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
+def delete_session(session_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_current_user)):
     """Delete a session"""
     _require_owner(db.get("sessions", session_id), user, "Session")
     db.delete("sessions", session_id)
@@ -538,7 +538,7 @@ def health_check():
 
 
 @router.post("/agents", response_model=Agent, status_code=201)
-async def create_agent(
+def create_agent(
     request: CreateAgentRequest,
     req: Request,
     db: DatabaseService = Depends(get_db),
@@ -576,7 +576,7 @@ async def list_agents(
 
 
 @router.get("/agents/{agent_id}", response_model=Agent)
-async def get_agent(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def get_agent(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Retrieves a specific agent by its ID."""
     agent_doc = db.get("agents", agent_id)
     return Agent(**agent_doc)
@@ -624,7 +624,7 @@ async def delete_agent(
 
 
 @router.put("/agents/{agent_id}", response_model=Agent)
-async def update_agent(
+def update_agent(
     agent_id: str,
     request: UpdateAgentRequest,
     req: Request,
@@ -706,15 +706,15 @@ async def undeploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_
 
 
 @router.get("/agents/{agent_id}/deployment")
-async def get_agent_deployment_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def get_agent_deployment_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Checks if an agent is deployed and returns its public-facing name."""
-    return await get_agent_deployment(agent_id, db)
+    return get_agent_deployment(agent_id, db)
 
 
 @router.get("/deployments", response_model=List[DeployedApi])
-async def list_deployments_route(db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def list_deployments_route(db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Lists all deployed agents/APIs with their relevant details."""
-    deployments = await list_deployments_logic(db)
+    deployments = list_deployments_logic(db)
     return [DeployedApi(**dep) for dep in deployments]
 
 
@@ -1154,7 +1154,7 @@ def _run_idle_seconds(record) -> Optional[float]:
 
 
 @router.get("/runs")
-async def list_runs(
+def list_runs(
     user: dict = Depends(get_current_user),
     agent_id: Optional[str] = None,
     project: Optional[str] = None,
@@ -1185,7 +1185,7 @@ async def list_runs(
 
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: str, user: dict = Depends(get_current_user)):
+def get_run(run_id: str, user: dict = Depends(get_current_user)):
     """Fetch a run's full state. Returns 404 if not found or not owned."""
     from services.run_registry import get_run_registry
     registry = get_run_registry()
@@ -1364,7 +1364,7 @@ async def _follow_stored_run(registry, run_id: str):
 
 
 @router.post("/runs/{run_id}/stop", status_code=202)
-async def stop_run(
+def stop_run(
     run_id: str,
     user: dict = Depends(get_current_user),
 ):
@@ -1808,7 +1808,7 @@ async def generate_demo_app_code(request: GenerateDemoCodeRequest, user: dict = 
 
 
 @router.post("/demos", response_model=DemoApp, status_code=201)
-async def create_demo_app(request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def create_demo_app(request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Saves a new demo app configuration."""
     demo_app_data = request.model_dump(by_alias=True)
     demo_app = DemoApp(**demo_app_data)
@@ -1826,14 +1826,14 @@ async def list_demo_apps(db = Depends(get_async_db), user: dict = Depends(get_au
 
 
 @router.get("/demos/{demo_id}", response_model=DemoApp)
-async def get_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def get_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Retrieves a specific demo app."""
     doc = db.get("demos", demo_id)
     return DemoApp(**doc)
 
 
 @router.put("/demos/{demo_id}", response_model=DemoApp)
-async def update_demo_app(demo_id: str, request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def update_demo_app(demo_id: str, request: CreateDemoAppRequest, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Updates an existing demo app."""
     demo_app_data = request.model_dump(by_alias=True)
     updated_model = DemoApp(_id=demo_id, **demo_app_data)
@@ -1844,7 +1844,7 @@ async def update_demo_app(demo_id: str, request: CreateDemoAppRequest, db: Datab
 
 
 @router.delete("/demos/{demo_id}", status_code=204)
-async def delete_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def delete_demo_app(demo_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Deletes a demo app."""
     db.delete("demos", demo_id)
     return
@@ -1938,7 +1938,7 @@ async def list_data_store_namespaces(
 
 
 @router.get("/data-store/namespaces/{namespace:path}/records", response_model=List[DataStoreRecord])
-async def list_records(
+def list_records(
     namespace: str,
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -1956,7 +1956,7 @@ async def list_records(
 
 
 @router.get("/data-store/namespaces/{namespace:path}/records/{key:path}", response_model=DataStoreRecord)
-async def get_record(
+def get_record(
     namespace: str,
     key: str,
     store: DataStoreService = Depends(_get_data_store_dep),
@@ -1975,7 +1975,7 @@ async def get_record(
 # also matches ".../records" and ".../records/<key>", and FastAPI takes the
 # first route that matches.
 @router.get("/data-store/namespaces/{namespace:path}", response_model=NamespaceStats)
-async def get_namespace_stats(
+def get_namespace_stats(
     namespace: str,
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_current_user),
@@ -1991,7 +1991,7 @@ async def get_namespace_stats(
 
 
 @router.put("/data-store/namespaces/{namespace:path}/records/{key:path}", response_model=DataStoreRecord)
-async def set_record(
+def set_record(
     namespace: str,
     key: str,
     request: SetRecordRequest,
@@ -2015,7 +2015,7 @@ async def set_record(
 
 
 @router.delete("/data-store/namespaces/{namespace:path}/records/{key:path}", status_code=204)
-async def delete_record(
+def delete_record(
     namespace: str,
     key: str,
     store: DataStoreService = Depends(_get_data_store_dep),
@@ -2031,7 +2031,7 @@ async def delete_record(
 
 
 @router.delete("/data-store/namespaces/{namespace:path}", response_model=ClearNamespaceResponse)
-async def clear_namespace(
+def clear_namespace(
     namespace: str,
     store: DataStoreService = Depends(_get_data_store_dep),
     user: dict = Depends(get_current_user),

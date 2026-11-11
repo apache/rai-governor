@@ -9,7 +9,7 @@ import HomePage from './HomePage';
 
 vi.mock('../components/RunningJobsModule', () => ({ default: () => null }));
 vi.mock('../services/agentService', () => ({
-  default: { getAgents: vi.fn(() => Promise.resolve([])), getDeployment: vi.fn() },
+  default: { getAgents: vi.fn(() => Promise.resolve([])), getDeployment: vi.fn(), withDeploymentStatus: vi.fn((a) => Promise.resolve(a)) },
 }));
 vi.mock('../services/demoService', () => ({
   default: { getDemos: vi.fn(() => Promise.resolve([])) },

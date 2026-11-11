@@ -19,6 +19,7 @@ Expiry is a hard wall: the ``expires_at`` field is checked on every
 access, and expired sessions are returned as "not authenticated" even
 if the cookie hasn't been cleared on the client.
 """
+import asyncio
 import secrets
 from datetime import timedelta
 from typing import List, Optional, Tuple
@@ -104,7 +105,14 @@ class SessionService:
         expired, or malformed sessions — never raises.
 
         Expired sessions are also deleted as a best-effort cleanup.
+
+        Every request makes this lookup (the observability middleware,
+        get_current_user, /auth/me), and the database client blocks, so it
+        runs on a worker thread rather than holding the event loop.
         """
+        return await asyncio.to_thread(self.get_by_id_sync, sid)
+
+    def get_by_id_sync(self, sid: Optional[str]) -> Optional[Session]:
         if not sid:
             return None
         try:

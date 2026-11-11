@@ -72,7 +72,7 @@ def _pmc(user: dict, project: str) -> str:
 
 
 @router.get("")
-async def list_for_project(
+def list_for_project(
     project: str,
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -108,25 +108,25 @@ async def list_for_project(
 # The /admin routes come before /{workload_id}/...: "PUT /admin/add" must
 # reach change(), not set_page_defaults() for a workload called "admin".
 @router.get("/admin")
-async def list_all(user: dict = Depends(_site_admin), db=Depends(get_db)) -> Dict[str, Any]:
+def list_all(user: dict = Depends(_site_admin), db=Depends(get_db)) -> Dict[str, Any]:
     on_pages = ws.adopters(db)
     return {"workloads": [{**ws.admin_view(w), "addedTo": on_pages.get(w.id, [])} for w in ws.list_workloads(db)]}
 
 
 @router.post("/admin", status_code=201)
-async def publish(body: WorkloadBody, user: dict = Depends(_site_admin), db=Depends(get_db)):
+def publish(body: WorkloadBody, user: dict = Depends(_site_admin), db=Depends(get_db)):
     _check_deployment(db, body.deployment)
     return ws.admin_view(ws.create_workload(db, body, user["uid"]))
 
 
 @router.put("/admin/{workload_id}")
-async def change(workload_id: str, body: WorkloadBody, user: dict = Depends(_site_admin), db=Depends(get_db)):
+def change(workload_id: str, body: WorkloadBody, user: dict = Depends(_site_admin), db=Depends(get_db)):
     _check_deployment(db, body.deployment)
     return ws.admin_view(ws.update_workload(db, workload_id, body))
 
 
 @router.delete("/admin/{workload_id}", status_code=204)
-async def unpublish(workload_id: str, user: dict = Depends(_site_admin), db=Depends(get_db)):
+def unpublish(workload_id: str, user: dict = Depends(_site_admin), db=Depends(get_db)):
     ws.delete_workload(db, workload_id)
 
 
@@ -140,7 +140,7 @@ def _check_deployment(db, name: str) -> None:
 
 
 @router.post("/{workload_id}/add", status_code=201)
-async def add_to_page(
+def add_to_page(
     workload_id: str,
     body: AddBody,
     user: dict = Depends(get_current_user),
@@ -154,7 +154,7 @@ async def add_to_page(
 
 
 @router.put("/{workload_id}/add")
-async def set_page_defaults(
+def set_page_defaults(
     workload_id: str,
     body: AddBody,
     user: dict = Depends(get_current_user),
@@ -166,7 +166,7 @@ async def set_page_defaults(
 
 
 @router.delete("/{workload_id}/add", status_code=204)
-async def remove_from_page(
+def remove_from_page(
     workload_id: str,
     project: str,
     user: dict = Depends(get_current_user),
@@ -178,7 +178,7 @@ async def remove_from_page(
 
 
 @router.get("/projects")
-async def my_projects(
+def my_projects(
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
@@ -196,7 +196,7 @@ async def my_projects(
 
 
 @router.get("/{workload_id}")
-async def get_one(
+def get_one(
     workload_id: str,
     project: str,
     user: dict = Depends(get_current_user),

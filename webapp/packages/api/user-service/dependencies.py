@@ -842,7 +842,7 @@ async def undeploy_agent(agent_id: str, db: DatabaseService):
             raise
 
 
-async def get_agent_deployment(agent_id: str, db: DatabaseService):
+def get_agent_deployment(agent_id: str, db: DatabaseService):
     agent_doc = db.get("agents", agent_id)
     agent = Agent(**agent_doc)
     friendly_name = agent.friendly_name
@@ -994,15 +994,19 @@ async def build_agent_chain(
     return {"root": root_agent_id, "nodes": nodes, "edges": edges}
 
 
-async def list_deployments(db: DatabaseService):
+def list_deployments(db: DatabaseService):
     try:
         all_deployments_docs = db.list_all("deployments")
+        # Every agent in one read, not one read per deployment.
+        agents_by_id = {d.get("_id"): d for d in db.list_all("agents")}
         deployment_infos = []
         for dep_doc in all_deployments_docs:
             dep_id = dep_doc.get("_id")
             agent_id = dep_doc.get("agentId")
             try:
-                agent_doc = db.get("agents", agent_id)
+                agent_doc = agents_by_id.get(agent_id)
+                if agent_doc is None:
+                    raise HTTPException(status_code=404, detail="agent not found")
                 agent = Agent(**agent_doc)
                 dep_info = {
                     "friendlyName": dep_id,

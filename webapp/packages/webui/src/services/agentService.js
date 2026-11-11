@@ -376,6 +376,20 @@ class AgentService {
     }
   }    
   
+  // Marks each agent deployed or not, from one GET /deployments rather than
+  // a GET /agents/{id}/deployment per agent (64 calls for 64 agents).
+  async withDeploymentStatus(agents) {
+    let byAgent = new Map();
+    try {
+      byAgent = new Map((await this.getDeployments()).map((d) => [d.agentId, d.friendlyName]));
+    } catch {
+      // Unknown: show them as not deployed, as a failed per-agent call did.
+    }
+    return agents.map((agent) => (byAgent.has(agent._id)
+      ? { ...agent, isDeployed: true, deployedName: byAgent.get(agent._id) }
+      : { ...agent, isDeployed: false }));
+  }
+
   async getDeployments() {
     try {
       const authHeaders = await this._getAuthHeaders();

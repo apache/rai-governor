@@ -111,7 +111,7 @@ async def import_from_upload(
 
 
 @router.get("/agents/{agent_id}/export")
-async def export_pipeline(
+def export_pipeline(
     agent_id: str,
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_author_user),
