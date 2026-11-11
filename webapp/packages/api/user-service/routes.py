@@ -1863,50 +1863,6 @@ def _get_data_store_dep(db: DatabaseService = Depends(get_db)) -> DataStoreServi
     return get_data_store_service(db)
 
 
-# What namespace stats read of each record: never the value, which for a
-# downloaded repository is every file in it. Reading values here pulled
-# whole data stores from CouchDB on each home page load (ISSUE-034).
-STATS_FIELDS = ["namespace", "sizeBytes", "createdByAgent", "lastAccessedByAgent", "updatedAt"]
-
-
-def _namespace_stats_from_docs(docs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Aggregate record docs (STATS_FIELDS of them) into per-namespace stats.
-
-    Returned shape:
-      { namespace: {recordCount, sizeBytes, agents, updatedAt} }
-
-    Agents are the deduped union of createdByAgent and lastAccessedByAgent
-    across every record. sizeBytes is a JSON-size estimate — cheap to compute
-    and good enough for the UI's "1.2 MB" chips.
-    """
-    from services.data_store_service import value_size
-    buckets: Dict[str, Dict[str, Any]] = {}
-    for doc in docs:
-        ns = doc.get("namespace") or "default"
-        b = buckets.setdefault(ns, {
-            "recordCount": 0, "sizeBytes": 0, "agents": set(), "updatedAt": None,
-        })
-        b["recordCount"] += 1
-        # Stored at write time. A record from before that has none; it
-        # counts as its value's size when the value was read, else 0.
-        if doc.get("sizeBytes") is not None:
-            b["sizeBytes"] += doc["sizeBytes"]
-        elif "value" in doc:
-            b["sizeBytes"] += value_size(doc.get("value"))
-        for agent_field in ("createdByAgent", "lastAccessedByAgent"):
-            v = doc.get(agent_field)
-            if v:
-                b["agents"].add(v)
-        updated = doc.get("updatedAt")
-        if updated and (b["updatedAt"] is None or updated > b["updatedAt"]):
-            b["updatedAt"] = updated
-    # Convert sets to sorted lists for serialization stability
-    return {
-        ns: {**b, "agents": sorted(b["agents"])}
-        for ns, b in buckets.items()
-    }
-
-
 def _store_owner(user: dict, project: Optional[str], write: bool) -> str:
     """Whose data-store records a request reads or changes: the caller's own,
     or with ``?project=<name>`` that project's (ISSUE-002). Members read a
@@ -1928,8 +1884,7 @@ async def list_data_store_namespaces(
 ):
     """List every namespace with aggregate stats for the current user."""
     user_id = _store_owner(user, project, write=False)
-    all_docs = await db.find("agent_data_store", {"userId": user_id}, fields=STATS_FIELDS, limit=None)
-    stats_map = _namespace_stats_from_docs(all_docs)
+    stats_map = await db.namespace_stats(user_id)
     namespaces = [
         NamespaceStats(namespace=ns, **data)
         for ns, data in sorted(stats_map.items())
@@ -1989,9 +1944,7 @@ def get_namespace_stats(
 ):
     """Stats for a single namespace (record count, size, agents, last update)."""
     user_id = _store_owner(user, project, write=False)
-    docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace},
-                   fields=STATS_FIELDS, limit=None)
-    stats = _namespace_stats_from_docs(docs)
+    stats = db.namespace_stats(user_id, namespace)
     if namespace not in stats:
         return NamespaceStats(namespace=namespace, recordCount=0, sizeBytes=0, agents=[])
     return NamespaceStats(namespace=namespace, **stats[namespace])

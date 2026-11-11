@@ -4,6 +4,58 @@ import couchdb
 from .base import DatabaseService
 
 
+# Data-store totals per namespace, kept by CouchDB as records change
+# (ISSUE-034). by_namespace: [owner, namespace] -> [count, bytes, latest
+# updatedAt]. agents: [owner, namespace, agent] -> count. Bump the version
+# when a function changes, and the design doc is rewritten.
+STATS_DDOC_ID = "_design/gofannon_stats"
+STATS_DDOC_VERSION = 1
+STATS_DDOC = {
+    "_id": STATS_DDOC_ID,
+    "language": "javascript",
+    "version": STATS_DDOC_VERSION,
+    "views": {
+        "by_namespace": {
+            "map": (
+                "function (doc) {\n"
+                "  if (doc.userId && doc.key !== undefined) {\n"
+                "    emit([doc.userId, doc.namespace || 'default'],\n"
+                "         [doc.sizeBytes || 0, doc.updatedAt || '']);\n"
+                "  }\n"
+                "}"
+            ),
+            "reduce": (
+                "function (keys, values, rereduce) {\n"
+                "  var n = 0, s = 0, u = '';\n"
+                "  for (var i = 0; i < values.length; i++) {\n"
+                "    var v = values[i];\n"
+                "    if (rereduce) { n += v[0]; s += v[1]; if (v[2] > u) u = v[2]; }\n"
+                "    else { n += 1; s += v[0]; if (v[1] > u) u = v[1]; }\n"
+                "  }\n"
+                "  return [n, s, u];\n"
+                "}"
+            ),
+        },
+        "agents": {
+            "map": (
+                "function (doc) {\n"
+                "  if (doc.userId && doc.key !== undefined) {\n"
+                "    var seen = {};\n"
+                "    [doc.createdByAgent, doc.lastAccessedByAgent].forEach(function (a) {\n"
+                "      if (a && !seen[a]) {\n"
+                "        seen[a] = true;\n"
+                "        emit([doc.userId, doc.namespace || 'default', a], null);\n"
+                "      }\n"
+                "    });\n"
+                "  }\n"
+                "}"
+            ),
+            "reduce": "_count",
+        },
+    },
+}
+
+
 class CouchDBService(DatabaseService):
     """CouchDB implementation of the DatabaseService."""
 
@@ -297,3 +349,45 @@ class CouchDBService(DatabaseService):
         except Exception as exc:
             print(f"CouchDB get_many failed, falling back to per-doc get: {exc}")
             return super().get_many(db_name, doc_ids)
+
+    def _ensure_stats_views(self, db) -> None:
+        if getattr(self, "_stats_views_ready", False):
+            return
+        current = db.get(STATS_DDOC_ID)
+        if not current or current.get("version") != STATS_DDOC_VERSION:
+            doc = dict(STATS_DDOC)
+            if current:
+                doc["_rev"] = current["_rev"]
+            try:
+                db.save(doc)
+            except couchdb.http.ResourceConflict:
+                pass  # another worker wrote it
+        self._stats_views_ready = True
+
+    def namespace_stats(self, user_id: str, namespace: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+        """Totals from the gofannon_stats views: a row per namespace, not a
+        row per record. The first query after the views are created waits
+        while CouchDB indexes every record; after that it's immediate."""
+        from services.data_store_stats import DATA_STORE_DB
+        try:
+            db = self._get_or_create_db(DATA_STORE_DB)
+            self._ensure_stats_views(db)
+            if namespace is None:
+                lo, hi = [user_id], [user_id, {}]
+            else:
+                lo, hi = [user_id, namespace], [user_id, namespace, {}]
+            out: Dict[str, Dict[str, Any]] = {}
+            for row in db.view("gofannon_stats/by_namespace", group_level=2, startkey=lo, endkey=hi):
+                count, size, updated = row.value
+                out[row.key[1]] = {"recordCount": count, "sizeBytes": size,
+                                   "agents": [], "updatedAt": updated or None}
+            for row in db.view("gofannon_stats/agents", group_level=3, startkey=lo, endkey=hi):
+                ns = row.key[1]
+                if ns in out:
+                    out[ns]["agents"].append(row.key[2])
+            for v in out.values():
+                v["agents"].sort()
+            return out
+        except Exception as e:
+            print(f"namespace_stats: views failed ({type(e).__name__}: {e}); totalling records instead")
+            return super().namespace_stats(user_id, namespace)

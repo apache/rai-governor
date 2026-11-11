@@ -60,6 +60,13 @@ class DatabaseService(abc.ABC):
                     break
         return results
 
+    def namespace_stats(self, user_id: str, namespace: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+        """Data-store totals per namespace for one owner: {namespace:
+        {recordCount, sizeBytes, agents, updatedAt}}. Backends that can keep
+        them precomputed override this (CouchDB views)."""
+        from services.data_store_stats import totals_by_find
+        return totals_by_find(self, user_id, namespace)
+
     def ensure_index(
         self,
         db_name: str,
