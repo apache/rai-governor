@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { AuthContext } from '../contexts/AuthContextValue';
+import agentService from '../services/agentService';
+import demoService from '../services/demoService';
 import HomePage from './HomePage';
 
 vi.mock('../components/RunningJobsModule', () => ({ default: () => null }));
@@ -26,5 +29,31 @@ describe('HomePage', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /^import$/i }));
     expect(screen.getByRole('dialog')).toHaveTextContent('import dialog');
+  });
+
+  const at = (user) => render(
+    <AuthContext.Provider value={{ user }}>
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/projects" element={<div>workloads page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </AuthContext.Provider>,
+  );
+
+  it('sends someone who cannot author to Workloads, without asking for agents or demos', async () => {
+    agentService.getAgents.mockClear();
+    demoService.getDemos.mockClear();
+    at({ uid: 'asf:alice', canAuthor: false });
+    expect(await screen.findByText('workloads page')).toBeInTheDocument();
+    expect(agentService.getAgents).not.toHaveBeenCalled();
+    expect(demoService.getDemos).not.toHaveBeenCalled();
+  });
+
+  it('shows authors the dashboard', async () => {
+    at({ uid: 'asf:akm', canAuthor: true });
+    expect(await screen.findByRole('button', { name: /^import$/i })).toBeInTheDocument();
+    expect(screen.queryByText('workloads page')).toBeNull();
   });
 });

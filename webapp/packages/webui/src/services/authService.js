@@ -44,7 +44,7 @@ const sessionAuth = {
   },
 
   _buildUser(me) {
-    // me shape: {uid, displayName, email, providerType, workspaces, isSiteAdmin}
+    // me shape: {uid, displayName, email, providerType, workspaces, isSiteAdmin, canAuthor}
     // Returned object mimics the Firebase user shape so existing code
     // that reads user.uid / user.email / user.displayName /
     // user.getIdToken() keeps working.
@@ -55,6 +55,9 @@ const sessionAuth = {
       providerType: me.providerType,
       workspaces: me.workspaces || [],
       isSiteAdmin: !!me.isSiteAdmin,
+      // May use agents, pipelines, deployments and demo apps. An API too
+      // old to say leaves it undefined, which pages read as yes.
+      canAuthor: me.canAuthor,
       // No bearer token in session mode — the cookie handles it.
       // Resolving to null makes the existing getIdToken-or-skip logic
       // in agentService / apiClient / dataStoreService cleanly fall

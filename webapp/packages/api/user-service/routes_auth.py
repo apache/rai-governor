@@ -19,6 +19,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from auth import DEV_STUB_ALLOWED_ENVS, get_registry
+from auth.agent_exec import can_execute_agent_code
 from auth.base import LoginAllow, LoginDeny
 from config import settings
 from dependencies import get_db
@@ -327,6 +328,8 @@ async def get_me(
         provider_type=session.provider_type,
         workspaces=session.workspaces,
         is_site_admin=session.is_site_admin,
+        can_author=can_execute_agent_code(
+            {"uid": session.user_uid, "is_site_admin": session.is_site_admin}),
     )
 
 

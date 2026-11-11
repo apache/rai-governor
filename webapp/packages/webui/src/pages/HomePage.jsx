@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import RunningJobsModule from '../components/RunningJobsModule';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { AuthContext } from '../contexts/AuthContextValue';
 import {
   Box,
   Typography,
@@ -31,7 +32,7 @@ import PipelineImportDialog from '../components/PipelineImportDialog';
 import demoService from '../services/demoService';
 import dataStoreService from '../services/dataStoreService';
 
-const HomePage = () => {
+const Dashboard = () => {
   const navigate = useNavigate();
   const [agents, setAgents] = useState([]);
   const [demoApps, setDemoApps] = useState([]);
@@ -548,6 +549,16 @@ const HomePage = () => {
       />
     </Box>
   );
+};
+
+// The dashboard is agents, demo apps and data stores: authors' tools. Anyone
+// else (canAuthor false) starts on Workloads, and the dashboard's calls,
+// which the API would refuse, are never made. Undefined (an older API, or
+// an auth mode without it) keeps the dashboard.
+const HomePage = () => {
+  const auth = useContext(AuthContext);
+  if (auth?.user?.canAuthor === false) return <Navigate to="/projects" replace />;
+  return <Dashboard />;
 };
 
 export default HomePage;

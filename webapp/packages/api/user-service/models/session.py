@@ -72,5 +72,10 @@ class SessionUser(BaseModel):
     provider_type: str = Field(..., alias="providerType")
     workspaces: List[WorkspaceMembership] = Field(default_factory=list)
     is_site_admin: bool = Field(default=False, alias="isSiteAdmin")
+    # May read and write agents, pipelines, deployments and demo apps, and
+    # run agent code (ISSUE-023): site admins, AGENT_EXEC_ALLOWED_UIDS, or
+    # everyone under AGENT_EXEC_ALLOWED=all_users. The UI leaves those
+    # pages' calls out for anyone else rather than collecting 403s.
+    can_author: bool = Field(default=False, alias="canAuthor")
 
     model_config = ConfigDict(populate_by_name=True)
