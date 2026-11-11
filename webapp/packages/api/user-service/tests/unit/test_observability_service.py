@@ -339,3 +339,38 @@ async def test_cloudwatch_write_runs_off_the_event_loop():
 
     assert seen["stream"] == "user-service"
     assert seen["thread"] != loop_thread, "blocking write ran on the event loop thread"
+
+
+def test_observability_log_writes_from_a_thread_with_no_event_loop(monkeypatch):
+    """Plain-def routes run on worker threads. log() there has no loop to
+    hand the write to; it used to raise 'no running event loop', which
+    500'd POST /log/client."""
+    import threading
+
+    monkeypatch.setattr(ObservabilityService, "_initialize_providers", lambda self: None)
+    provider = AsyncMock()
+    service = ObservabilityService()
+    service.providers = [provider]
+    errors = []
+
+    def worker():
+        try:
+            service.log(event_type="audit", message="from a thread")
+        except Exception as e:  # pragma: no cover - the failure being tested
+            errors.append(e)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert errors == []
+    provider.log.assert_awaited_once()
+    assert provider.log.await_args.args[0]["message"] == "from a thread"
+
+
+def test_client_log_route_works_as_a_plain_def(monkeypatch):
+    from app_factory import create_app
+    from routes import get_current_user
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: {"uid": "asf:akm"}
+    r = TestClient(app).post("/log/client", json={"eventType": "route-change", "message": "hi"})
+    assert r.status_code < 300, r.text

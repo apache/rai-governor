@@ -260,6 +260,15 @@ class ObservabilityService:
         # its exception is then never retrieved -- so a provider that fails
         # every time does so silently, and the only symptom surfaces somewhere
         # unrelated.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            # A plain-def route, or other code on a worker thread: no loop
+            # here to hand the write to, so make it now, on this thread.
+            asyncio.run(_log_async())
+            return
         task = asyncio.create_task(_log_async())
         self._pending_logs.add(task)
         task.add_done_callback(self._pending_logs.discard)

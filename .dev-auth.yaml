@@ -38,7 +38,12 @@ auth:
           - uid: site_admin_1
             display_name: Site Admin
             email: admin@dev.local
-            workspaces: []
+            # A committer on one project, as a real site admin usually is:
+            # View as a regular user then shows that project's page.
+            workspaces:
+              - id: project:whimsy
+                role: member
+                display_name: Apache Whimsy
   site_admins:
     - dev_stub:site_admin_1
   session_ttl_hours: 24
