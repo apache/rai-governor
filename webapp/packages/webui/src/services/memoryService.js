@@ -49,9 +49,10 @@ const memoryService = {
     enabledOnce = null;
   },
 
-  search(domain, { q, type, trustTier, dueBy, includeInactive, order, limit } = {}) {
+  search(domain, { q, type, trustTier, dueBy, includeInactive, order, limit, run } = {}) {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
+    if (run) params.set('run', run);
     if (type) params.set('type', type);
     if (trustTier) params.set('trust_tier', trustTier);
     if (dueBy) params.set('due_by', dueBy);
@@ -90,6 +91,16 @@ const memoryService = {
   // know about the run.
   forRun(runId) {
     return request(`/memory/by-run/${enc(runId)}`);
+  },
+
+  batchReview({ ids, action, why, reviewBy, restoreSuperseded }) {
+    const body = { ids, action, why: why || '', restore_superseded: !!restoreSuperseded };
+    if (reviewBy) body.review_by = reviewBy;
+    return request('/memory/reviews/batch', { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  undoBatch(batch) {
+    return request(`/memory/reviews/batch/${enc(batch)}/undo`, { method: 'POST' });
   },
 
   review(id, { action, why, reviewBy }) {

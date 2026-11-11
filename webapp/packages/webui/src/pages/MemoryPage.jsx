@@ -3,8 +3,9 @@
 // Lives at /memories, not /memory: the API owns /memory and nginx and the
 // vite proxy send everything under it to the API.
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Alert, Box, Chip, CircularProgress, MenuItem, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { Link as RouterLink, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Alert, Box, Chip, CircularProgress, Link, MenuItem, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import memoryService from '../services/memoryService';
 import BrowseTab from '../components/memory/BrowseTab';
 import AskTab from '../components/memory/AskTab';
@@ -12,11 +13,43 @@ import ReviewTab from '../components/memory/ReviewTab';
 
 const TABS = ['browse', 'ask', 'review'];
 
+// Which run the list is limited to, and a way back to it (B11).
+function RunBand({ runId, domain, onClear }) {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    let live = true;
+    memoryService.forRun(runId).then((o) => { if (live) setInfo(o); }, () => { if (live) setInfo({ run: { runId, visible: false }, domains: [] }); });
+    return () => { live = false; };
+  }, [runId]);
+  const run = info?.run;
+  const here = info?.domains.find((d) => d.domain === domain);
+  const status = { running: 'running', success: 'finished', error: 'failed', stopped: 'stopped' }[run?.status] || run?.status;
+  return (
+    <Paper variant="outlined" sx={{ px: 2, py: 1.25, mb: 2, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1.5 }}>
+      <Chip
+        label={`Run ${runId.slice(0, 8)}`} onDelete={onClear} deleteIcon={<CloseIcon aria-label="Clear the run filter" />}
+        sx={{ fontWeight: 600, bgcolor: '#f4f4f5', border: '1px solid #d4d4d8' }}
+      />
+      <Typography variant="body2" sx={{ flex: '1 1 360px', color: '#3f3f46' }}>
+        {run?.visible ? `${run.agentName}${run.project ? ` for ${run.project}` : ''} · ${status}` : 'A run you can\'t open'}
+        {here && ` · wrote ${here.entries} ${here.entries === 1 ? 'entry' : 'entries'} here`}
+      </Typography>
+      {run?.visible && (
+        <Link component={RouterLink} to={`/run/${encodeURIComponent(runId)}`} variant="body2" sx={{ color: '#18181b', fontWeight: 500 }}>
+          Open run on Workloads
+        </Link>
+      )}
+    </Paper>
+  );
+}
+
 export default function MemoryPage() {
   const navigate = useNavigate();
   const { domain: routeDomain } = useParams();
   const [params, setParams] = useSearchParams();
   const tab = TABS.includes(params.get('tab')) ? params.get('tab') : 'browse';
+  const run = params.get('run') || null;
+  const select = params.get('select') || null;
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
 
@@ -95,7 +128,20 @@ export default function MemoryPage() {
               )}
             />
           </Tabs>
-          {tab === 'browse' && <BrowseTab key={domain} domain={domain} />}
+          {run && tab === 'browse' && (
+            <RunBand runId={run} domain={domain} onClear={() => {
+              const p = new URLSearchParams(params);
+              p.delete('run');
+              p.delete('select');
+              setParams(p);
+            }} />
+          )}
+          {tab === 'browse' && (
+            <BrowseTab
+              key={`${domain}:${run || ''}`} domain={domain} run={run} select={select}
+              canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
+            />
+          )}
           {tab === 'ask' && <AskTab key={domain} domain={domain} />}
           {tab === 'review' && (
             <ReviewTab

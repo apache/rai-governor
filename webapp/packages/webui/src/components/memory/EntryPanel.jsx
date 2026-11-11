@@ -1,5 +1,6 @@
 // One entry read in full: provenance on top, then the body.
 import React, { useEffect, useState } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import { Alert, Box, CircularProgress, Paper, Typography } from '@mui/material';
 import memoryService from '../../services/memoryService';
 import { EntryBody, SourceLink, TrustDisc } from './memoryBits';
@@ -34,6 +35,19 @@ export function Provenance({ front, narrow = false }) {
       <Field label="Author"><code>{front.author}</code></Field>
       <Field label="Written">{shortDate(front.created)}</Field>
       {front.supersedes && <Field label="Supersedes"><code>{front.supersedes}</code></Field>}
+      {front.run && (
+        <Box sx={{ gridColumn: '1 / -1' }}>
+          <Field label="Written by run">
+            <RouterLink to={`/run/${encodeURIComponent(front.run)}`} style={{ color: 'inherit' }}>
+              {front.run.slice(0, 8)}
+            </RouterLink>
+            {' · '}
+            <RouterLink to={`/memories/${encodeURIComponent(front.domain)}?run=${encodeURIComponent(front.run)}`} style={{ color: 'inherit' }}>
+              everything it wrote here
+            </RouterLink>
+          </Field>
+        </Box>
+      )}
       {front.source?.length > 0 && (
         <Box sx={{ gridColumn: '1 / -1' }}>
           <Field label="From">
