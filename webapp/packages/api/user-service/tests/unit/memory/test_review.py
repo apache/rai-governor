@@ -3,7 +3,7 @@
 The rule that matters most: whoever wrote an entry cannot review it.
 """
 
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -103,7 +103,9 @@ def test_keep_moves_the_review_date_on(client):
     eid = _write(client)
     r = _review(client, "bob", eid, action="keep")
     assert r.status_code == 200
-    expected = (date.today() + timedelta(days=90)).isoformat()
+    # The service dates in UTC; the machine's local date is a day off for
+    # part of every day (4 pm to midnight in California).
+    expected = (datetime.now(timezone.utc).date() + timedelta(days=90)).isoformat()
     assert r.json()["frontmatter"]["review_by"] == expected
     assert r.json()["frontmatter"]["trust_tier"] == "raw"
 
