@@ -156,23 +156,49 @@ def test_per_event_message_truncated_when_too_large():
     assert len(ev["message"]) < len(huge)  # actually shrank
 
 
-def test_truncation_cap_appends_synthetic_event_and_drops_rest(monkeypatch):
-    # Lower the cap so we don't have to emit thousands of events.
-    monkeypatch.setattr("services.agent_trace.MAX_EVENTS_PER_TRACE", 5)
+def test_past_the_cap_the_trace_keeps_its_head_and_its_latest(monkeypatch):
+    # A long pipeline passes the cap in normal work: a page that reattaches
+    # must still see how the run began and where it is now.
+    monkeypatch.setattr("services.agent_trace.MAX_EVENTS_PER_TRACE", 10)
+    monkeypatch.setattr("services.agent_trace.HEAD_EVENTS_KEPT", 3)
     t = Trace()
-    t.agent_start(agent_name="alpha")
-    # Emit until past the cap.
+    for i in range(50):
+        t.stdout(f"line {i}")
+    msgs = [e.get("message") for e in t.events]
+    types = [e["type"] for e in t.events]
+    assert msgs[:3] == ["line 0", "line 1", "line 2"]
+    assert types[3] == "trace_truncated" and types.count("trace_truncated") == 1
+    assert msgs[4:] == [f"line {i}" for i in range(43, 50)]
+    assert "40 events not kept" in t.events[3]["message"]
+    assert len(t.events) == 11
+
+
+def test_events_are_numbered_past_the_cap(monkeypatch):
+    # A reader on another worker asks for what follows the last number it
+    # saw; the kept list stops growing at the cap, the numbers don't.
+    monkeypatch.setattr("services.agent_trace.MAX_EVENTS_PER_TRACE", 6)
+    monkeypatch.setattr("services.agent_trace.HEAD_EVENTS_KEPT", 2)
+    t = Trace()
+    for i in range(30):
+        t.stdout(f"line {i}")
+    assert t._seq == 30
+    assert [e.get("seq") for e in t.events][-3:] == [28, 29, 30]
+
+
+def test_live_events_keep_flowing_past_the_cap(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("services.agent_trace.MAX_EVENTS_PER_TRACE", 5)
+    monkeypatch.setattr("services.agent_trace.HEAD_EVENTS_KEPT", 2)
+    t = Trace()
+    q = asyncio.Queue()
+    t.attach_queue(q)
     for i in range(20):
         t.stdout(f"line {i}")
-
-    # First few got in; then a trace_truncated marker; nothing after.
-    types = [e["type"] for e in t.events]
-    assert "trace_truncated" in types
-    # No more than one trace_truncated.
-    assert types.count("trace_truncated") == 1
-    # Once truncated, no further events land.
-    truncated_idx = types.index("trace_truncated")
-    assert all(t == "trace_truncated" or t != "stdout" for t in types[truncated_idx + 1:])
+    sent = []
+    while not q.empty():
+        sent.append(q.get_nowait())
+    assert [e["message"] for e in sent if e["type"] == "stdout"] == [f"line {i}" for i in range(20)]
 
 
 # ---------------------------------------------------------------------

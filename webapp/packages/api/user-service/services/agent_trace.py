@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import threading
 import logging
 import os
 import sys
@@ -46,10 +47,14 @@ from typing import Any, Dict, List, Optional
 # memory or response size. 4 KB is generous for any single line.
 MAX_EVENT_MESSAGE_BYTES = 4096
 
-# Per-run total event cap. A single run that emits more than this many
-# events is almost certainly stuck in a loop. We append a synthetic
-# "trace truncated" event and silently discard the rest.
+# Per-run stored event cap. Past it the trace keeps its first
+# HEAD_EVENTS_KEPT events, one "trace_truncated" marker counting what was
+# dropped, and the latest events after that, so a page that reattaches sees
+# how the run began and where it is now. A long pipeline (ASVS: hours,
+# thousands of events) passes the cap in normal work. Live events always
+# reach subscribers: the cap bounds what is kept, not what is sent.
 MAX_EVENTS_PER_TRACE = 2000
+HEAD_EVENTS_KEPT = 300
 
 
 def _user_trace_enabled() -> bool:
@@ -83,6 +88,13 @@ class Trace:
     def __init__(self) -> None:
         self.events: List[Dict[str, Any]] = []
         self._truncated = False
+        self._dropped = 0
+        # Events appended so far, kept or not: each event carries its number
+        # (seq), so a reader that has seen up to N asks for what follows,
+        # which a count of kept events can't say once the cap drops some.
+        self._seq = 0
+        # The agent thread and to_thread workers both append.
+        self._lock = threading.RLock()
         # The registry run this trace belongs to, when there is one. Memory
         # entries the run writes carry it (B11).
         self.run_id: Optional[str] = None
@@ -133,21 +145,34 @@ class Trace:
         return self._stack[-1] if self._stack else "unknown"
 
     def append(self, event: Dict[str, Any]) -> None:
-        if self._truncated:
-            return
+        with self._lock:
+            self._append(event)
+
+    def _append(self, event: Dict[str, Any]) -> None:
+        self._seq += 1
+        event["seq"] = self._seq
+        head = min(HEAD_EVENTS_KEPT, max(MAX_EVENTS_PER_TRACE - 1, 0))
         if len(self.events) >= MAX_EVENTS_PER_TRACE:
-            trunc_event = {
-                "type": "trace_truncated",
-                "ts": _now_iso(),
-                "agent_name": self._current_agent(),
-                "depth": self._depth,
-                "source": "system",
-                "message": f"Trace exceeded {MAX_EVENTS_PER_TRACE} events; subsequent events dropped.",
-            }
-            self.events.append(trunc_event)
-            self._publish(trunc_event)
-            self._truncated = True
-            return
+            if not self._truncated:
+                self._truncated = True
+                self._marker = {
+                    "type": "trace_truncated",
+                    "ts": _now_iso(),
+                    "agent_name": self._current_agent(),
+                    "depth": self._depth,
+                    "source": "system",
+                    "message": "",
+                }
+                self.events.insert(head, self._marker)
+                self._publish(self._marker)
+            # Drop the oldest event after the marker; the head stays.
+            if len(self.events) > head + 1:
+                del self.events[head + 1]
+                self._dropped += 1
+            self._marker["message"] = (
+                f"{self._dropped} events not kept here: this trace keeps the first "
+                f"{head} and the latest {MAX_EVENTS_PER_TRACE - head}."
+            )
         self.events.append(event)
         self._publish(event)
 

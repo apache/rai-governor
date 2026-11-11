@@ -107,7 +107,7 @@ def test_a_stop_request_survives_a_checkpoint(setup):
     assert reg.checkpoint_events() == 1
     stored = db.stored(record.run_id)
     assert stored["stop_requested"] is True
-    assert stored["events"] == [{"n": 1}]
+    assert stored["events"] == [{"n": 1, "seq": 1}]  # numbered by the trace
 
 
 def test_completion_keeps_a_stop_request_made_elsewhere(setup):

@@ -91,6 +91,31 @@ async def test_stream_on_a_non_owning_worker_follows_the_run_to_done(registry):
 
 
 @pytest.mark.asyncio
+async def test_the_follower_keeps_up_past_the_cap(registry):
+    # Past the cap the kept list stays the same length while the run goes
+    # on: the follower goes by event numbers, not by count.
+    db, reg = registry
+    marker = {"type": "trace_truncated", "message": "dropped"}
+    _store(db, "r9", events=[{"n": 1, "seq": 1}, marker, {"n": 5, "seq": 5}])
+    polls = {"n": 0}
+    real_fetch = reg.fetch_persisted
+
+    def fetch(run_id):
+        polls["n"] += 1
+        if polls["n"] == 2:
+            _store(db, run_id, events=[{"n": 1, "seq": 1}, marker, {"n": 9, "seq": 9}])
+        if polls["n"] == 3:
+            _store(db, run_id, status="success", events=[{"n": 1, "seq": 1}, marker, {"n": 12, "seq": 12}])
+        return real_fetch(run_id)
+
+    reg.fetch_persisted = fetch
+    response = await routes.stream_run("r9", user={"uid": "u1"})
+    frames = _frames(await _collect(response))
+    traced = [d.get("n", d.get("type")) for name, d in frames if name == "trace"]
+    assert traced == [1, "trace_truncated", 5, 9, 12]
+
+
+@pytest.mark.asyncio
 async def test_a_run_closed_by_the_orphan_sweep_ends_the_stream(registry):
     db, reg = registry
     _store(db, "r2", events=[{"n": 1}])
@@ -138,7 +163,7 @@ def test_checkpoint_writes_events_only_and_keeps_a_stop_request(registry):
 
     assert reg.checkpoint_events() == 1
     stored = db.get(rr.RUN_REGISTRY_DB, record.run_id)
-    assert stored["events"] == [{"n": 1}]
+    assert stored["events"] == [{"n": 1, "seq": 1}]  # numbered by the trace
     assert stored["stop_requested"] is True
     assert reg.checkpoint_events() == 0  # nothing new
 

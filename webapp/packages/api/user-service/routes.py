@@ -762,18 +762,12 @@ async def run_agent_code_stream(
         "is_site_admin": bool(user.get("is_site_admin")),
     }
 
-    # Trace + queue. The queue is unbounded — emitters never block —
-    # because the alternative (drop events on slow consumer) is
-    # worse than memory pressure. The trace's own 2000-event cap
-    # is the real bound.
-    trace = Trace()
+    # The queue is unbounded: emitters never block, because the
+    # alternative (drop events on slow consumer) is worse than memory
+    # pressure. It is attached to the run record's trace below, with the
+    # current loop, so the agent\'s side-thread (Path A executor) routes
+    # put_nowait through it instead of corrupting the queue\'s waiters.
     queue: asyncio.Queue = asyncio.Queue()
-    # Pass the current loop into attach_queue so the agent\'s
-    # side-thread (Path A executor) can emit events into this queue
-    # via threadsafe routing. Without the loop arg, _publish would
-    # call put_nowait directly from the agent thread and corrupt
-    # the queue\'s asyncio waiters.
-    trace.attach_queue(queue, loop=asyncio.get_running_loop())
 
     # Register this run with the registry + cancel registry so the client 
     # can address it for stop. Stream's runId is emitted as the first SSE event 
@@ -785,16 +779,23 @@ async def run_agent_code_stream(
     from services.run_cancel_registry import publish as register_cancel_token
     from services.cancel_token import CancelToken, bind_token, AgentStopped
     from services.agent_executor import execute_in_thread
+    from services.log_redaction import redact_in_place
 
     _registry = get_run_registry()
     _run_record = _registry.new_record(
         user_id=user.get("uid") or "anonymous",
         agent_name=request.friendly_name or "sandbox_agent",
         agent_id=request.agent_id,
-        input_dict=request.input_dict,
+        # Stored and shown to the project's members: tokens redacted, as
+        # /rest/{name}/start does. The run itself gets the inputs as sent.
+        input_dict=redact_in_place(copy.deepcopy(request.input_dict)),
         project=project,
     )
-    trace.run_id = _run_record.run_id
+    # Emit into the record's own trace, so /runs/{id}/stream can replay it
+    # for a page that reattaches mid-run. A separate Trace here left the
+    # record empty until the run ended: a refresh showed nothing.
+    trace = _run_record.trace
+    trace.attach_queue(queue, loop=asyncio.get_running_loop())
     _cancel_token = CancelToken()
     register_cancel_token(_run_record.run_id, _cancel_token)
     bind_token(_cancel_token)
@@ -1309,6 +1310,7 @@ async def _follow_stored_run(registry, run_id: str):
     """
     yield f"event: run_id\ndata: {json.dumps({'runId': run_id})}\n\n"
     sent = 0
+    marker_sent = False
     since_beat = 0.0
     while True:
         try:
@@ -1327,9 +1329,23 @@ async def _follow_stored_run(registry, run_id: str):
             ) + "\n\n"
             return
         events = list(rec.trace.events)
-        for ev in events[sent:]:
-            yield f"event: trace\ndata: {json.dumps(ev, default=str)}\n\n"
-        sent = max(sent, len(events))
+        if any("seq" in ev for ev in events):
+            # Numbered events: send what follows the last one sent. The
+            # cap's marker has no number and is sent once.
+            for ev in events:
+                s = ev.get("seq")
+                if s is None:
+                    if not marker_sent:
+                        marker_sent = True
+                        yield f"event: trace\ndata: {json.dumps(ev, default=str)}\n\n"
+                elif s > sent:
+                    yield f"event: trace\ndata: {json.dumps(ev, default=str)}\n\n"
+                    sent = s
+        else:
+            # Runs stored before events were numbered.
+            for ev in events[sent:]:
+                yield f"event: trace\ndata: {json.dumps(ev, default=str)}\n\n"
+            sent = max(sent, len(events))
         if rec.status != "running":
             yield _done_frame(rec)
             return

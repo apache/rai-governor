@@ -172,8 +172,13 @@ class _FanoutTrace(Trace):
 
     def append(self, event: Dict[str, Any]) -> None:
         # Append to the immutable history first (parent stores in
-        # self.events), then fan out to subscribers.
+        # self.events); the parent publishes, and _publish fans out.
         super().append(event)
+
+    def _publish(self, event: Dict[str, Any]) -> None:
+        # Every published event reaches every subscriber, the cap's
+        # trace_truncated marker included.
+        super()._publish(event)
         for q, loop in list(self._subscribers.items()):
             if loop is not None:
                 # Route the put via the queue\'s owning loop. Safe
@@ -784,8 +789,11 @@ class RunRegistry:
         for record in list(self._records.values()):
             if record.status != "running" or not self.is_live_here(record):
                 continue
+            # Past the cap the kept list stops growing, so compare how many
+            # events were appended, not how many are kept.
+            seq = record.trace._seq
             events = list(record.trace.events)
-            if len(events) <= record._checkpointed_events:
+            if seq <= record._checkpointed_events:
                 continue
 
             def add_events(stored, record=record, events=events):
@@ -800,7 +808,7 @@ class RunRegistry:
                 print(f"[run_registry] event checkpoint failed for {record.run_id}: {e}", flush=True)
                 continue
             if saved:
-                record._checkpointed_events = len(events)
+                record._checkpointed_events = seq
                 written += 1
         return written
 
