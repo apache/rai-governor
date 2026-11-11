@@ -429,6 +429,7 @@ async def _execute_agent_code(
         is_site_admin=bool((user_basic_info or {}).get("is_site_admin")),
         user_service=user_service,
         project=project,
+        viewing_as_user=bool((user_basic_info or {}).get("viewing_as_user")),
     )
 
     # Entries this code writes to memory carry its registry run (B11).
@@ -516,6 +517,7 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
         "is_site_admin": bool(user.get("is_site_admin")),
+        "viewing_as_user": bool(user.get("viewing_as_user")),
     }
     try:
         # Update ticket status

@@ -325,16 +325,10 @@ def get_request_user_id(request: Request) -> str:
 
 
 def _session_to_user(session) -> Dict[str, Any]:
-    return {
-        "uid": session.user_uid,
-        "email": session.email,
-        "name": session.display_name,
-        "displayName": session.display_name,
-        "provider_type": session.provider_type,
-        "workspaces": [w.model_dump(by_alias=True) for w in session.workspaces],
-        "is_site_admin": session.is_site_admin,
-        "auth_mode": "session",
-    }
+    # The same user the routes build: get_current_user reuses this one, so
+    # a copy of its own here would keep site admin while viewing as a user.
+    from services.session_service import user_from_session
+    return user_from_session(session)
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):

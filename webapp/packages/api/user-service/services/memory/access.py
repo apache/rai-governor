@@ -53,7 +53,10 @@ def exists(domain: str) -> bool:
 
 
 def _shared_writer(user: Optional[dict]) -> bool:
-    return is_site_admin(user) or (user or {}).get("uid") in _csv("MEMORY_WRITERS")
+    if is_site_admin(user):
+        return True
+    # Viewing as a regular user drops MEMORY_WRITERS too.
+    return not (user or {}).get("viewing_as_user") and (user or {}).get("uid") in _csv("MEMORY_WRITERS")
 
 
 def can_read(user: Optional[dict], domain: str) -> bool:

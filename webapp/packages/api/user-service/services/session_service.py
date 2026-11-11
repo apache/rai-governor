@@ -134,6 +134,16 @@ class SessionService:
 
         return session
 
+    async def set_viewing_as_user(self, session: Session, on: bool) -> Session:
+        """Switch viewing as a regular user. Only a site admin may switch it
+        on; anyone may switch it off."""
+        if on and not session.is_site_admin:
+            raise HTTPException(status_code=403, detail="Only site admins can view as a regular user")
+        session.viewing_as_user = on
+        session.updated_at = naive_utc_now()
+        self.db.save(_SESSIONS_COLLECTION, session.id, session.model_dump(by_alias=True, mode="json"))
+        return session
+
     async def delete(self, sid: Optional[str]) -> None:
         """Log out / delete a session. Safe on missing sessions."""
         if not sid:
@@ -287,3 +297,22 @@ def _compute_diff(
 def get_session_service(db: DatabaseService) -> SessionService:
     """Factory function; mirrors other *_service modules' convention."""
     return SessionService(db)
+
+
+def user_from_session(session: Session) -> dict:
+    """The user every route sees for a session. Viewing as a regular user
+    takes site admin away here, the one place requests get it from."""
+    viewing = bool(session.viewing_as_user)
+    return {
+        "uid": session.user_uid,
+        "email": session.email,
+        "name": session.display_name,
+        "displayName": session.display_name,
+        "provider_type": session.provider_type,
+        "workspaces": [w.model_dump(by_alias=True) for w in session.workspaces],
+        "is_site_admin": bool(session.is_site_admin) and not viewing,
+        # Read by the uid allowlists (AGENT_EXEC_ALLOWED_UIDS, MEMORY_WRITERS),
+        # which also stop applying.
+        "viewing_as_user": viewing,
+        "auth_mode": "session",
+    }

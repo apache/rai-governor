@@ -13,6 +13,7 @@ import {
 import ProfileMenu from './ProfileMenu';
 import AnvilIcon from './AnvilIcon';
 import FloatingChat from './FloatingChat';
+import ViewAsBand from './ViewAsBand';
 import memoryService from '../services/memoryService';
 
 const Layout = ({ children }) => {
@@ -102,6 +103,7 @@ const Layout = ({ children }) => {
           pt: '56px', // Account for fixed AppBar
         }}
       >
+        <ViewAsBand />
         {children}
       </Box>
       <FloatingChat />

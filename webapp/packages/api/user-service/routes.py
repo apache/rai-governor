@@ -98,16 +98,8 @@ async def _verify_session_cookie(request: Request, sid: str) -> Optional[dict]:
     session = await svc.get_by_id(sid)
     if not session:
         return None
-    user = {
-        "uid": session.user_uid,
-        "email": session.email,
-        "name": session.display_name,
-        "displayName": session.display_name,
-        "provider_type": session.provider_type,
-        "workspaces": [w.model_dump(by_alias=True) for w in session.workspaces],
-        "is_site_admin": session.is_site_admin,
-        "auth_mode": "session",
-    }
+    from services.session_service import user_from_session
+    user = user_from_session(session)
     request.state.user = user
     return user
 
@@ -760,6 +752,7 @@ async def run_agent_code_stream(
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
         "is_site_admin": bool(user.get("is_site_admin")),
+        "viewing_as_user": bool(user.get("viewing_as_user")),
     }
 
     # The queue is unbounded: emitters never block, because the
@@ -1070,6 +1063,7 @@ async def start_agent_run(
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
         "is_site_admin": bool(user.get("is_site_admin")),
+        "viewing_as_user": bool(user.get("viewing_as_user")),
     }
 
     async def runner():
@@ -1520,6 +1514,7 @@ async def run_agent_code(
             "email": user.get("email"),
             "name": user.get("name") or user.get("displayName"),
             "is_site_admin": bool(user.get("is_site_admin")),
+            "viewing_as_user": bool(user.get("viewing_as_user")),
         }
         # Per-request trace. Lives only for this invocation; events
         # are collected as the agent runs and shipped back in the
@@ -1604,6 +1599,7 @@ async def run_deployed_agent_route(
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
         "is_site_admin": bool(user.get("is_site_admin")),
+        "viewing_as_user": bool(user.get("viewing_as_user")),
     }
     return await run_deployed_agent_logic(
         friendly_name, 
@@ -1728,6 +1724,7 @@ def start_deployment_run(
         "email": user.get("email"),
         "name": user.get("name") or user.get("displayName"),
         "is_site_admin": bool(user.get("is_site_admin")),
+        "viewing_as_user": bool(user.get("viewing_as_user")),
     }
 
     async def runner():
@@ -1798,6 +1795,7 @@ async def generate_demo_app_code(request: GenerateDemoCodeRequest, user: dict = 
             "email": user.get("email"),
             "name": user.get("name") or user.get("displayName"),
             "is_site_admin": bool(user.get("is_site_admin")),
+            "viewing_as_user": bool(user.get("viewing_as_user")),
         }
         code_response = await generate_demo_code(
             request,

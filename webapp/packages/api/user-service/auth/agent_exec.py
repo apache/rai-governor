@@ -34,5 +34,8 @@ def can_execute_agent_code(user: Optional[dict]) -> bool:
         return True
     if user.get("is_site_admin") is True:
         return True
+    # A site admin viewing as a regular user gets none of the uid list.
+    if user.get("viewing_as_user"):
+        return False
     uid = user.get("uid")
     return bool(uid) and uid in settings.AGENT_EXEC_ALLOWED_UIDS

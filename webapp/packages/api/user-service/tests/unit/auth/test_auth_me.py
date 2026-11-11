@@ -12,7 +12,8 @@ from routes_auth import get_me
 class _Sessions:
     def __init__(self, uid, site_admin):
         self.s = SimpleNamespace(user_uid=uid, display_name=uid, email=None, provider_type="dev_stub",
-                                 workspaces=[], is_site_admin=site_admin)
+                                 workspaces=[], is_site_admin=site_admin,
+                                 viewing_as_user=False)
 
     async def get_by_id(self, sid):
         return self.s

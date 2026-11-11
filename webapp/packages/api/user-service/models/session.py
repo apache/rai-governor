@@ -48,6 +48,11 @@ class Session(BaseModel):
     # allowlist revokes their site-admin powers at the next refresh.
     is_site_admin: bool = Field(default=False, alias="isSiteAdmin")
 
+    # A site admin looking at the site as a regular user: every request on
+    # this session drops site admin and the uid allowlists, leaving the
+    # LDAP project roles in workspaces. Lasts until switched off or logout.
+    viewing_as_user: bool = Field(default=False, alias="viewingAsUser")
+
     # Timestamps.
     created_at: datetime = Field(default_factory=naive_utc_now, alias="createdAt")
     updated_at: datetime = Field(default_factory=naive_utc_now, alias="updatedAt")
@@ -77,5 +82,10 @@ class SessionUser(BaseModel):
     # everyone under AGENT_EXEC_ALLOWED=all_users. The UI leaves those
     # pages' calls out for anyone else rather than collecting 403s.
     can_author: bool = Field(default=False, alias="canAuthor")
+    # Viewing as a regular user (isSiteAdmin and canAuthor are then what a
+    # regular user with these workspaces gets), and whether this person may
+    # switch that on: a real site admin.
+    viewing_as_user: bool = Field(default=False, alias="viewingAsUser")
+    can_view_as_user: bool = Field(default=False, alias="canViewAsUser")
 
     model_config = ConfigDict(populate_by_name=True)

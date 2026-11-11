@@ -54,6 +54,7 @@ class AgentMemory:
         is_site_admin: bool = False,
         user_service=None,
         project: Optional[str] = None,
+        viewing_as_user: bool = False,
     ) -> None:
         self.enabled = memory_enabled()
         self.project = project if project and access.project_of(project) else None
@@ -63,7 +64,9 @@ class AgentMemory:
             domains = [self.project] + access.open_domains()
             writable = [self.project]
         else:
-            shared_writer = is_site_admin or (user_id or "") in _csv("MEMORY_WRITERS")
+            # A site admin viewing as a regular user isn't a MEMORY_WRITER.
+            shared_writer = is_site_admin or (
+                not viewing_as_user and (user_id or "") in _csv("MEMORY_WRITERS"))
             domains = [d for d in access.shared_domains()
                        if shared_writer or d in access.open_domains()]
             writable = access.shared_domains() if shared_writer else []

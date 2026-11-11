@@ -11,12 +11,14 @@ This router is included by app_factory only when at least one auth
 provider is enabled (``ProviderRegistry.has_any()``). Pre-Phase-B
 deployments mount only ``routes.router`` with no auth routes.
 """
+import logging
 import os
 import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pydantic import BaseModel
 
 from auth import DEV_STUB_ALLOWED_ENVS, get_registry
 from auth.agent_exec import can_execute_agent_code
@@ -30,9 +32,10 @@ from models.auth import (
 )
 from models.session import SessionUser
 from services.database_service import DatabaseService
-from services.session_service import SessionService, get_session_service
+from services.session_service import SessionService, get_session_service, user_from_session
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -321,16 +324,45 @@ async def get_me(
     session = await session_svc.get_by_id(sid)
     if not session:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    return _session_user(session)
+
+
+def _session_user(session) -> SessionUser:
+    # The same user the routes see, so what the UI shows matches what the
+    # API allows, including while viewing as a regular user.
+    user = user_from_session(session)
     return SessionUser(
         uid=session.user_uid,
         display_name=session.display_name,
         email=session.email,
         provider_type=session.provider_type,
         workspaces=session.workspaces,
-        is_site_admin=session.is_site_admin,
-        can_author=can_execute_agent_code(
-            {"uid": session.user_uid, "is_site_admin": session.is_site_admin}),
+        is_site_admin=user["is_site_admin"],
+        can_author=can_execute_agent_code(user),
+        viewing_as_user=user["viewing_as_user"],
+        can_view_as_user=bool(session.is_site_admin),
     )
+
+
+class ViewAsBody(BaseModel):
+    on: bool
+
+
+@router.post("/auth/view-as", response_model=SessionUser)
+async def view_as_user(
+    body: ViewAsBody,
+    sid: Optional[str] = Cookie(default=None, alias="gofannon_sid"),
+    session_svc: SessionService = Depends(_get_session_svc),
+) -> SessionUser:
+    """Switch viewing the site as a regular user on or off, for this login
+    session. On: site admin and the uid allowlists stop applying, leaving
+    your LDAP project roles. Only a site admin may switch it on."""
+    session = await session_svc.get_by_id(sid)
+    if not session:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    session = await session_svc.set_viewing_as_user(session, body.on)
+    logger.info("view-as-user %s for %s", "on" if body.on else "off", session.user_uid)
+    return _session_user(session)
 
 
 # ---------------------------------------------------------------------------

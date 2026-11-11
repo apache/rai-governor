@@ -143,6 +143,7 @@ def test_observability_middleware_resolves_session_cookie(monkeypatch):
         provider_type="dev_stub",
         workspaces=[],
         is_site_admin=False,
+        viewing_as_user=False,
     )
 
     class FakeSessionService:

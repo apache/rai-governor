@@ -11,6 +11,7 @@ import {
   MenuItem,
   Snackbar,
   Alert,
+  Switch,
   Typography,
 } from '@mui/material';
 import AccountCircle from '@mui/icons-material/AccountCircle';
@@ -18,6 +19,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ShieldIcon from '@mui/icons-material/Shield';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContextValue';
+import { reloadApp, setViewAsUser } from '../services/viewAsService';
 
 const isAdminPanelEnabled = () => {
   const envValue = import.meta.env.VITE_ADMIN_PANEL_ENABLED ?? 'false';
@@ -78,6 +80,20 @@ const ProfileMenu = () => {
   // session. For legacy Firebase users this section is skipped.
   const workspaces = (isSessionAuth && user?.workspaces) || [];
   const isSiteAdmin = !!user?.isSiteAdmin;
+  const viewingAsUser = !!user?.viewingAsUser;
+  const [switching, setSwitching] = useState(false);
+
+  // Site admins only: see the site with just their LDAP project roles.
+  const toggleViewAs = async () => {
+    setSwitching(true);
+    try {
+      await setViewAsUser(!viewingAsUser);
+      reloadApp();
+    } catch (e) {
+      setSnack({ severity: 'error', message: e.message });
+      setSwitching(false);
+    }
+  };
 
   return (
     <div>
@@ -128,6 +144,10 @@ const ProfileMenu = () => {
                 sx={{ mt: 0.5, height: 20, fontSize: '0.68rem' }}
               />
             )}
+            {viewingAsUser && (
+              <Chip label="Viewing as a regular user" size="small"
+                sx={{ mt: 0.5, height: 20, fontSize: '0.68rem', bgcolor: '#fef3c7', color: '#78350f' }} />
+            )}
           </Box>
         )}
         {isSessionAuth && user && <Divider />}
@@ -173,6 +193,12 @@ const ProfileMenu = () => {
               <RefreshIcon fontSize="small" />
             </ListItemIcon>
             {refreshing ? 'Refreshing…' : 'Refresh workspaces'}
+          </MenuItem>
+        )}
+        {isSessionAuth && user?.canViewAsUser && (
+          <MenuItem role="menuitemcheckbox" aria-checked={viewingAsUser} onClick={toggleViewAs} disabled={switching}>
+            <Box sx={{ flex: 1 }}>View as a regular user</Box>
+            <Switch size="small" edge="end" checked={viewingAsUser} tabIndex={-1} aria-hidden="true" />
           </MenuItem>
         )}
         {isSessionAuth && <Divider />}
