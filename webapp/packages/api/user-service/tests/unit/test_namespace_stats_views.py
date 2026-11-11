@@ -1,5 +1,6 @@
 """CouchDB keeps data-store totals per namespace in views (ISSUE-034):
-listing namespaces reads a row per namespace, not one per record."""
+listing namespaces reads a row per namespace, not one per record, totalled
+by CouchDB's built-in reduces, and never waits on indexing (update=lazy)."""
 
 from types import SimpleNamespace
 
@@ -26,11 +27,15 @@ class FakeDB:
         if self.fail:
             raise RuntimeError("view broke")
         rows = {
-            "gofannon_stats/by_namespace": [
-                (["asf:akm", "files:apache/steve"], [3, 1200, "2026-11-11T10:00:00"]),
-                (["asf:akm", "notes"], [1, 7, ""]),
+            "gofannon_ns/size": [
+                (["asf:akm", "files:apache/steve"], {"sum": 1200, "count": 3, "min": 0, "max": 900, "sumsqr": 1}),
+                (["asf:akm", "notes"], {"sum": 7, "count": 1, "min": 7, "max": 7, "sumsqr": 49}),
             ],
-            "gofannon_stats/agents": [
+            "gofannon_ns/updated": [
+                (["asf:akm", "files:apache/steve"], {"sum": 0, "count": 3, "min": 0, "max": 1762855200.0, "sumsqr": 0}),
+                (["asf:akm", "notes"], {"sum": 0, "count": 1, "min": 0, "max": 0, "sumsqr": 0}),
+            ],
+            "gofannon_ns/agents": [
                 (["asf:akm", "files:apache/steve", "glasswing_discover"], 2),
                 (["asf:akm", "files:apache/steve", "asvs_download_repo"], 3),
             ],
@@ -51,13 +56,16 @@ def test_reads_one_row_per_namespace():
     assert out == {
         "files:apache/steve": {"recordCount": 3, "sizeBytes": 1200,
                                "agents": ["asvs_download_repo", "glasswing_discover"],
-                               "updatedAt": "2026-11-11T10:00:00"},
+                               "updatedAt": "2025-11-11T10:00:00"},
         "notes": {"recordCount": 1, "sizeBytes": 7, "agents": [], "updatedAt": None},
     }
     assert [(n, o["group_level"], o["startkey"], o["endkey"]) for n, o in db.views] == [
-        ("gofannon_stats/by_namespace", 2, ["asf:akm"], ["asf:akm", {}]),
-        ("gofannon_stats/agents", 3, ["asf:akm"], ["asf:akm", {}]),
+        ("gofannon_ns/size", 2, ["asf:akm"], ["asf:akm", {}]),
+        ("gofannon_ns/updated", 2, ["asf:akm"], ["asf:akm", {}]),
+        ("gofannon_ns/agents", 3, ["asf:akm"], ["asf:akm", {}]),
     ]
+    # A page must never wait on indexing.
+    assert all(o.get("update") == "lazy" for _, o in db.views)
 
 
 def test_one_namespace_reads_only_its_rows():
@@ -91,3 +99,9 @@ def test_falls_back_to_totalling_records_when_a_view_fails(monkeypatch):
     monkeypatch.setattr(cdb.DatabaseService, "namespace_stats", by_find)
     out = _service(FakeDB(fail=True)).namespace_stats("asf:akm", "x")
     assert called["args"] == ("asf:akm", "x") and list(out) == ["x"]
+
+
+def test_only_built_in_reduces():
+    """A JavaScript reduce took 100 s for 4,000 namespaces in production."""
+    from services.database_service.couchdb import STATS_DDOC
+    assert {v["reduce"] for v in STATS_DDOC["views"].values()} <= {"_stats", "_count", "_sum"}

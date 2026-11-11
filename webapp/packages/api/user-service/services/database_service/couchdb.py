@@ -5,41 +5,51 @@ from .base import DatabaseService
 
 
 # Data-store totals per namespace, kept by CouchDB as records change
-# (ISSUE-034). by_namespace: [owner, namespace] -> [count, bytes, latest
-# updatedAt]. agents: [owner, namespace, agent] -> count. Bump the version
-# when a function changes, and the design doc is rewritten.
-STATS_DDOC_ID = "_design/gofannon_stats"
+# (ISSUE-034). Only CouchDB's built-in reduces, which run inside CouchDB:
+# a JavaScript reduce (the first version, _design/gofannon_stats) took 100 s
+# to total 4,000 namespaces, one call per group to the JS process.
+#   size:    [owner, namespace] -> sizeBytes, _stats: count and sum
+#   updated: [owner, namespace] -> updatedAt as epoch seconds, _stats: max
+#   agents:  [owner, namespace, agent] -> _count
+# Each value is always a number: _stats refuses anything else. Bump the
+# version when a function changes; the design doc is then rewritten and
+# CouchDB indexes it again.
+STATS_DDOC_ID = "_design/gofannon_ns"
 STATS_DDOC_VERSION = 1
+_IS_RECORD = "doc.userId && doc.key !== undefined"
 STATS_DDOC = {
     "_id": STATS_DDOC_ID,
     "language": "javascript",
     "version": STATS_DDOC_VERSION,
     "views": {
-        "by_namespace": {
+        "size": {
             "map": (
                 "function (doc) {\n"
-                "  if (doc.userId && doc.key !== undefined) {\n"
+                f"  if ({_IS_RECORD}) {{\n"
                 "    emit([doc.userId, doc.namespace || 'default'],\n"
-                "         [doc.sizeBytes || 0, doc.updatedAt || '']);\n"
+                "         typeof doc.sizeBytes === 'number' ? doc.sizeBytes : 0);\n"
                 "  }\n"
                 "}"
             ),
-            "reduce": (
-                "function (keys, values, rereduce) {\n"
-                "  var n = 0, s = 0, u = '';\n"
-                "  for (var i = 0; i < values.length; i++) {\n"
-                "    var v = values[i];\n"
-                "    if (rereduce) { n += v[0]; s += v[1]; if (v[2] > u) u = v[2]; }\n"
-                "    else { n += 1; s += v[0]; if (v[1] > u) u = v[1]; }\n"
+            "reduce": "_stats",
+        },
+        "updated": {
+            "map": (
+                "function (doc) {\n"
+                f"  if ({_IS_RECORD}) {{\n"
+                "    var m = /^(\\d{4})-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)/"
+                ".exec(doc.updatedAt || '');\n"
+                "    emit([doc.userId, doc.namespace || 'default'],\n"
+                "         m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : 0);\n"
                 "  }\n"
-                "  return [n, s, u];\n"
                 "}"
             ),
+            "reduce": "_stats",
         },
         "agents": {
             "map": (
                 "function (doc) {\n"
-                "  if (doc.userId && doc.key !== undefined) {\n"
+                f"  if ({_IS_RECORD}) {{\n"
                 "    var seen = {};\n"
                 "    [doc.createdByAgent, doc.lastAccessedByAgent].forEach(function (a) {\n"
                 "      if (a && !seen[a]) {\n"
@@ -365,9 +375,14 @@ class CouchDBService(DatabaseService):
         self._stats_views_ready = True
 
     def namespace_stats(self, user_id: str, namespace: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-        """Totals from the gofannon_stats views: a row per namespace, not a
-        row per record. The first query after the views are created waits
-        while CouchDB indexes every record; after that it's immediate."""
+        """Totals from the gofannon_ns views: a row per namespace, not a row
+        per record, each totalled inside CouchDB.
+
+        update=lazy: CouchDB answers from the index as it stands and brings
+        it up to date afterwards, so a page never waits on indexing; totals
+        trail the latest writes by at most one request. While the views are
+        first being built they answer at once with what's indexed so far."""
+        from datetime import datetime, timezone
         from services.data_store_stats import DATA_STORE_DB
         try:
             db = self._get_or_create_db(DATA_STORE_DB)
@@ -376,15 +391,25 @@ class CouchDBService(DatabaseService):
                 lo, hi = [user_id], [user_id, {}]
             else:
                 lo, hi = [user_id, namespace], [user_id, namespace, {}]
+            ddoc = STATS_DDOC_ID.split("/", 1)[1]
+
+            def rows(view, level):
+                return db.view(f"{ddoc}/{view}", group_level=level, startkey=lo, endkey=hi,
+                               update="lazy")
+
             out: Dict[str, Dict[str, Any]] = {}
-            for row in db.view("gofannon_stats/by_namespace", group_level=2, startkey=lo, endkey=hi):
-                count, size, updated = row.value
-                out[row.key[1]] = {"recordCount": count, "sizeBytes": size,
-                                   "agents": [], "updatedAt": updated or None}
-            for row in db.view("gofannon_stats/agents", group_level=3, startkey=lo, endkey=hi):
-                ns = row.key[1]
-                if ns in out:
-                    out[ns]["agents"].append(row.key[2])
+            for row in rows("size", 2):
+                out[row.key[1]] = {"recordCount": int(row.value["count"]),
+                                   "sizeBytes": int(row.value["sum"]),
+                                   "agents": [], "updatedAt": None}
+            for row in rows("updated", 2):
+                latest = row.value["max"]
+                if row.key[1] in out and latest > 0:
+                    out[row.key[1]]["updatedAt"] = datetime.fromtimestamp(
+                        latest, timezone.utc).replace(tzinfo=None).isoformat()
+            for row in rows("agents", 3):
+                if row.key[1] in out:
+                    out[row.key[1]]["agents"].append(row.key[2])
             for v in out.values():
                 v["agents"].sort()
             return out
