@@ -122,12 +122,16 @@ async def search(
     due_by: Optional[date] = None,
     include_inactive: bool = False,
     order: str = Query("newest", pattern="^(newest|oldest)$"),
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(20, ge=1, le=1000),
+    run: Optional[str] = Query(None, max_length=64),
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
-    """include_inactive adds demoted and superseded entries; order=oldest is the review queue's."""
+    """include_inactive adds demoted and superseded entries; order=oldest is the review queue's;
+    run limits it to the entries one run wrote."""
     filters: Dict[str, Any] = {}
+    if run:
+        filters["run"] = run
     if type:
         filters["type"] = type.value
     if trust_tier:
@@ -137,6 +141,55 @@ async def search(
         include_inactive=include_inactive, oldest_first=order == "oldest",
     )
     return {"domain": domain, "query": q, "hits": hits}
+
+
+def run_summary(run_id: str, user: dict) -> Dict[str, Any]:
+    """What the caller may know about the run that wrote some entries: the
+    run's summary if they can see the run, else its id alone. Reading a
+    domain doesn't grant the run: its inputs are the launcher's."""
+    from auth.project_access import can_see_run
+    from services.run_registry import get_run_registry
+
+    try:
+        rec = get_run_registry().get(run_id)
+    except Exception:
+        rec = None
+    if rec is None or not can_see_run(user, rec.user_id, rec.project):
+        return {"runId": run_id, "visible": False}
+    s = rec.to_summary()
+    s.pop("inputDict", None)
+    return {**s, "visible": True}
+
+
+@router.get("/by-run/{run_id}")
+async def run_memories(
+    run_id: str,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """What one run wrote, tallied per domain, in the domains the caller
+    may read. The run page's memories panel."""
+    tallies = await get_memory_service(db).for_run(run_id)
+    domains = [
+        {"domain": d, "kind": "shared" if access.is_shared(d) else "project",
+         "canReview": access.can_write(user, d), **t}
+        for d, t in sorted(tallies.items())
+        if access.exists(d) and access.can_read(user, d)
+    ]
+    return {"run": run_summary(run_id, user), "domains": domains}
+
+
+@router.get("/{domain}/runs")
+async def domain_runs(
+    domain: str,
+    limit: int = Query(20, ge=1, le=200),
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """Runs that wrote into the domain, newest first, with their entries
+    counted by type and tier."""
+    runs = await get_memory_service(db).runs(_domain(domain, user))
+    return {"domain": domain, "runs": [{**r, "info": run_summary(r["run"], user)} for r in runs[:limit]]}
 
 
 @router.get("/entries/{entry_id}")

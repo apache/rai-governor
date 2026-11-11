@@ -83,6 +83,9 @@ class Trace:
     def __init__(self) -> None:
         self.events: List[Dict[str, Any]] = []
         self._truncated = False
+        # The registry run this trace belongs to, when there is one. Memory
+        # entries the run writes carry it (B11).
+        self.run_id: Optional[str] = None
         self._depth = 0  # current nesting level for chained agent calls
         self._stack: List[str] = []  # current agent_name stack
         # Optional asyncio.Queue for live streaming. When set (via

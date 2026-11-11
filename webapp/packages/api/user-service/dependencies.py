@@ -431,6 +431,11 @@ async def _execute_agent_code(
         project=project,
     )
 
+    # Entries this code writes to memory carry its registry run (B11).
+    # Bound here, before the code exists, for this task and the calls it makes.
+    from services.memory.service import bind_run
+    bind_run(getattr(trace, "run_id", None))
+
     exec_globals = {
         "RemoteMCPClient": RemoteMCPClient,
         "call_llm": call_llm_with_context,  # Use wrapped LLM service with user context

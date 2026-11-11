@@ -22,14 +22,19 @@ from .entry import Entry, Status
 
 INDEX_DB = "memory_index"
 
+# Most hits one search returns: a whole run's entries, for batch review.
+MAX_HITS = 1000
+
 # Fields a caller may filter on with equality.
-FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "origin")
+FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "origin", "run")
 
 _INDEXES = (
     ["domain", "created"],
     ["domain", "type"],
     ["domain", "trust_tier"],
     ["domain", "review_by"],
+    ["domain", "run"],
+    ["run"],
 )
 
 
@@ -49,6 +54,7 @@ def row_for(entry: Entry) -> Dict[str, Any]:
         "status": f.status.value if f.status else None,
         "classification": f.classification.value,
         "origin": f.origin,
+        "run": f.run,
         "title": entry.display_title,
         "summary": f.summary,
         "blob": entry_key(f.domain, f.id),
@@ -124,12 +130,50 @@ class MemoryIndex:
         # first for a review queue. Two stable sorts: date, then score.
         hits.sort(key=lambda h: h[1], reverse=not oldest_first)
         hits.sort(key=lambda h: h[0], reverse=True)
-        return [row for _, _, row in hits[: max(1, min(limit, 200))]]
+        return [row for _, _, row in hits[: max(1, min(limit, MAX_HITS))]]
 
     def domains(self) -> List[str]:
         """Every domain that has an entry. list_all, because find() takes
         equality selectors only on some backends."""
         return sorted({row["domain"] for row in self.db.list_all(INDEX_DB) if row.get("domain")})
+
+    @staticmethod
+    def _tally(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"entries": 0, "live": 0, "by_type": {}, "by_tier": {},
+                               "first": None, "last": None}
+        for row in rows:
+            out["entries"] += 1
+            inactive = row.get("status") in _INACTIVE
+            if not inactive:
+                out["live"] += 1
+            t = row.get("type") or "?"
+            out["by_type"][t] = out["by_type"].get(t, 0) + 1
+            tier = "demoted" if row.get("status") == "demoted" else (row.get("trust_tier") or "raw")
+            out["by_tier"][tier] = out["by_tier"].get(tier, 0) + 1
+            c = row.get("created")
+            if c and (out["first"] is None or c < out["first"]):
+                out["first"] = c
+            if c and (out["last"] is None or c > out["last"]):
+                out["last"] = c
+        return out
+
+    def runs(self, domain: str) -> List[Dict[str, Any]]:
+        """Runs that wrote into a domain, newest first, each with its
+        entries counted by type and tier."""
+        by_run: Dict[str, List[Dict[str, Any]]] = {}
+        for row in self.db.find(INDEX_DB, {"domain": domain}, limit=None):
+            if row.get("run"):
+                by_run.setdefault(row["run"], []).append(row)
+        out = [{"run": r, **self._tally(rows)} for r, rows in by_run.items()]
+        out.sort(key=lambda d: d["last"] or "", reverse=True)
+        return out
+
+    def for_run(self, run_id: str) -> Dict[str, Dict[str, Any]]:
+        """One run's entries, tallied per domain."""
+        by_domain: Dict[str, List[Dict[str, Any]]] = {}
+        for row in self.db.find(INDEX_DB, {"run": run_id}, limit=None):
+            by_domain.setdefault(row.get("domain") or "?", []).append(row)
+        return {d: self._tally(rows) for d, rows in by_domain.items()}
 
     def counts(self, domain: str, today: date) -> Dict[str, int]:
         """Live entries in a domain: how many, how many raw, due, and either (the review queue)."""

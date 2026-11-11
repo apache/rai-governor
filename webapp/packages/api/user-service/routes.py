@@ -794,6 +794,7 @@ async def run_agent_code_stream(
         input_dict=request.input_dict,
         project=project,
     )
+    trace.run_id = _run_record.run_id
     _cancel_token = CancelToken()
     register_cancel_token(_run_record.run_id, _cancel_token)
     bind_token(_cancel_token)

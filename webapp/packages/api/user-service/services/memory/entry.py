@@ -109,6 +109,8 @@ class Frontmatter:
     origin: Optional[str] = None
     summary: Optional[str] = None
     title: Optional[str] = None
+    # The gofannon run that wrote it, for agent-written entries (B11).
+    run: Optional[str] = None
 
     def validate(self) -> None:
         if not is_entry_id(self.id):
@@ -145,7 +147,7 @@ class Frontmatter:
         if self.policy_context:
             d["policy_context"] = list(self.policy_context)
         d["classification"] = self.classification.value
-        for key in ("status", "origin", "summary", "title"):
+        for key in ("status", "origin", "summary", "title", "run"):
             value = getattr(self, key)
             if value is not None:
                 d[key] = value.value if isinstance(value, Enum) else value
@@ -183,6 +185,7 @@ class Frontmatter:
                 origin=d.get("origin"),
                 summary=d.get("summary"),
                 title=d.get("title"),
+                run=d.get("run"),
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise EntryError(f"invalid frontmatter: {exc}") from exc

@@ -12,6 +12,7 @@ a blocking call on the event loop stalls every request in the process.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import os
 from dataclasses import dataclass, field
@@ -99,6 +100,8 @@ def _summary(row: Dict[str, Any]) -> Dict[str, Any]:
         "status": row.get("status"),
         "created": row.get("created"),
         "review_by": row.get("review_by"),
+        "supersedes": row.get("supersedes"),
+        "run": row.get("run"),
     }
 
 
@@ -114,6 +117,18 @@ class WriteRequest:
     review_by: Optional[date] = None
     supersedes: Optional[str] = None
     origin: Optional[str] = None
+
+
+# The registry run whose agent code is executing, bound by
+# dependencies._execute_agent_code. write() stamps it on the entry: not a
+# field of WriteRequest or of the agent's memory object, so agent code has no
+# argument or attribute that sets it. (Agent code still runs in-process, with
+# full builtins, until ISSUE-023: this removes the obvious routes, not all.)
+_CURRENT_RUN: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("memory_run", default=None)
+
+
+def bind_run(run_id: Optional[str]):
+    return _CURRENT_RUN.set(run_id)
 
 
 def human_author(uid: str) -> str:
@@ -154,6 +169,12 @@ class MemoryService:
 
     async def domains(self) -> List[str]:
         return await asyncio.to_thread(self.index.domains)
+
+    async def runs(self, domain: str) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self.index.runs, domain)
+
+    async def for_run(self, run_id: str) -> Dict[str, Dict[str, Any]]:
+        return await asyncio.to_thread(self.index.for_run, run_id)
 
     async def counts(self, domain: str, today: Optional[date] = None) -> Dict[str, int]:
         today = today or datetime.now(timezone.utc).date()
@@ -290,6 +311,7 @@ class MemoryService:
             origin=req.origin,
             summary=req.summary,
             title=req.title,
+            run=_CURRENT_RUN.get(),
         )
         entry = Entry(front=front, body=req.body)
         front.validate()

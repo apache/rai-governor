@@ -509,6 +509,7 @@ class RunRegistry:
         )
         # worker_id is set by the dataclass default to WORKER_ID, so
         # this record is implicitly owned by this worker.
+        record.trace.run_id = run_id
         self._records[run_id] = record
         self._persist(record, include_events=False)
         return record
