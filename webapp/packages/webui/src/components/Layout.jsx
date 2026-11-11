@@ -64,11 +64,23 @@ const Layout = ({ children }) => {
               Gofannon
             </Typography>
           </Box>
+          <Button
+            onClick={() => navigate('/projects')}
+            sx={{
+              ml: 3,
+              color: '#fff',
+              textTransform: 'none',
+              bgcolor: location.pathname.startsWith('/projects') || location.pathname.startsWith('/run/') ? '#27272a' : 'transparent',
+              '&:hover': { bgcolor: '#27272a' },
+            }}
+          >
+            Workloads
+          </Button>
           {memoryOn && (
             <Button
               onClick={() => navigate('/memories')}
               sx={{
-                ml: 3,
+                ml: 1,
                 color: '#fff',
                 textTransform: 'none',
                 bgcolor: location.pathname.startsWith('/memories') ? '#27272a' : 'transparent',

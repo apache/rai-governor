@@ -267,6 +267,7 @@ class RunRecord:
         """
         return {
             "runId": self.run_id,
+            "userId": self.user_id,
             "agentId": self.agent_id,
             "agentName": self.agent_name,
             "project": self.project,

@@ -80,6 +80,18 @@ const memoryService = {
     });
   },
 
+  // The runs that wrote into a domain, newest first, with their entries
+  // counted by type and tier (B11).
+  runs(domain, limit = 200) {
+    return request(`/memory/${enc(domain)}/runs?limit=${limit}`);
+  },
+
+  // One run's entries tallied per readable domain, and what the caller may
+  // know about the run.
+  forRun(runId) {
+    return request(`/memory/by-run/${enc(runId)}`);
+  },
+
   review(id, { action, why, reviewBy }) {
     const body = { action, why: why || '' };
     if (reviewBy) body.review_by = reviewBy;
