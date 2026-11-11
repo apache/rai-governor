@@ -57,6 +57,40 @@ MAX_EVENTS_PER_TRACE = 2000
 HEAD_EVENTS_KEPT = 300
 
 
+def secret_variants(values) -> List[str]:
+    """Each value as text, URL-quoted and base64: the forms a token takes
+    on its way into a URL, a header or a log line."""
+    import base64
+    from urllib.parse import quote, quote_plus
+
+    out = set()
+    for v in values or ():
+        if not isinstance(v, str) or len(v) < 6:
+            continue
+        out |= {v, quote(v, safe=""), quote_plus(v), base64.b64encode(v.encode()).decode().rstrip("=")}
+    # Longest first, so a value inside another is replaced after it.
+    return sorted(out, key=len, reverse=True)
+
+
+SCRUBBED = "(set by a site admin)"
+
+
+def scrub(obj: Any, variants: List[str]) -> Any:
+    """obj with every variant replaced, through dicts, lists and strings."""
+    if not variants:
+        return obj
+    if isinstance(obj, str):
+        for v in variants:
+            if v in obj:
+                obj = obj.replace(v, SCRUBBED)
+        return obj
+    if isinstance(obj, dict):
+        return {k: scrub(v, variants) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [scrub(v, variants) for v in obj]
+    return obj
+
+
 def _user_trace_enabled() -> bool:
     """Operator can disable user-origin (stdout/log) capture."""
     return os.getenv("GOFANNON_DISABLE_USER_TRACE", "").lower() not in ("1", "true", "yes")
@@ -89,6 +123,8 @@ class Trace:
         self.events: List[Dict[str, Any]] = []
         self._truncated = False
         self._dropped = 0
+        # Values to keep out of every event (a workload's fixed inputs).
+        self.scrub_variants: List[str] = []
         # Events appended so far, kept or not: each event carries its number
         # (seq), so a reader that has seen up to N asks for what follows,
         # which a count of kept events can't say once the cap drops some.
@@ -149,6 +185,8 @@ class Trace:
             self._append(event)
 
     def _append(self, event: Dict[str, Any]) -> None:
+        if self.scrub_variants:
+            event = scrub(event, self.scrub_variants)
         self._seq += 1
         event["seq"] = self._seq
         head = min(HEAD_EVENTS_KEPT, max(MAX_EVENTS_PER_TRACE - 1, 0))

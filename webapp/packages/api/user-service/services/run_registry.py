@@ -132,6 +132,9 @@ def _ensure_indexes(db) -> None:
     # List endpoint, a project's runs (ISSUE-002).
     db.ensure_index(RUN_REGISTRY_DB, ["project", "started_at"],
                     index_name="by_project")
+    # A workload's runs in a project (B11).
+    db.ensure_index(RUN_REGISTRY_DB, ["project", "workload_id", "started_at"],
+                    index_name="by_project_workload")
     _indexes_ensured = True
 
 
@@ -215,8 +218,10 @@ class RunRecord:
     # can pre-fill the form when revisiting a past run via deep link.
     # None for old records that predate this field.
     input_dict: Optional[Dict[str, Any]] = None
-    # The project the run is for (ISSUE-002); its members see and stop it.
+    # The project the run is for (ISSUE-002); its members see it.
     project: Optional[str] = None
+    # The published workload it was launched from (B11), if any.
+    workload_id: Optional[str] = None
     started_at: datetime = field(default_factory=naive_utc_now)
     status: Literal["running", "success", "error", "stopped"] = "running"
     trace: _FanoutTrace = field(default_factory=_FanoutTrace)
@@ -265,6 +270,7 @@ class RunRecord:
             "agentId": self.agent_id,
             "agentName": self.agent_name,
             "project": self.project,
+            "workloadId": self.workload_id,
             "status": self.status,
             "startedAt": self.started_at.isoformat(),
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
@@ -306,6 +312,7 @@ class RunRecord:
             "agent_id": self.agent_id,
             "agent_name": self.agent_name,
             "project": self.project,
+            "workload_id": self.workload_id,
             "input_dict": self.input_dict,
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
@@ -339,6 +346,7 @@ class RunRecord:
             agent_name=doc["agent_name"],
             agent_id=doc.get("agent_id"),
             project=doc.get("project"),
+            workload_id=doc.get("workload_id"),
             input_dict=doc.get("input_dict"),
         )
         # Override defaults set by dataclass init
@@ -500,6 +508,7 @@ class RunRegistry:
         agent_id: Optional[str] = None,
         input_dict: Optional[Dict[str, Any]] = None,
         project: Optional[str] = None,
+        workload_id: Optional[str] = None,
     ) -> RunRecord:
         """Create a record with a fresh run_id, cache locally, and
         persist a stub to CouchDB so other workers can see it."""
@@ -511,6 +520,7 @@ class RunRegistry:
             agent_id=agent_id,
             input_dict=input_dict,
             project=project,
+            workload_id=workload_id,
         )
         # worker_id is set by the dataclass default to WORKER_ID, so
         # this record is implicitly owned by this worker.
@@ -556,6 +566,7 @@ class RunRegistry:
         limit: int = 100,
         agent_id: Optional[str] = None,
         projects: Iterable[str] = (),
+        workload_id: Optional[str] = None,
     ) -> List[RunRecord]:
         """List records for a user, optionally filtered by agent_id.
 
@@ -576,6 +587,8 @@ class RunRegistry:
                    if r.user_id == user_id or (r.project and r.project in projects)]
             if agent_id is not None:
                 out = [r for r in out if r.agent_id == agent_id]
+            if workload_id is not None:
+                out = [r for r in out if r.workload_id == workload_id]
             out.sort(key=lambda r: r.started_at, reverse=True)
             return out[:limit]
 
@@ -586,6 +599,9 @@ class RunRegistry:
         if agent_id is not None:
             for sel in selectors:
                 sel["agent_id"] = agent_id
+        if workload_id is not None:
+            for sel in selectors:
+                sel["workload_id"] = workload_id
         try:
             # find() doesn't expose Mango sort and returns in storage
             # order: take each owner's runs whole (retention keeps that to
@@ -653,12 +669,14 @@ class RunRegistry:
         'forbidden' as success (HTTP 202).
         """
         # Try local cache first (fast path).
-        from auth.project_access import can_see_run
+        from auth.project_access import is_admin
 
+        # The starter, or the project's PMC and site admins (B11). Members
+        # see each other's runs but don't stop them.
         def allowed(owner, project):
-            if user is not None:
-                return can_see_run(user, owner, project)
-            return owner == user_id
+            if owner == user_id:
+                return True
+            return user is not None and (bool(user.get("is_site_admin")) or is_admin(user, project))
 
         local = self._records.get(run_id)
         if local is not None and not allowed(local.user_id, local.project):

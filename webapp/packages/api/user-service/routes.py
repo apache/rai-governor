@@ -6,13 +6,13 @@ import uuid
 from typing import Optional, Dict, Any, List
 
 from fastapi.responses import StreamingResponse
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request
 from pydantic import BaseModel, Field
 from pydantic.config import ConfigDict
 
 from config import settings
 from auth.agent_exec import DENIED_DETAIL as AGENT_EXEC_DENIED_DETAIL, can_execute_agent_code
-from auth.project_access import can_see_run, check_project, member_projects
+from auth.project_access import can_see_run, check_project, is_admin, member_projects
 from services.agent_trace import Trace
 from dependencies import (
     _execute_agent_code,
@@ -1163,17 +1163,30 @@ def _run_idle_seconds(record) -> Optional[float]:
 async def list_runs(
     user: dict = Depends(get_current_user),
     agent_id: Optional[str] = None,
+    project: Optional[str] = None,
+    workload_id: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
 ):
-    """List the current user's recent runs (in-memory; up to 100).
+    """List the current user's recent runs and their projects' (up to 100).
 
     Pass ``?agent_id=<id>`` to restrict to one agent — the per-agent
     runs screen uses this so its past-runs list only shows that
     agent's history rather than everything the user has ever run.
+
+    ``?project=<name>`` lists that project's runs alone (members and site
+    admins), and ``?workload_id=`` one workload's (the Workloads page, B11).
     """
     from services.run_registry import get_run_registry
     registry = get_run_registry()
-    records = registry.list_for_user(user.get("uid") or "", agent_id=agent_id,
-                                     projects=member_projects(user))
+    uid = user.get("uid") or ""
+    if project:
+        project = check_project(user, project)
+        records = registry.list_for_user(uid, agent_id=agent_id, projects=[project],
+                                         workload_id=workload_id, limit=limit)
+        records = [r for r in records if r.project == project]
+    else:
+        records = registry.list_for_user(uid, agent_id=agent_id, projects=member_projects(user),
+                                         workload_id=workload_id, limit=limit)
     return {"runs": [r.to_summary() for r in records]}
 
 
@@ -1382,8 +1395,13 @@ async def stop_run(
     if outcome == "not_found":
         raise HTTPException(status_code=404, detail="Run not found or already complete")
     if outcome == "forbidden":
-        # Match the pre-persistence behavior: don't leak existence of
-        # other users' runs via a 403.
+        # A member sees the project's runs but stops only their own; the
+        # PMC and site admins stop any (B11). Anyone who can't see the run
+        # gets 404, so its existence isn't leaked.
+        rec = get_run_registry().get(run_id)
+        if rec is not None and can_see_run(user, rec.user_id, rec.project):
+            raise HTTPException(status_code=403,
+                                detail="Only whoever started this run, or the project's PMC, can stop it")
         raise HTTPException(status_code=404, detail="Run not found")
     # outcome is one of 'flipped_local' or 'persisted_remote'. Both
     # are success cases. The status text gives clients a hint about
@@ -1425,6 +1443,11 @@ async def force_complete_run(
         # Same 404-for-forbidden policy as stop_run: don't leak the
         # existence of other users' runs.
         raise HTTPException(status_code=404, detail="Run not found")
+    # Clearing a run ends it: the stop rule (B11).
+    if not (record.user_id == user.get("uid") or user.get("is_site_admin")
+            or is_admin(user, record.project)):
+        raise HTTPException(status_code=403,
+                            detail="Only whoever started this run, or the project's PMC, can end it")
 
     if record.status != "running":
         # Already terminal. Idempotent success so a double-click from the
@@ -1631,13 +1654,33 @@ async def start_deployed_agent_run(
     in the body. Everything configured on the agent -- API keys, model
     tiers, timeouts -- does not.
     """
-    from services.log_redaction import redact_in_place
-    from services.run_registry import get_run_registry
-
     project = check_project(user, project)
     input_dict = await request.json()
     if not isinstance(input_dict, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    return start_deployment_run(friendly_name, input_dict, user, db, logger, project=project)
+
+
+def start_deployment_run(
+    friendly_name: str,
+    input_dict: dict,
+    user: dict,
+    db: DatabaseService,
+    logger: ObservabilityService,
+    project: Optional[str] = None,
+    workload_id: Optional[str] = None,
+    stored_inputs: Optional[dict] = None,
+    secrets: Optional[List[str]] = None,
+) -> dict:
+    """Start a deployed agent as a detached, registered run. Shared by
+    /rest/{name}/start and workload launches (B11), which check who may
+    run it before calling. ``stored_inputs`` is what the run record keeps
+    in place of the inputs, when the caller must not keep them all (a
+    workload's admin-set inputs). ``secrets`` are values to scrub from all
+    the run shows: its trace, result, error and ops log."""
+    from services.agent_trace import scrub, secret_variants
+    from services.log_redaction import redact_in_place
+    from services.run_registry import get_run_registry
 
     # Resolve the deployment BEFORE registering a run, so an unknown
     # friendly_name is a clean 404 rather than a run that instantly fails.
@@ -1664,6 +1707,7 @@ async def start_deployed_agent_run(
     record = registry.new_record(
         user_id=user.get("uid") or "anonymous",
         project=project,
+        workload_id=workload_id,
         agent_name=friendly_name,
         agent_id=agent_id,
         # The registry persists input_dict to CouchDB verbatim and returns it
@@ -1674,8 +1718,11 @@ async def start_deployed_agent_run(
         # rather than on key name, so it catches a credential wherever it sits.
         # copy.deepcopy first: the function mutates dicts in place, and the
         # agent below needs the unredacted inputs.
-        input_dict=redact_in_place(copy.deepcopy(input_dict)),
+        input_dict=redact_in_place(copy.deepcopy(
+            stored_inputs if stored_inputs is not None else input_dict)),
     )
+    hide = secret_variants(secrets)
+    record.trace.scrub_variants = hide
 
     user_basic_info = {
         "email": user.get("email"),
@@ -1704,9 +1751,9 @@ async def start_deployed_agent_run(
             registry.mark_complete(
                 record,
                 status="success",
-                result=result,
+                result=scrub(result, hide),
                 schema_warnings=warnings or None,
-                ops_log=ops_log or None,
+                ops_log=scrub(ops_log, hide) or None,
             )
         except Exception as e:
             logger.log(
@@ -1720,7 +1767,7 @@ async def start_deployed_agent_run(
             registry.mark_complete(
                 record,
                 status="error",
-                error=f"{type(e).__name__}: {e}",
+                error=scrub(f"{type(e).__name__}: {e}", hide),
             )
 
     task = asyncio.create_task(runner())
@@ -2003,3 +2050,8 @@ async def clear_namespace(
 from routes_pipelines import router as _pipelines_router  # noqa: E402
 
 router.include_router(_pipelines_router)
+
+# Workloads (B11). Imported last for the same reason.
+from routes_workloads import router as _workloads_router  # noqa: E402
+
+router.include_router(_workloads_router)
