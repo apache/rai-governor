@@ -29,6 +29,7 @@ import observabilityService from '../../services/observabilityService';
 import RunDataPanel from '../../components/RunDataPanel';
 import RunProgressLog from '../../components/RunProgressLog';
 import RunsHistoryList from '../../components/RunsHistoryList';
+import RunMemoriesButton from '../../components/RunMemoriesButton';
 
 // Default value per schema type, used when initializing the form.
 const defaultValueForType = (type) => {
@@ -1108,7 +1109,10 @@ const RunsScreen = () => {
               </ul>
             </Alert>
           )}
-          <Typography variant="h6" sx={{ mb: 1 }}>Output</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+            <Typography variant="h6">Output</Typography>
+            {agentId && (currentRunId || runId) && <RunMemoriesButton runId={currentRunId || runId} />}
+          </Box>
           {renderOutput(output, outputSchema)}
         </Box>
       )}
@@ -1126,6 +1130,7 @@ const RunsScreen = () => {
           <RunsHistoryList
             runs={agentId ? historicalRuns : runs}
             inputSchema={inputSchema}
+            showMemories={Boolean(agentId)}
             onOpen={(rId) => {
               // No-op when the clicked row is the run we're already
               // viewing -- otherwise repeated clicks on the same row

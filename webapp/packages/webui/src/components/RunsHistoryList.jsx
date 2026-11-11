@@ -32,6 +32,7 @@ import StopCircleIcon from '@mui/icons-material/StopCircle';
 import ReplayIcon from '@mui/icons-material/Replay';
 import PropTypes from 'prop-types';
 import { parseServerDate } from '../utils/serverTime';
+import RunMemoriesButton from './RunMemoriesButton';
 
 // Relative-time formatting. Cheap, no dep on a date library.
 const formatRelative = (iso) => {
@@ -119,7 +120,7 @@ const StatusIcon = ({ outcome }) => {
 
 StatusIcon.propTypes = { outcome: PropTypes.string };
 
-const RunsHistoryList = ({ runs, inputSchema, onOpen, onRerun }) => {
+const RunsHistoryList = ({ runs, inputSchema, onOpen, onRerun, showMemories }) => {
   // Reverse so newest is at the top.
   const ordered = [...(runs || [])].reverse();
 
@@ -183,6 +184,7 @@ const RunsHistoryList = ({ runs, inputSchema, onOpen, onRerun }) => {
                 </Typography>
               )}
             </Box>
+            {showMemories && run.run_id && <RunMemoriesButton runId={run.run_id} compact />}
             <Tooltip title="Re-run with these inputs" arrow>
               <IconButton
                 size="small"
@@ -207,6 +209,9 @@ RunsHistoryList.propTypes = {
   inputSchema: PropTypes.object,
   onOpen: PropTypes.func.isRequired,
   onRerun: PropTypes.func.isRequired,
+  // Rows carry registry run ids (a saved agent's runs): offer each run's
+  // memories. Off for the unsaved sandbox, whose rows have local ids.
+  showMemories: PropTypes.bool,
 };
 
 export default RunsHistoryList;
