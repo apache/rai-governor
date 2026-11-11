@@ -79,11 +79,18 @@ def env(monkeypatch):
     return db, reg, TestClient(app)
 
 
-def _publish(c, **over):
+def _publish(c, add_to="whimsy", **over):
+    """Publish as a site admin, then add it to a project's page as its PMC
+    (add_to=None leaves it in the catalog)."""
     _as(ADMIN)
     r = c.post("/workloads/admin", json={**ASVS, **over})
     assert r.status_code == 201, r.text
-    return r.json()["id"]
+    wid = r.json()["id"]
+    if add_to:
+        _as(PMC)
+        a = c.post(f"/workloads/{wid}/add", json={"project": add_to})
+        assert a.status_code == 201, a.text
+    return wid
 
 
 def _wait(reg, run_id):
@@ -254,3 +261,196 @@ def test_admins_change_and_unpublish(env):
     assert full[0]["fixedInputs"]["sourceToken"] == "github_pat_SECRET"
     assert c.delete(f"/workloads/admin/{wid}").status_code == 204
     assert c.get("/workloads/admin").json()["workloads"] == []
+
+
+# --- the catalog and a project's page -----------------------------------------
+
+def test_published_is_available_added_is_on_the_page(env):
+    _, _, c = env
+    wid = _publish(c, add_to=None)
+    _as(PMC)
+    out = c.get("/workloads", params={"project": "whimsy"}).json()
+    assert out["workloads"] == [] and out["canManage"] is True
+    assert [a["id"] for a in out["available"]] == [wid]
+    assert "SECRET" not in json.dumps(out) and "deployment" not in json.dumps(out["available"])
+    _as(ALICE)
+    out = c.get("/workloads", params={"project": "whimsy"}).json()
+    # Members get no catalog: only the PMC can add from it.
+    assert out["workloads"] == [] and out["canManage"] is False and out["available"] == []
+    assert c.post(f"/workloads/{wid}/run", json={"project": "whimsy", "inputs": {"sourceRepo": "apache/whimsy"}}).status_code == 404
+    assert c.get(f"/workloads/{wid}", params={"project": "whimsy"}).status_code == 404
+
+
+def test_only_the_pmc_adds_changes_and_removes(env):
+    _, _, c = env
+    wid = _publish(c, add_to=None)
+    _as(ALICE)
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy"}).status_code == 403
+    _as(CAROL)
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy"}).status_code == 403
+    assert c.post(f"/workloads/{wid}/add", json={"project": "tomcat"}).status_code == 403   # tomcat committer, not PMC
+    _as({"uid": "asf:tpmc", "workspaces": [{"workspaceId": "project:tomcat", "role": "admin"}]})
+    assert c.post(f"/workloads/{wid}/add", json={"project": "tomcat"}).status_code == 404   # not published to tomcat
+    _as(PMC)
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy"}).status_code == 201
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy"}).status_code == 409
+    out = c.get("/workloads", params={"project": "whimsy"}).json()
+    assert out["canManage"] and [w["id"] for w in out["workloads"]] == [wid] and out["available"] == []
+    _as(ALICE)
+    assert c.delete(f"/workloads/{wid}/add", params={"project": "whimsy"}).status_code == 403
+    _as(PMC)
+    assert c.delete(f"/workloads/{wid}/add", params={"project": "whimsy"}).status_code == 204
+    assert c.get("/workloads", params={"project": "whimsy"}).json()["workloads"] == []
+
+
+def test_project_defaults_are_checked_and_used(env):
+    _, reg, c = env
+    wid = _publish(c, add_to=None)
+    _as(PMC)
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"sourceRepo": "apache/tomcat"}}).status_code == 403
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"sourceToken": "mine"}}).status_code == 400
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"commit": "../x"}}).status_code == 400
+    r = c.post(f"/workloads/{wid}/add", json={"project": "whimsy",
+                                              "defaults": {"sourceRepo": "apache/whimsy-private", "level": "L2"}})
+    assert r.status_code == 201, r.text
+    _as(ALICE)
+    w = c.get("/workloads", params={"project": "whimsy"}).json()["workloads"][0]
+    level = next(i for i in w["inputs"] if i["name"] == "level")
+    assert level["default"] == "L2" and level["workloadDefault"] == "L1"
+    run = c.post(f"/workloads/{wid}/run", json={"project": "whimsy", "inputs": {}})
+    assert run.status_code == 202, run.text
+    rec = _wait(reg, run.json()["runId"])
+    assert rec.input_dict["sourceRepo"] == "apache/whimsy-private" and rec.input_dict["level"] == "L2"
+    _as(PMC)
+    assert c.put(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"level": "L3"}}).status_code == 200
+    _as(ALICE)
+    w = c.get("/workloads", params={"project": "whimsy"}).json()["workloads"][0]
+    assert w["projectDefaults"] == {"level": "L3"}
+
+
+def test_defaults_for_inputs_a_workload_dropped_are_left_out(env):
+    _, _, c = env
+    wid = _publish(c, add_to=None)
+    _as(PMC)
+    c.post(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"commit": "main", "level": "L2"}})
+    _as(ADMIN)
+    assert c.put(f"/workloads/admin/{wid}", json={**ASVS, "inputs": [ASVS["inputs"][0], ASVS["inputs"][2]]}).status_code == 200
+    _as(PMC)
+    w = c.get("/workloads", params={"project": "whimsy"}).json()["workloads"][0]
+    assert w["projectDefaults"] == {"level": "L2"}
+    assert c.put(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": w["projectDefaults"]}).status_code == 200
+
+
+def test_unpublishing_takes_it_off_every_page(env):
+    db, _, c = env
+    wid = _publish(c)
+    _as(ADMIN)
+    assert c.delete(f"/workloads/admin/{wid}").status_code == 204
+    _as(ALICE)
+    out = c.get("/workloads", params={"project": "whimsy"}).json()
+    assert out["workloads"] == [] and out["available"] == []
+    assert db.list_all("project_workloads") == []
+
+
+def test_site_admins_see_projects_that_added_a_workload(env):
+    _, _, c = env
+    _publish(c, add_to="whimsy", projects=["*"])
+    _as(ADMIN)
+    assert {p["project"] for p in c.get("/workloads/projects").json()["projects"]} == {"whimsy"}
+
+
+
+def test_a_pmc_of_one_project_cannot_change_anothers_page(env):
+    _, _, c = env
+    wid = _publish(c, projects=["whimsy", "tomcat"])
+    tomcat_pmc = {"uid": "asf:tpmc", "workspaces": _ws(("tomcat", "admin"))}
+    _as(tomcat_pmc)
+    assert c.post(f"/workloads/{wid}/add", json={"project": "whimsy"}).status_code == 403
+    assert c.put(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"level": "L3"}}).status_code == 403
+    assert c.delete(f"/workloads/{wid}/add", params={"project": "whimsy"}).status_code == 403
+    _as(ALICE)
+    assert c.put(f"/workloads/{wid}/add", json={"project": "whimsy", "defaults": {"level": "L3"}}).status_code == 403
+    w = c.get("/workloads", params={"project": "whimsy"}).json()["workloads"][0]
+    assert w["projectDefaults"] == {}
+
+
+def test_a_workload_called_add_can_still_be_changed_and_unpublished(env):
+    _, _, c = env
+    wid = _publish(c, add_to=None, name="Add")
+    assert wid != "add"
+    _as(ADMIN)
+    assert c.put(f"/workloads/admin/{wid}", json={**ASVS, "name": "Add", "enabled": False}).status_code == 200
+    assert c.delete(f"/workloads/admin/{wid}").status_code == 204
+
+
+def test_admin_routes_win_over_a_workload_called_admin(env):
+    db, _, c = env
+    # One stored before the name was reserved: /admin/add must still reach it.
+    _as(ADMIN)
+    wid = _publish(c, add_to=None)
+    doc = db.get("workloads", wid)
+    doc.update({"_id": "add", "id": "add"})
+    db.save("workloads", "add", doc)
+    assert c.put("/workloads/admin/add", json={**ASVS, "enabled": False}).status_code == 200
+    assert c.delete("/workloads/admin/add").status_code == 204
+
+
+def test_a_blank_project_is_refused(env):
+    _, _, c = env
+    _publish(c, projects=["*"])
+    _as({"uid": "asf:nobody", "workspaces": []})
+    assert c.get("/workloads", params={"project": ""}).status_code == 400
+    _as(ALICE)
+    assert c.get("/workloads", params={"project": ""}).status_code == 400
+
+
+def test_defaults_that_no_longer_hold_are_dropped(env):
+    _, reg, c = env
+    wid = _publish(c, add_to=None)
+    _as(PMC)
+    r = c.post(f"/workloads/{wid}/add", json={"project": "whimsy",
+                                              "defaults": {"sourceRepo": "apache/whimsy-x", "level": "L3"}})
+    assert r.status_code == 201, r.text
+    _as(ADMIN)
+    tighter = {**ASVS, "repositories": {"whimsy": ["apache/whimsy"]},
+               "inputs": [ASVS["inputs"][0], ASVS["inputs"][1],
+                          {**ASVS["inputs"][2], "choices": ["L1", "L2"]}]}
+    assert c.put(f"/workloads/admin/{wid}", json=tighter).status_code == 200
+    _as(ALICE)
+    w = c.get("/workloads", params={"project": "whimsy"}).json()["workloads"][0]
+    assert w["projectDefaults"] == {}
+    shown = {i["name"]: i["default"] for i in w["inputs"]}
+    assert shown["sourceRepo"] == "apache/whimsy" and shown["level"] == "L1"
+    run = c.post(f"/workloads/{wid}/run", json={"project": "whimsy", "inputs": {}})
+    assert run.status_code == 202, run.text
+    rec = _wait(reg, run.json()["runId"])
+    # The run uses what the page showed.
+    assert rec.input_dict["sourceRepo"] == "apache/whimsy" and rec.input_dict["level"] == "L1"
+
+
+def test_no_longer_offered_means_off_the_page(env):
+    db, _, c = env
+    wid = _publish(c, projects=["whimsy", "tomcat"])
+    _as(ADMIN)
+    assert c.put(f"/workloads/admin/{wid}", json={**ASVS, "enabled": False}).status_code == 200
+    assert len(db.list_all("project_workloads")) == 1      # switched off: a pause
+    assert c.put(f"/workloads/admin/{wid}", json={**ASVS, "projects": ["tomcat"]}).status_code == 200
+    assert db.list_all("project_workloads") == []
+    assert c.put(f"/workloads/admin/{wid}", json={**ASVS, "projects": ["whimsy"]}).status_code == 200
+    _as(ALICE)
+    assert c.get("/workloads", params={"project": "whimsy"}).json()["workloads"] == []
+
+
+def test_project_names_are_checked(env):
+    _, _, c = env
+    _as(ADMIN)
+    assert c.post("/workloads/admin", json={**ASVS, "projects": ["Whimsy"]}).status_code == 422
+    assert c.post("/workloads/admin", json={**ASVS, "repositories": {"Tooling": ["apache/tooling"]}}).status_code == 422
+
+
+def test_the_catalog_says_which_pages_have_it(env):
+    _, _, c = env
+    wid = _publish(c)
+    _as(ADMIN)
+    out = c.get("/workloads/admin").json()["workloads"]
+    assert [(w["id"], w["addedTo"]) for w in out] == [(wid, ["whimsy"])]

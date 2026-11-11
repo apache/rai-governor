@@ -16,6 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 INPUT_NAME_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 WORKLOAD_ID_RE = re.compile(r"\A[a-z0-9][a-z0-9-]{0,63}\Z")
+# A project's name, as auth.project_access.PROJECT_RE (not imported, to
+# keep models free of the auth package).
+PROJECT_NAME_RE = re.compile(r"\A[a-z0-9][a-z0-9-]{0,63}\Z")
 
 
 class WorkloadInput(BaseModel):
@@ -90,6 +93,10 @@ class WorkloadBody(BaseModel):
         overlap = set(names) & set(self.fixed_inputs)
         if overlap:
             raise ValueError(f"inputs both set by committers and fixed: {sorted(overlap)}")
+        bad = [p for p in self.projects if p != "*" and not PROJECT_NAME_RE.match(p)]
+        bad += [p for p in self.repositories if not PROJECT_NAME_RE.match(p)]
+        if bad:
+            raise ValueError(f"not project names: {sorted(set(bad))}")
         return self
 
 
