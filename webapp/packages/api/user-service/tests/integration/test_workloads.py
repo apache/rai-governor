@@ -356,8 +356,10 @@ def test_site_admins_see_projects_that_added_a_workload(env):
     _, _, c = env
     _publish(c, add_to="whimsy", projects=["*"])
     _as(ADMIN)
-    assert {p["project"] for p in c.get("/workloads/projects").json()["projects"]} == {"whimsy"}
-
+    out = c.get("/workloads/projects").json()
+    assert {p["project"] for p in out["projects"]} == {"whimsy"} and out["isSiteAdmin"] is True
+    _as(ALICE)
+    assert c.get("/workloads/projects").json()["isSiteAdmin"] is False
 
 
 def test_a_pmc_of_one_project_cannot_change_anothers_page(env):

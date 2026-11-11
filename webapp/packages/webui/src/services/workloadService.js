@@ -18,7 +18,16 @@ async function request(path, options = {}) {
   let detail = `Request failed: ${response.status}`;
   try {
     const data = await response.json();
-    if (data && data.detail) detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+    if (data && data.detail) {
+      if (typeof data.detail === 'string') detail = data.detail;
+      // FastAPI's validation errors: say which field and what's wrong.
+      else if (Array.isArray(data.detail)) {
+        detail = data.detail.map((d) => {
+          const where = (d.loc || []).filter((x) => x !== 'body').join(' › ');
+          return where ? `${where}: ${(d.msg || '').replace(/^Value error, /, '')}` : (d.msg || '');
+        }).join('; ');
+      } else detail = JSON.stringify(data.detail);
+    }
   } catch {
     // Not JSON: keep the status message.
   }
@@ -34,6 +43,47 @@ const workloadService = {
 
   list(project) {
     return request(`/workloads?project=${enc(project)}`);
+  },
+
+  // A project's PMC puts a published workload on the project's page, with
+  // the project's defaults, changes those, or takes it off.
+  add(workloadId, project, defaults = {}) {
+    return request(`/workloads/${enc(workloadId)}/add`, {
+      method: 'POST',
+      body: JSON.stringify({ project, defaults }),
+    });
+  },
+
+  setDefaults(workloadId, project, defaults = {}) {
+    return request(`/workloads/${enc(workloadId)}/add`, {
+      method: 'PUT',
+      body: JSON.stringify({ project, defaults }),
+    });
+  },
+
+  remove(workloadId, project) {
+    return request(`/workloads/${enc(workloadId)}/add?project=${enc(project)}`, { method: 'DELETE' });
+  },
+
+  // The catalog, for site admins: whole workloads, fixed inputs included.
+  catalog() {
+    return request('/workloads/admin');
+  },
+
+  publish(body) {
+    return request('/workloads/admin', { method: 'POST', body: JSON.stringify(body) });
+  },
+
+  update(workloadId, body) {
+    return request(`/workloads/admin/${enc(workloadId)}`, { method: 'PUT', body: JSON.stringify(body) });
+  },
+
+  unpublish(workloadId) {
+    return request(`/workloads/admin/${enc(workloadId)}`, { method: 'DELETE' });
+  },
+
+  deployments() {
+    return request('/deployments');
   },
 
   run(workloadId, project, inputs) {

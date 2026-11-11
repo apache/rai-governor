@@ -15,6 +15,8 @@ import MemoryPage from '../pages/MemoryPage';
 import MemoryEntryPage from '../pages/MemoryEntryPage';
 import WorkloadsPage from '../pages/WorkloadsPage';
 import RunPage from '../pages/RunPage';
+import WorkloadCatalogPage from '../pages/WorkloadCatalogPage';
+import WorkloadEditorPage from '../pages/WorkloadEditorPage';
 import RunsScreen from '../pages/AgentCreationFlow/RunsScreen';
 import DeployScreen from '../pages/AgentCreationFlow/DeployScreen';
 import SelectApisScreen from '../pages/DemoCreationFlow/SelectApisScreen';
@@ -84,6 +86,20 @@ export const defaultRoutes = [
   {
     path: '/run/:runId',
     element: <RunPage />,
+  },
+  {
+    // Site admins: what's published to projects. Not under /workloads,
+    // which the API owns.
+    path: '/workload-catalog',
+    element: <WorkloadCatalogPage />,
+  },
+  {
+    path: '/workload-catalog/new',
+    element: <WorkloadEditorPage />,
+  },
+  {
+    path: '/workload-catalog/:id',
+    element: <WorkloadEditorPage />,
   },
   {
     // Not /memory: the API owns that prefix (see the /jobs note above).

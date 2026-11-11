@@ -190,7 +190,9 @@ async def my_projects(
             names |= {p for p in w.projects if p != "*"}
         names |= {p for ps in ws.adopters(db).values() for p in ps}
     return {"projects": [{"project": p, "role": "admin" if is_admin(user, p) else "member"}
-                         for p in sorted(names)]}
+                         for p in sorted(names)],
+            # Whether to offer the catalog and opening any project.
+            "isSiteAdmin": bool(user.get("is_site_admin"))}
 
 
 @router.get("/{workload_id}")
