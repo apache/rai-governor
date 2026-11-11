@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import secrets
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -31,7 +32,7 @@ from .entry import (
     TrustTier,
     new_entry_id,
 )
-from .index import MemoryIndex
+from .index import INDEX_DB as INDEX_DB_NAME, MemoryIndex
 
 # Recall is a cheap model through the gateway, never a provider key held here.
 RECALL_PROVIDER = os.getenv("MEMORY_RECALL_PROVIDER", "llmao")
@@ -196,8 +197,12 @@ class MemoryService:
         reviewer: str,
         why: str = "",
         review_by: Optional[date] = None,
+        batch: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Record a person's judgement of an entry, then write the version it makes.
+
+        ``batch`` ties the record to a batch review, which can be undone as
+        one. The record keeps the frontmatter the review replaced, for undo.
 
         The record goes first, as tooling-memory's promote does: a review that
         cannot be recorded is not made, and a version that then fails to write
@@ -217,6 +222,7 @@ class MemoryService:
             raise Refused(f"{entry_id} is {front.trust_tier.value} already")
 
         before = entry.render()
+        before_front = front.to_dict()
         if target is not None:
             front.trust_tier = target
         if action is ReviewAction.DEMOTE:
@@ -243,12 +249,139 @@ class MemoryService:
             "new_digest": _digest(after),
             "review_by": front.review_by.isoformat() if front.review_by else None,
             "at": now.isoformat().replace("+00:00", "Z"),
+            "before": before_front,
         }
+        if batch:
+            record["batch"] = batch
         doc_id = f"{entry_id}:{now.strftime('%Y%m%dT%H%M%S.%fZ')}"
         await asyncio.to_thread(self.index.db.save, REVIEWS_DB, doc_id, record)
         await asyncio.to_thread(self.blobs.put, entry)
         await asyncio.to_thread(self.index.upsert, entry)
         return {"frontmatter": front.to_dict(), "review": record}
+
+    async def _record(self, entry: Entry, action: str, by: str, why: str,
+                      before_front: Dict[str, Any], before_text: str, batch: str,
+                      extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Write a review record for a change made outside review(): a
+        superseded entry brought back, or an undo."""
+        front = entry.front
+        now = datetime.now(timezone.utc)
+        record = {
+            "domain": front.domain, "entry": front.id, "action": action,
+            "tier": front.trust_tier.value, "by": by, "author": front.author, "why": why,
+            "classification": front.classification.value,
+            "digest": _digest(before_text), "new_digest": _digest(entry.render()),
+            "review_by": front.review_by.isoformat() if front.review_by else None,
+            "at": now.isoformat().replace("+00:00", "Z"),
+            "before": before_front, "batch": batch, **(extra or {}),
+        }
+        await asyncio.to_thread(
+            self.index.db.save, REVIEWS_DB, f"{front.id}:{now.strftime('%Y%m%dT%H%M%S.%fZ')}", record)
+        await asyncio.to_thread(self.blobs.put, entry)
+        await asyncio.to_thread(self.index.upsert, entry)
+        return record
+
+    async def batch_review(
+        self,
+        ids: List[str],
+        action: ReviewAction,
+        reviewer: str,
+        why: str = "",
+        review_by: Optional[date] = None,
+        restore_superseded: bool = False,
+        may_review=None,
+        may_read=None,
+    ) -> Dict[str, Any]:
+        """One decision over many entries, each recorded on its own with the
+        batch id. An entry that can't take it (the reviewer wrote it, it's
+        not live, the tier is wrong, the caller may not review its domain)
+        is skipped and listed, not the whole batch refused.
+
+        ``restore_superseded`` with a demote brings back, live, what each
+        demoted entry had superseded, if nothing has replaced it since.
+        """
+        why = (why or "").strip()
+        if action is not ReviewAction.KEEP and not why:
+            raise Refused("say why: what was checked, and against what")
+        batch = "b-" + datetime.now(timezone.utc).strftime("%Y%m%d") + "-" + secrets.token_hex(4)
+        applied, skipped, restored = [], [], []
+        for entry_id in dict.fromkeys(ids):
+            try:
+                entry = await self.get(entry_id)
+                if may_read is not None and not may_read(entry.front.domain):
+                    raise NotFound(entry_id)
+                if may_review is not None and not may_review(entry.front.domain):
+                    raise Refused(f"You can read {entry.front.domain} but not review it")
+                await self.review(entry_id, action, reviewer, why, review_by, batch=batch)
+                applied.append(entry_id)
+            except NotFound:
+                skipped.append({"id": entry_id, "reason": "No such entry"})
+                continue
+            except OwnEntry:
+                skipped.append({"id": entry_id, "reason": "You wrote it; someone else reviews it"})
+                continue
+            except (Refused, EntryError) as exc:
+                skipped.append({"id": entry_id, "reason": str(exc)})
+                continue
+            old_id = entry.front.supersedes
+            if restore_superseded and action is ReviewAction.DEMOTE and old_id:
+                try:
+                    old = await self.get(old_id)
+                except NotFound:
+                    continue
+                # Not one the reviewer wrote (the approver is never the
+                # proposer), and not if a live entry other than this one
+                # supersedes it: that would leave two versions live.
+                others = await asyncio.to_thread(
+                    self.index.db.find, INDEX_DB_NAME, {"supersedes": old_id}, None, None)
+                replaced_elsewhere = any(
+                    r.get("id") != entry_id and r.get("status") not in ("demoted", "superseded", "erased")
+                    for r in others)
+                if (old.front.status is Status.SUPERSEDED and old.front.domain == entry.front.domain
+                        and old.front.author != reviewer and not replaced_elsewhere):
+                    before_text, before_front = old.render(), old.front.to_dict()
+                    old.front.status = None
+                    await self._record(old, "restore", reviewer,
+                                       f"{entry_id} demoted in batch {batch}: {why}",
+                                       before_front, before_text, batch)
+                    restored.append(old_id)
+        return {"batch": batch, "action": action.value, "applied": applied,
+                "skipped": skipped, "restored": restored}
+
+    async def undo_batch(self, batch: str, reviewer: str, may_review=None) -> Dict[str, Any]:
+        """Put back what a batch changed, where nothing has changed it since.
+        Each entry put back gets an undo record of its own."""
+        records = await asyncio.to_thread(self.index.db.find, REVIEWS_DB, {"batch": batch}, None, None)
+        records = [r for r in records if r.get("action") != "undo"]
+        # Records in domains the caller can't review don't exist for them:
+        # not undone, not listed, and a batch with none left is missing.
+        if may_review is not None:
+            records = [r for r in records if may_review(r.get("domain") or "")]
+        if not records:
+            raise NotFound(batch)
+        undo = "u-" + batch
+        undone, skipped = [], []
+        # Newest first: a restore after its demote is undone before it.
+        for rec in sorted(records, key=lambda r: r.get("at") or "", reverse=True):
+            entry_id = rec.get("entry")
+            try:
+                entry = await self.get(entry_id)
+            except NotFound:
+                skipped.append({"id": entry_id, "reason": "No such entry"})
+                continue
+            if entry.front.author == reviewer:
+                # Undoing a demote is a review too: not of your own entry.
+                skipped.append({"id": entry_id, "reason": "You wrote it; someone else reviews it"})
+                continue
+            if _digest(entry.render()) != rec.get("new_digest") or not rec.get("before"):
+                skipped.append({"id": entry_id, "reason": "Changed since the batch; left as it is"})
+                continue
+            before_text, before_front = entry.render(), entry.front.to_dict()
+            entry.front = Frontmatter.from_dict(rec["before"])
+            await self._record(entry, "undo", reviewer, f"undo of batch {batch}",
+                               before_front, before_text, undo, {"undoes": batch})
+            undone.append(entry_id)
+        return {"batch": batch, "undo": undo, "undone": undone, "skipped": skipped}
 
     async def history(self, entry_id: str) -> Dict[str, Any]:
         """The versions an entry replaced and the reviews it had, oldest first."""

@@ -80,6 +80,11 @@ class ReviewBody(BaseModel):
     review_by: Optional[date] = None
 
 
+class BatchReviewBody(ReviewBody):
+    ids: List[str] = Field(..., min_length=1, max_length=1000)
+    restore_superseded: bool = False
+
+
 @router.get("/domains")
 async def domains(
     user: dict = Depends(get_current_user),
@@ -159,6 +164,44 @@ def run_summary(run_id: str, user: dict) -> Dict[str, Any]:
     s = rec.to_summary()
     s.pop("inputDict", None)
     return {**s, "visible": True}
+
+
+@router.post("/reviews/batch")
+async def batch_review(
+    body: BatchReviewBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """One decision over many entries (B11). Each entry gets its own review
+    record with the batch id; entries that can't take it are skipped and
+    listed: the caller wrote them, they aren't live, the tier is wrong, or
+    the caller may not review their domain (reported as missing)."""
+    try:
+        return await get_memory_service(db).batch_review(
+            body.ids, body.action, human_author(user["uid"]), body.why, body.review_by,
+            restore_superseded=body.restore_superseded,
+            may_read=lambda d: access.exists(d) and access.can_read(user, d),
+            may_review=lambda d: access.can_write(user, d),
+        )
+    except Refused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/reviews/batch/{batch_id}/undo")
+async def undo_batch(
+    batch_id: str,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """Put back what a batch changed, entry by entry, where nothing has
+    changed it since. Needs the right to review each entry's domain."""
+    try:
+        return await get_memory_service(db).undo_batch(
+            batch_id, human_author(user["uid"]),
+            may_review=lambda d: access.exists(d) and access.can_read(user, d) and access.can_write(user, d),
+        )
+    except NotFound:
+        raise HTTPException(status_code=404, detail="No such batch")
 
 
 @router.get("/by-run/{run_id}")
