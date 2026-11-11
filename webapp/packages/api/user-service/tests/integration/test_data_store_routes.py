@@ -60,3 +60,61 @@ def test_namespaces_without_slashes_still_work():
     c = _client()
     assert c.get(_url("plain")).json()["recordCount"] == 1
     assert c.get(_url("plain", "records", "k")).json()["value"] == "v"
+
+
+class _ProjectingDB(MemoryDBService):
+    """Returns only the fields asked for, as CouchDB does, and records
+    every find, so a test can see whether values were read."""
+
+    def __init__(self):
+        super().__init__()
+        self.finds = []
+
+    def find(self, db_name, selector, fields=None, limit=10000, **kw):
+        self.finds.append((db_name, fields))
+        docs = super().find(db_name, selector, fields=None, limit=limit, **kw)
+        if fields:
+            keep = set(fields) | {"_id"}
+            docs = [{k: v for k, v in d.items() if k in keep} for d in docs]
+        return docs
+
+
+def test_namespace_stats_never_read_values():
+    """Listing namespaces read every record's value to total sizes: for a
+    downloaded repository, every file. The home page did it on each load."""
+    import json
+    def value_size(v):
+        return len(json.dumps(v))
+    db = _ProjectingDB()
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_async_db] = lambda: AsyncDatabaseService(db)
+    app.dependency_overrides[get_current_user] = lambda: USER
+    store = get_data_store_service(db)
+    big = "x" * 50_000
+    store.set("asf:akm", "files:apache/steve", "a.py", big, agent_name="asvs_download_repo")
+    store.set_many("asf:akm", [("files:apache/steve", "b.py", "print(1)", None),
+                               ("files:apache/steve", "c.py", {"n": 1}, None)],
+                   agent_name="asvs_download_repo")
+    c = TestClient(app)
+    db.finds.clear()
+
+    listing = c.get("/data-store/namespaces").json()
+    one = c.get(_url("files:apache/steve")).json()
+
+    want = value_size(big) + value_size("print(1)") + value_size({"n": 1})
+    assert [n["sizeBytes"] for n in listing["namespaces"]] == [want] and one["sizeBytes"] == want
+    assert listing["namespaces"][0]["recordCount"] == 3 and one["recordCount"] == 3
+    assert one["agents"] == ["asvs_download_repo"]
+    stats_finds = [f for d, f in db.finds if d == "agent_data_store"]
+    assert stats_finds and all(f and "value" not in f for f in stats_finds), db.finds
+
+
+def test_a_rewrite_stores_the_new_size():
+    db = MemoryDBService()
+    store = get_data_store_service(db)
+    store.set("asf:akm", "n", "k", "short")
+    store.set("asf:akm", "n", "k", "a much longer value")       # conflict path: merge
+    store.set_many("asf:akm", [("n", "k", "x" * 10, None), ("n", "k2", "y", None)])  # existing and new
+    docs = {d["key"]: d for d in db.list_all("agent_data_store")}
+    assert docs["k"]["sizeBytes"] == len('"' + "x" * 10 + '"') and docs["k2"]["sizeBytes"] == 3

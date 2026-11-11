@@ -1863,8 +1863,14 @@ def _get_data_store_dep(db: DatabaseService = Depends(get_db)) -> DataStoreServi
     return get_data_store_service(db)
 
 
+# What namespace stats read of each record: never the value, which for a
+# downloaded repository is every file in it. Reading values here pulled
+# whole data stores from CouchDB on each home page load (ISSUE-034).
+STATS_FIELDS = ["namespace", "sizeBytes", "createdByAgent", "lastAccessedByAgent", "updatedAt"]
+
+
 def _namespace_stats_from_docs(docs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Aggregate raw record docs into per-namespace stats.
+    """Aggregate record docs (STATS_FIELDS of them) into per-namespace stats.
 
     Returned shape:
       { namespace: {recordCount, sizeBytes, agents, updatedAt} }
@@ -1873,7 +1879,7 @@ def _namespace_stats_from_docs(docs: List[Dict[str, Any]]) -> Dict[str, Dict[str
     across every record. sizeBytes is a JSON-size estimate — cheap to compute
     and good enough for the UI's "1.2 MB" chips.
     """
-    import json as _json
+    from services.data_store_service import value_size
     buckets: Dict[str, Dict[str, Any]] = {}
     for doc in docs:
         ns = doc.get("namespace") or "default"
@@ -1881,10 +1887,12 @@ def _namespace_stats_from_docs(docs: List[Dict[str, Any]]) -> Dict[str, Dict[str
             "recordCount": 0, "sizeBytes": 0, "agents": set(), "updatedAt": None,
         })
         b["recordCount"] += 1
-        try:
-            b["sizeBytes"] += len(_json.dumps(doc.get("value")))
-        except (TypeError, ValueError):
-            pass
+        # Stored at write time. A record from before that has none; it
+        # counts as its value's size when the value was read, else 0.
+        if doc.get("sizeBytes") is not None:
+            b["sizeBytes"] += doc["sizeBytes"]
+        elif "value" in doc:
+            b["sizeBytes"] += value_size(doc.get("value"))
         for agent_field in ("createdByAgent", "lastAccessedByAgent"):
             v = doc.get(agent_field)
             if v:
@@ -1920,9 +1928,7 @@ async def list_data_store_namespaces(
 ):
     """List every namespace with aggregate stats for the current user."""
     user_id = _store_owner(user, project, write=False)
-    # list_all + filter: simpler than adding a new service method, and
-    # record counts are typically small. Could move to indexed query later.
-    all_docs = await db.find("agent_data_store", {"userId": user_id})
+    all_docs = await db.find("agent_data_store", {"userId": user_id}, fields=STATS_FIELDS, limit=None)
     stats_map = _namespace_stats_from_docs(all_docs)
     namespaces = [
         NamespaceStats(namespace=ns, **data)
@@ -1983,7 +1989,8 @@ def get_namespace_stats(
 ):
     """Stats for a single namespace (record count, size, agents, last update)."""
     user_id = _store_owner(user, project, write=False)
-    docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace})
+    docs = db.find("agent_data_store", {"userId": user_id, "namespace": namespace},
+                   fields=STATS_FIELDS, limit=None)
     stats = _namespace_stats_from_docs(docs)
     if namespace not in stats:
         return NamespaceStats(namespace=namespace, recordCount=0, sizeBytes=0, agents=[])

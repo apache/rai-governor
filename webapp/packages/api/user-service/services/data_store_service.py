@@ -29,6 +29,15 @@ _STANDARD_INDEXES = [
 ]
 
 
+
+def value_size(value: Any) -> int:
+    """A record's size as JSON, stored with it (sizeBytes) so listing
+    namespaces needn't read every value to total them."""
+    try:
+        return len(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return 0
+
 class DataStoreService:
     """Service for agent data store operations."""
 
@@ -155,6 +164,7 @@ class DataStoreService:
             "namespace": namespace,
             "key": key,
             "value": value,
+            "sizeBytes": value_size(value),
             "metadata": metadata or {},
             "createdByAgent": agent_name,
             "lastAccessedByAgent": agent_name,
@@ -177,6 +187,7 @@ class DataStoreService:
         record_data = {
             **existing,
             "value": value,
+            "sizeBytes": value_size(value),
             "updatedAt": now.isoformat(),
         }
         if metadata:
@@ -373,6 +384,7 @@ class DataStoreService:
                 doc = {
                     **existing,
                     "value": value,
+                    "sizeBytes": value_size(value),
                     "updatedAt": now_iso,
                 }
                 if metadata:
@@ -387,6 +399,7 @@ class DataStoreService:
                     "namespace": ns,
                     "key": key,
                     "value": value,
+                    "sizeBytes": value_size(value),
                     "metadata": metadata or {},
                     "createdByAgent": agent_name,
                     "lastAccessedByAgent": agent_name,
