@@ -59,10 +59,10 @@ def test_reads_one_row_per_namespace():
                                "updatedAt": "2025-11-11T10:00:00"},
         "notes": {"recordCount": 1, "sizeBytes": 7, "agents": [], "updatedAt": None},
     }
-    assert [(n, o["group_level"], o["startkey"], o["endkey"]) for n, o in db.views] == [
+    assert sorted((n, o["group_level"], o["startkey"], o["endkey"]) for n, o in db.views) == [
+        ("gofannon_ns/agents", 3, ["asf:akm"], ["asf:akm", {}]),
         ("gofannon_ns/size", 2, ["asf:akm"], ["asf:akm", {}]),
         ("gofannon_ns/updated", 2, ["asf:akm"], ["asf:akm", {}]),
-        ("gofannon_ns/agents", 3, ["asf:akm"], ["asf:akm", {}]),
     ]
     # A page must never wait on indexing.
     assert all(o.get("update") == "lazy" for _, o in db.views)
@@ -105,3 +105,74 @@ def test_only_built_in_reduces():
     """A JavaScript reduce took 100 s for 4,000 namespaces in production."""
     from services.database_service.couchdb import STATS_DDOC
     assert {v["reduce"] for v in STATS_DDOC["views"].values()} <= {"_stats", "_count", "_sum"}
+
+
+def test_reads_the_three_views_at_once():
+    """In turn they took about 7 s on 400,000 records: three views, ~2 s each.
+    Each view here waits for the other two; read in turn, they never meet."""
+    import threading
+    meet = threading.Barrier(3, timeout=2)
+
+    class MeetingDB(FakeDB):
+        def view(self, name, **opts):
+            meet.wait()
+            return super().view(name, **opts)
+
+    out = _service(MeetingDB()).namespace_stats("asf:akm")
+    assert out["notes"]["recordCount"] == 1
+
+
+def test_keeps_an_answer_until_a_write_or_it_expires(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(cdb.time, "monotonic", lambda: clock[0])
+    db = FakeDB()
+    s = _service(db)
+    first = s.namespace_stats("asf:akm")
+    first["notes"]["recordCount"] = 99          # a caller's copy, not the kept one
+    assert s.namespace_stats("asf:akm")["notes"]["recordCount"] == 1
+    assert len(db.views) == 3                   # the second came from memory
+
+    s.forget_namespace_stats("someone-else")
+    s.namespace_stats("asf:akm")
+    assert len(db.views) == 3
+    s.forget_namespace_stats("asf:akm")
+    s.namespace_stats("asf:akm")
+    assert len(db.views) == 6
+
+    clock[0] += cdb.STATS_CACHE_SECONDS + 1
+    s.namespace_stats("asf:akm")
+    assert len(db.views) == 9
+
+
+def test_a_failed_read_is_not_kept(monkeypatch):
+    monkeypatch.setattr(cdb.DatabaseService, "namespace_stats",
+                        lambda self, u, n=None: {"x": {}})
+    db = FakeDB(fail=True)
+    s = _service(db)
+    s.namespace_stats("asf:akm")
+    db.fail = False
+    assert "notes" in s.namespace_stats("asf:akm")
+
+
+def test_data_store_writes_forget_the_owners_totals():
+    from services.data_store_service import DataStoreService
+    from services.database_service.memory import MemoryDBService
+
+    class Recording(MemoryDBService):
+        def __init__(self):
+            super().__init__()
+            self.forgot = []
+
+        def forget_namespace_stats(self, user_id):
+            self.forgot.append(user_id)
+
+    db = Recording()
+    store = DataStoreService(db)
+    store.set("u", "ns", "a", 1)
+    store.set("u", "ns", "a", 2)                # the conflict path
+    store.set_many("u", [("ns", "b", 3, None)])
+    store.delete("u", "ns", "a")
+    store.delete_many("u", "ns", ["b"])
+    store.set("u", "ns", "c", 4)
+    store.clear_namespace("u", "ns")
+    assert db.forgot == ["u"] * 7

@@ -86,6 +86,12 @@ class DataStoreService:
                 pass
         self._indexed_namespaces.add(cache_key)
 
+    def _forget_stats(self, user_id: str) -> None:
+        """After a write: the owner's kept namespace totals are out of date."""
+        forget = getattr(self.db, "forget_namespace_stats", None)
+        if forget:
+            forget(user_id)
+
     def _make_doc_id(self, user_id: str, namespace: str, key: str) -> str:
         """Generate document ID from composite key."""
         import base64
@@ -177,6 +183,7 @@ class DataStoreService:
         try:
             saved = self.db.save(DATA_STORE_DB, doc_id, new_doc)
             new_doc["_rev"] = saved.get("rev")
+            self._forget_stats(user_id)
             return new_doc
         except HTTPException as e:
             if e.status_code != 409:
@@ -198,6 +205,7 @@ class DataStoreService:
 
         saved = self.db.save(DATA_STORE_DB, doc_id, record_data)
         record_data["_rev"] = saved.get("rev")
+        self._forget_stats(user_id)
         return record_data
 
     def delete(self, user_id: str, namespace: str, key: str) -> bool:
@@ -208,6 +216,7 @@ class DataStoreService:
 
         try:
             self.db.delete(DATA_STORE_DB, doc_id)
+            self._forget_stats(user_id)
             # Again after the delete: a read between the first forget and
             # the delete could have queued the doc again.
             self._access_accumulator.forget([doc_id])
@@ -432,6 +441,7 @@ class DataStoreService:
             except Exception:
                 pass  # Best-effort; caller can retry the whole batch.
 
+        self._forget_stats(user_id)
         return count
 
     def clear_namespace(self, user_id: str, namespace: str) -> int:
@@ -450,6 +460,7 @@ class DataStoreService:
         self._access_accumulator.forget(doc_ids)
         results = self.db.delete_many(DATA_STORE_DB, doc_ids)
         self._access_accumulator.forget(doc_ids)
+        self._forget_stats(user_id)
         return sum(1 for r in results if r.get("ok"))
 
 
@@ -477,6 +488,7 @@ class DataStoreService:
         self._access_accumulator.forget(doc_ids)
         results = self.db.delete_many(DATA_STORE_DB, doc_ids)
         self._access_accumulator.forget(doc_ids)
+        self._forget_stats(user_id)
         return sum(1 for r in results if r.get("ok"))
 
 

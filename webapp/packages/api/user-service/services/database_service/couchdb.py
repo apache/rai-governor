@@ -1,3 +1,7 @@
+import copy
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 import couchdb
@@ -16,6 +20,8 @@ from .base import DatabaseService
 # CouchDB indexes it again.
 STATS_DDOC_ID = "_design/gofannon_ns"
 STATS_DDOC_VERSION = 1
+# How long a namespace listing is kept before the views are read again.
+STATS_CACHE_SECONDS = 30
 _IS_RECORD = "doc.userId && doc.key !== undefined"
 STATS_DDOC = {
     "_id": STATS_DDOC_ID,
@@ -381,7 +387,43 @@ class CouchDBService(DatabaseService):
         update=lazy: CouchDB answers from the index as it stands and brings
         it up to date afterwards, so a page never waits on indexing; totals
         trail the latest writes by at most one request. While the views are
-        first being built they answer at once with what's indexed so far."""
+        first being built they answer at once with what's indexed so far.
+
+        The three views are read at once, not in turn, and the answer is
+        kept for STATS_CACHE_SECONDS: each takes about 2 s on 400,000
+        records, and the home page asks on every load and every return to
+        its tab. A data-store write in this process forgets its owner's
+        totals (forget_namespace_stats); another worker's writes show when
+        the kept answer expires."""
+        key = (user_id, namespace)
+        now = time.monotonic()
+        lock, cache = self._stats_cache_state()
+        with lock:
+            hit = cache.get(key)
+        if hit and now - hit[0] < STATS_CACHE_SECONDS:
+            return copy.deepcopy(hit[1])
+        out = self._namespace_stats_from_views(user_id, namespace)
+        if out is None:
+            return super().namespace_stats(user_id, namespace)
+        with lock:
+            cache[key] = (now, out)
+        return copy.deepcopy(out)
+
+    def forget_namespace_stats(self, user_id: str) -> None:
+        lock, cache = self._stats_cache_state()
+        with lock:
+            for key in [k for k in cache if k[0] == user_id]:
+                del cache[key]
+
+    def _stats_cache_state(self):
+        """(lock, {(owner, namespace): (when, totals)}), made on first use."""
+        if not hasattr(self, "_stats_cache"):
+            self._stats_cache_lock = threading.Lock()
+            self._stats_cache: Dict[Any, Any] = {}
+        return self._stats_cache_lock, self._stats_cache
+
+    def _namespace_stats_from_views(self, user_id: str, namespace: Optional[str]):
+        """The totals, or None when the views can't answer."""
         from datetime import datetime, timezone
         from services.data_store_stats import DATA_STORE_DB
         try:
@@ -393,21 +435,26 @@ class CouchDBService(DatabaseService):
                 lo, hi = [user_id, namespace], [user_id, namespace, {}]
             ddoc = STATS_DDOC_ID.split("/", 1)[1]
 
-            def rows(view, level):
-                return db.view(f"{ddoc}/{view}", group_level=level, startkey=lo, endkey=hi,
-                               update="lazy")
+            def rows(view_level):
+                view, level = view_level
+                return list(db.view(f"{ddoc}/{view}", group_level=level, startkey=lo,
+                                    endkey=hi, update="lazy"))
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                sizes, updated, agents = pool.map(
+                    rows, (("size", 2), ("updated", 2), ("agents", 3)))
 
             out: Dict[str, Dict[str, Any]] = {}
-            for row in rows("size", 2):
+            for row in sizes:
                 out[row.key[1]] = {"recordCount": int(row.value["count"]),
                                    "sizeBytes": int(row.value["sum"]),
                                    "agents": [], "updatedAt": None}
-            for row in rows("updated", 2):
+            for row in updated:
                 latest = row.value["max"]
                 if row.key[1] in out and latest > 0:
                     out[row.key[1]]["updatedAt"] = datetime.fromtimestamp(
                         latest, timezone.utc).replace(tzinfo=None).isoformat()
-            for row in rows("agents", 3):
+            for row in agents:
                 if row.key[1] in out:
                     out[row.key[1]]["agents"].append(row.key[2])
             for v in out.values():
@@ -415,4 +462,4 @@ class CouchDBService(DatabaseService):
             return out
         except Exception as e:
             print(f"namespace_stats: views failed ({type(e).__name__}: {e}); totalling records instead")
-            return super().namespace_stats(user_id, namespace)
+            return None

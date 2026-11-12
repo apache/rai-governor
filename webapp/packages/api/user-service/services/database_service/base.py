@@ -67,6 +67,10 @@ class DatabaseService(abc.ABC):
         from services.data_store_stats import totals_by_find
         return totals_by_find(self, user_id, namespace)
 
+    def forget_namespace_stats(self, user_id: str) -> None:
+        """Drop any totals kept for this owner, after a write. Nothing to
+        drop unless the backend keeps them (CouchDB)."""
+
     def ensure_index(
         self,
         db_name: str,
