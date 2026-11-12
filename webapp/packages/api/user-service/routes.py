@@ -3,7 +3,7 @@ import copy
 import json
 import traceback
 import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request
@@ -35,6 +35,7 @@ from dependencies import (
 )
 from models.agent import (
     Agent,
+    AgentSummary,
     CreateAgentRequest,
     DeployedApi,
     GenerateCodeRequest,
@@ -562,16 +563,23 @@ def create_agent(
     return agent
 
 
-@router.get("/agents", response_model=List[Agent])
+@router.get("/agents", response_model=Union[List[Agent], List[AgentSummary]])
 async def list_agents(
     req: Request,
     db = Depends(get_async_db),  # async shim — don't block event loop
     user: dict = Depends(get_author_user),
-    logger: ObservabilityService = Depends(get_logger)
+    logger: ObservabilityService = Depends(get_logger),
+    summary: bool = False,
 ):
-    """Lists all saved agents."""
+    """Lists all saved agents.
+
+    ``?summary=true`` sends each agent's name and description without its
+    code, schemas or env: what the agent lists show. The whole list was
+    over 500 KB on production."""
     all_docs = await db.list_all("agents")
     logger.log("user_action", "Listed all agents.", user_id=user.get("uid"), metadata={"request": get_sanitized_request_data(req)})
+    if summary:
+        return [AgentSummary(**doc) for doc in all_docs]
     return [Agent(**doc) for doc in all_docs]
 
 

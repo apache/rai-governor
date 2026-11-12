@@ -23,3 +23,12 @@ describe('agentService.withDeploymentStatus', () => {
     expect(await agentService.withDeploymentStatus([{ _id: 'a1' }])).toEqual([{ _id: 'a1', isDeployed: false }]);
   });
 });
+
+describe('agentService.getAgents', () => {
+  it('asks for names, not every agent\'s code', async () => {
+    vi.spyOn(agentService, '_getAuthHeaders').mockResolvedValue({});
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => [] });
+    await agentService.getAgents();
+    expect(new URL(fetchMock.mock.calls[0][0], 'http://x').searchParams.get('summary')).toBe('true');
+  });
+});

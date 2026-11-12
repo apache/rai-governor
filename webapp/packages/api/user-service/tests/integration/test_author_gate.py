@@ -68,3 +68,21 @@ def test_all_users_setting_opens_authoring_too(monkeypatch):
     monkeypatch.setattr(settings, "AGENT_EXEC_ALLOWED", "all_users")
     _, c = _client(COMMITTER)
     assert c.get("/agents").status_code == 200
+
+
+def test_a_summary_list_leaves_out_code_and_env(monkeypatch):
+    """The home page and the agent list show names. The whole list sent
+    every agent's code and env vars, over 500 KB on production."""
+    monkeypatch.setattr(settings, "AGENT_EXEC_ALLOWED", "site_admins")
+    app, c = _client(ADMIN)
+    db = app.dependency_overrides[get_db]()
+    db.save("agents", "a1", {"_id": "a1", "name": "asvs_audit", "description": "audits",
+                             "code": "x" * 10000, "envVars": [{"key": "K", "value": "secret"}],
+                             "baseName": "asvs_audit", "pipelineLabel": "new"})
+    full = c.get("/agents").json()
+    assert full[0]["code"] == "x" * 10000
+    summary = c.get("/agents?summary=true").json()
+    assert summary == [{"_id": "a1", "name": "asvs_audit", "description": "audits",
+                        "friendlyName": None, "pipeline": None, "pipelineLabel": "new",
+                        "baseName": "asvs_audit", "pipelineSource": None,
+                        "createdAt": None, "updatedAt": None}]

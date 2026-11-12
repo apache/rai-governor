@@ -133,6 +133,27 @@ class Agent(CreateAgentRequest):
 
     # model_config = ConfigDict(populate_by_name=True) # model_config is inherited from CreateAgentRequest
         
+class AgentSummary(BaseModel):
+    """An agent in a list: who it is, never its code (GET /agents?summary=true)."""
+    id: str = Field(alias="_id")
+    name: str
+    description: Optional[str] = None
+    friendly_name: Optional[str] = Field(None, alias="friendlyName")
+    pipeline: Optional[str] = None
+    pipeline_label: Optional[str] = Field(None, alias="pipelineLabel")
+    base_name: Optional[str] = Field(None, alias="baseName")
+    pipeline_source: Optional[Dict[str, Any]] = Field(None, alias="pipelineSource")
+    created_at: Optional[datetime] = Field(None, alias="createdAt")
+    updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        alias_generator=to_camel,
+        extra="ignore",
+        serialize_by_alias=True,
+    )
+
+
 class LlmSettingsForModel(BaseModel):
     """Per-model LLM parameter overrides."""
     max_tokens: Optional[int] = Field(None, alias="maxTokens")

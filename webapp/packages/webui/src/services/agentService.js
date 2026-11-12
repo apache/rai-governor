@@ -273,10 +273,13 @@ class AgentService {
     }
   }
 
+  // Names and descriptions only (?summary=true): every caller lists or
+  // looks up agents by name. The full list carries each agent's code and
+  // was over 500 KB.
   async getAgents() {
     try {
       const authHeaders = await this._getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/agents`, {
+      const response = await fetch(`${API_BASE_URL}/agents?summary=true`, {
         headers: { 
           'Accept': 'application/json',
           ...authHeaders 
