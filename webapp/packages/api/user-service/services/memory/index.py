@@ -190,8 +190,20 @@ class MemoryIndex:
 
     def counts(self, domain: str, today: date) -> Dict[str, int]:
         """Live entries in a domain: how many, how many raw, due, and either (the review queue)."""
+        return self._count(self.db.find(INDEX_DB, {"domain": domain}, limit=None), today)
+
+    def counts_by_domain(self, today: date) -> Dict[str, Dict[str, int]]:
+        """counts() for every domain that has an entry, from one read of the index."""
+        by_domain: Dict[str, List[Dict[str, Any]]] = {}
+        for row in self.db.list_all(INDEX_DB):
+            if row.get("domain"):
+                by_domain.setdefault(row["domain"], []).append(row)
+        return {d: self._count(rows, today) for d, rows in by_domain.items()}
+
+    @staticmethod
+    def _count(rows, today: date) -> Dict[str, int]:
         live = raw = due = queue = 0
-        for row in self.db.find(INDEX_DB, {"domain": domain}, limit=None):
+        for row in rows:
             if row.get("status") in _INACTIVE:
                 continue
             live += 1

@@ -182,6 +182,10 @@ class MemoryService:
         today = today or datetime.now(timezone.utc).date()
         return await asyncio.to_thread(self.index.counts, domain, today)
 
+    async def counts_by_domain(self, today: Optional[date] = None) -> Dict[str, Dict[str, int]]:
+        today = today or datetime.now(timezone.utc).date()
+        return await asyncio.to_thread(self.index.counts_by_domain, today)
+
     async def get(self, entry_id: str) -> Entry:
         row = await asyncio.to_thread(self.index.get, entry_id)
         if not row:

@@ -45,4 +45,10 @@ describe('memoryService', () => {
     expect(await memoryService.isEnabled()).toBe(false);
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it('asks the status route, which counts nothing, not the domain list', async () => {
+    globalThis.fetch.mockResolvedValue(ok({ enabled: true }));
+    expect(await memoryService.isEnabled()).toBe(true);
+    expect(new URL(globalThis.fetch.mock.calls[0][0], 'http://x').pathname).toMatch(/\/memory\/status$/);
+  });
 });

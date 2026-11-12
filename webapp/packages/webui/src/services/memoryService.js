@@ -1,7 +1,7 @@
 // Memory pilot client (ISSUE-026). See the API's routes_memory.py.
 //
 // The API mounts /memory only when MEMORY_ENABLED is true, so a 404 from
-// /memory/domains means the page and its nav link should not show.
+// /memory/status means the page and its nav link should not show.
 import config from '../config';
 
 const API_BASE_URL = config.api.baseUrl;
@@ -29,7 +29,9 @@ async function request(path, options = {}) {
 
 const enc = encodeURIComponent;
 
-// One /memory/domains call per page load decides whether memory is on.
+// One /memory/status call per page load decides whether memory is on.
+// Not /memory/domains: that counts every domain's entries, and every page
+// asks this for its nav link.
 let enabledOnce = null;
 
 const memoryService = {
@@ -40,7 +42,7 @@ const memoryService = {
   // Resolves true or false, never throws.
   isEnabled() {
     if (!enabledOnce) {
-      enabledOnce = this.domains().then(() => true, () => false);
+      enabledOnce = request('/memory/status').then(() => true, () => false);
     }
     return enabledOnce;
   },

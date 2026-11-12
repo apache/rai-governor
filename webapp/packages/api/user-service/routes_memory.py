@@ -11,6 +11,7 @@ an entry in one, with the same message as a missing entry.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any, Dict, List, Optional
 
@@ -85,6 +86,14 @@ class BatchReviewBody(ReviewBody):
     restore_superseded: bool = False
 
 
+@router.get("/status")
+def status(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """Memory is on: these routes are mounted only when it is. Pages ask
+    this, not /domains, to decide whether to show memory: it counts
+    nothing."""
+    return {"enabled": True}
+
+
 @router.get("/domains")
 async def domains(
     user: dict = Depends(get_current_user),
@@ -99,8 +108,15 @@ async def domains(
     names = [d for d in access.shared_domains() if access.can_read(user, d)]
     projects = set(member_projects(user))
     if user.get("is_site_admin"):
-        projects |= {d for d in await service.domains() if access.project_of(d)}
+        # A site admin's list is every domain with entries: one read of the
+        # index finds them and counts them all.
+        counted = await service.counts_by_domain()
+        projects |= {d for d in counted if access.project_of(d)}
     names += sorted(p for p in projects if access.project_of(p))
+    if not user.get("is_site_admin"):
+        # A domain at a time, all at once rather than in turn.
+        counted = dict(zip(names, await asyncio.gather(*(service.counts(n) for n in names))))
+    none = {"entries": 0, "raw": 0, "due": 0, "review": 0}
     out = []
     for name in names:
         can = access.can_write(user, name)
@@ -109,7 +125,7 @@ async def domains(
             "kind": "shared" if access.is_shared(name) else "project",
             "canWrite": can,
             "canReview": can,
-            **await service.counts(name),
+            **counted.get(name, none),
         })
     any_can = any(d["canWrite"] for d in out)
     return {

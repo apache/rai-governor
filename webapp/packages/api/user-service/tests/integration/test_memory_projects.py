@@ -146,6 +146,36 @@ def test_domains_lists_what_each_person_may_read(client):
                              "whimsy": ("project", True)}
 
 
+def test_domain_counts_are_the_same_read_whole_or_one_at_a_time(client, monkeypatch):
+    """A site admin's list counts every domain from one read of the index,
+    not one query per domain; a member's matches it for their domain."""
+    _as(PMC)
+    client.post("/memory/whimsy/entries", json=BODY)
+    client.post("/memory/whimsy/entries", json={**BODY, "summary": "another"})
+    _as(ADMIN)
+    client.post("/memory/dom-scan/entries", json=BODY)
+    finds = []
+    real = client.db.find
+    monkeypatch.setattr(client.db, "find", lambda db, sel, *a, **k: finds.append(db) or real(db, sel, *a, **k))
+
+    def counts(user):
+        _as(user)
+        return {d["domain"]: {k: d[k] for k in ("entries", "raw", "due", "review")}
+                for d in client.get("/memory/domains").json()["domains"]}
+
+    admin = counts(ADMIN)
+    assert "memory_index" not in finds
+    assert admin["whimsy"]["entries"] == 2 and admin["dom-scan"]["entries"] == 1
+    assert counts(COMMITTER) == {"whimsy": admin["whimsy"]}
+
+
+def test_status_says_memory_is_on_without_counting(client, monkeypatch):
+    _as(COMMITTER)
+    monkeypatch.setattr(client.db, "find", lambda *a, **k: pytest.fail("counted"))
+    monkeypatch.setattr(client.db, "list_all", lambda *a, **k: pytest.fail("counted"))
+    assert client.get("/memory/status").json() == {"enabled": True}
+
+
 def test_mistyped_shared_domain_is_404_even_for_a_site_admin(client):
     _as(ADMIN)
     assert client.post("/memory/dom-secret/entries", json=BODY).status_code == 404
