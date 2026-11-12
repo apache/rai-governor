@@ -409,6 +409,24 @@ class CouchDBService(DatabaseService):
             cache[key] = (now, out)
         return copy.deepcopy(out)
 
+    def data_store_namespaces(self, user_id: str) -> List[str]:
+        """From the size view, a row per namespace. {"userId": ...} alone
+        has no Mango index to use, so the find it replaces read every
+        record in the store (400,000 on production) on each run's start.
+        Not lazy and not kept: a run lists namespaces to clear them, and
+        needs the ones written a moment ago."""
+        from services.data_store_stats import DATA_STORE_DB
+        try:
+            db = self._get_or_create_db(DATA_STORE_DB)
+            self._ensure_stats_views(db)
+            ddoc = STATS_DDOC_ID.split("/", 1)[1]
+            rows = db.view(f"{ddoc}/size", group_level=2, startkey=[user_id],
+                           endkey=[user_id, {}])
+            return sorted(row.key[1] for row in rows)
+        except Exception as e:
+            print(f"data_store_namespaces: view failed ({type(e).__name__}: {e}); finding records instead")
+            return super().data_store_namespaces(user_id)
+
     def forget_namespace_stats(self, user_id: str) -> None:
         lock, cache = self._stats_cache_state()
         with lock:

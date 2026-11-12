@@ -176,3 +176,19 @@ def test_data_store_writes_forget_the_owners_totals():
     store.set("u", "ns", "c", 4)
     store.clear_namespace("u", "ns")
     assert db.forgot == ["u"] * 7
+
+
+def test_lists_namespaces_from_the_view_and_up_to_date():
+    """{"userId": u} alone has no index: listing namespaces read every
+    record in the store. A run lists them to clear them, so not lazy."""
+    db = FakeDB()
+    names = _service(db).data_store_namespaces("asf:akm")
+    assert names == ["files:apache/steve", "notes"]
+    (name, opts), = db.views
+    assert (name, opts["group_level"], opts["startkey"]) == ("gofannon_ns/size", 2, ["asf:akm"])
+    assert "update" not in opts
+
+
+def test_lists_namespaces_by_finding_records_when_the_view_fails(monkeypatch):
+    monkeypatch.setattr(cdb.DatabaseService, "data_store_namespaces", lambda self, u: ["x"])
+    assert _service(FakeDB(fail=True)).data_store_namespaces("asf:akm") == ["x"]

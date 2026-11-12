@@ -67,6 +67,13 @@ class DatabaseService(abc.ABC):
         from services.data_store_stats import totals_by_find
         return totals_by_find(self, user_id, namespace)
 
+    def data_store_namespaces(self, user_id: str) -> List[str]:
+        """Every data-store namespace an owner has records in, sorted.
+        Backends that keep a per-namespace index override this (CouchDB)."""
+        from services.data_store_stats import DATA_STORE_DB
+        docs = self.find(DATA_STORE_DB, {"userId": user_id}, fields=["namespace"], limit=None)
+        return sorted({doc.get("namespace") or "default" for doc in docs})
+
     def forget_namespace_stats(self, user_id: str) -> None:
         """Drop any totals kept for this owner, after a write. Nothing to
         drop unless the backend keeps them (CouchDB)."""

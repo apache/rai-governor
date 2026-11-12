@@ -260,14 +260,7 @@ class DataStoreService:
         exists before querying specific namespaces.
         """
         check_should_stop()  # ISSUE-007
-        docs = self.db.find(
-            DATA_STORE_DB,
-            {"userId": user_id},
-            fields=["namespace"],
-            limit=None,
-        )
-        namespaces = {doc.get("namespace") or "default" for doc in docs}
-        return sorted(namespaces)
+        return self.db.data_store_namespaces(user_id)
 
     def get_all(
         self,

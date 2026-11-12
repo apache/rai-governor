@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import Mock, MagicMock, call, patch
 from datetime import datetime
 from fastapi import HTTPException
+from services.database_service.base import DatabaseService
 
 from services.data_store_service import (
     DataStoreService,
@@ -50,6 +51,9 @@ def mock_db():
         return results
 
     db.find.side_effect = _find
+    # The base-class listing, over the find above.
+    db.data_store_namespaces.side_effect = (
+        lambda user_id: DatabaseService.data_store_namespaces(db, user_id))
     # ensure_index is a no-op by default
     db.ensure_index.return_value = None
     return db
