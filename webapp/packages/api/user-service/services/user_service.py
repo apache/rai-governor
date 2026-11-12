@@ -142,16 +142,21 @@ class UserService:
         setattr(user.api_keys, key_field, None)
         return self.save_user(user)
 
-    def get_effective_api_key(self, user_id: str, provider: str, basic_info: Optional[dict] = None) -> Optional[str]:
+    def get_effective_api_key(self, user_id: str, provider: str, basic_info: Optional[dict] = None,
+                              user: Optional[User] = None) -> Optional[str]:
         """
         Get the effective API key for a provider.
         First checks user's stored keys, then falls back to environment variables.
         Returns None if no key is available.
+
+        ``user``: the user's record when the caller already has it, to
+        check several providers without reading it once each.
         """
         import os
         from config.provider_config import PROVIDER_CONFIG
         
-        user = self.get_user(user_id, basic_info)
+        if user is None:
+            user = self.get_user(user_id, basic_info)
 
         # First, check user's stored API keys
         key_field = PROVIDER_KEY_MAP.get(provider)

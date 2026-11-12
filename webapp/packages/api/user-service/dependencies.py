@@ -667,8 +667,11 @@ def get_available_providers(user_id: Optional[str] = None, user_basic_info: Opti
     
     # Get user service if user_id is provided
     user_service = None
+    user_record = None
     if user_id:
         user_service = get_user_service(db_service)
+        # Read once, not once per provider.
+        user_record = user_service.get_user(user_id, user_basic_info)
     
     for provider, config in APP_PROVIDER_CONFIG.items():
         api_key_env_var = config.get("api_key_env_var")
@@ -678,7 +681,8 @@ def get_available_providers(user_id: Optional[str] = None, user_basic_info: Opti
         
         # First, check if user has a stored API key for this provider
         if user_service and user_id:
-            user_key = user_service.get_effective_api_key(user_id, provider, basic_info=user_basic_info)
+            user_key = user_service.get_effective_api_key(user_id, provider, basic_info=user_basic_info,
+                                                          user=user_record)
             if user_key:
                 is_available = True
         
@@ -699,11 +703,18 @@ def get_available_providers(user_id: Optional[str] = None, user_basic_info: Opti
     try:
         all_deployments = db_service.list_all("deployments")
         gofannon_models: Dict[str, Any] = {}
+        # Every deployed agent in one read, not one each.
+        agent_docs = db_service.get_many(
+            "agents", [d.get("agentId") for d in all_deployments if d.get("agentId")])
         for deployment_doc in all_deployments:
             dep_id = deployment_doc.get("_id")
             agent_id = deployment_doc.get("agentId")
             try:
-                agent_doc = db_service.get("agents", agent_id)
+                if not agent_id:
+                    raise ValueError("deployment has no agentId")
+                agent_doc = agent_docs.get(agent_id)
+                if agent_doc is None:
+                    raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
                 agent = Agent(**agent_doc)
 
                 friendly_name = dep_id

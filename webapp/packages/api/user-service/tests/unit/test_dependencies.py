@@ -346,7 +346,7 @@ class TestGetAvailableProviders:
 
         fake_user_service = Mock()
 
-        def mock_get_effective_key(user_id, provider, basic_info=None):
+        def mock_get_effective_key(user_id, provider, basic_info=None, user=None):
             # User has keys for openai and anthropic only
             keys = {
                 "openai": "user-openai-key",
@@ -408,7 +408,7 @@ class TestGetAvailableProviders:
             {"_id": "my-agent", "agentId": "agent-1"}
         ]
         # Need to provide all required Agent fields
-        mock_db.get.return_value = {
+        mock_db.get_many.return_value = {"agent-1": {
             "_id": "agent-1",
             "name": "TestAgent",
             "description": "A test agent",
@@ -417,7 +417,7 @@ class TestGetAvailableProviders:
             "output_schema": {"result": "string"},
             "tools": {},
             "gofannon_agents": [],
-        }
+        }}
         
         # We need to patch get_database_service in the dependencies module
         # but get_available_providers calls it internally
@@ -433,3 +433,35 @@ class TestGetAvailableProviders:
         finally:
             # Restore original
             monkeypatch.setattr(dependencies_module, "get_database_service", original_get_db_service)
+
+
+class TestProvidersReadEachThingOnce:
+    """/providers took 1.1 s on production: the user's record read once per
+    provider, and each deployed agent read on its own."""
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_reads_the_user_once_and_the_deployed_agents_together(self, monkeypatch):
+        from services.database_service.memory import MemoryDBService
+        from services.user_service import UserService
+
+        db = MemoryDBService()
+        agent = {"_id": "a1", "name": "x", "description": "d", "code": "c"}
+        db.save("agents", "a1", agent)
+        db.save("agents", "a2", {**agent, "_id": "a2"})
+        db.save("deployments", "one", {"_id": "one", "agentId": "a1"})
+        db.save("deployments", "two", {"_id": "two", "agentId": "a2"})
+        db.save("deployments", "gone", {"_id": "gone", "agentId": "deleted-agent"})
+        db.save("deployments", "odd", {"_id": "odd"})
+        reads = []
+        real_get = db.get
+        monkeypatch.setattr(db, "get", lambda name, i: reads.append(name) or real_get(name, i))
+        monkeypatch.setattr(dependencies_module, "get_database_service", lambda _: db)
+        monkeypatch.setattr(dependencies_module, "get_user_service", lambda d: UserService(d))
+
+        providers = get_available_providers(user_id="asf:akm")
+
+        assert reads.count("users") == 1
+        assert "agents" not in reads
+        assert sorted(providers["gofannon"]["models"]) == ["one", "two"]
+        # An orphan is still removed; a deployment with no agent is left alone.
+        assert sorted(d["_id"] for d in db.list_all("deployments")) == ["odd", "one", "two"]
