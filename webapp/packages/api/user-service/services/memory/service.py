@@ -509,4 +509,8 @@ def get_memory_service(db) -> MemoryService:
     from .blob_store import get_blob_store
 
     index = MemoryIndex(db)
+    # Without this the index has none of its Mango indexes, and every
+    # search and count reads every row. Cheap after the first call: the
+    # database service remembers which indexes it has made.
+    index.ensure()
     return MemoryService(get_blob_store(), index)

@@ -113,6 +113,11 @@ _indexes_ensured = False
 # under it; an int, because some backends' find() takes no None.
 LIST_SCAN_CAP = 10000
 
+# What a run list reads of each document: the summary, not the trace or result.
+LIST_FIELDS = ["run_id", "user_id", "agent_name", "agent_id", "project", "workload_id",
+               "input_dict", "started_at", "completed_at", "status", "worker_id",
+               "stop_requested", "error"]
+
 
 def _ensure_indexes(db) -> None:
     """Create the indexes the registry needs. Idempotent."""
@@ -135,6 +140,13 @@ def _ensure_indexes(db) -> None:
     # A workload's runs in a project (B11).
     db.ensure_index(RUN_REGISTRY_DB, ["project", "workload_id", "started_at"],
                     index_name="by_project_workload")
+    # CouchDB uses an index only when the selector names every one of its
+    # fields, and the list selectors never name started_at: without these
+    # every /runs call read every run document, traces and all.
+    db.ensure_index(RUN_REGISTRY_DB, ["user_id", "type"], index_name="by_user_type")
+    db.ensure_index(RUN_REGISTRY_DB, ["project", "type"], index_name="by_project_type")
+    # The orphan sweep's {"status": "running"}.
+    db.ensure_index(RUN_REGISTRY_DB, ["status"], index_name="by_status")
     _indexes_ensured = True
 
 
@@ -611,7 +623,8 @@ class RunRegistry:
             # order is newest first.
             by_id: Dict[str, Dict[str, Any]] = {}
             for sel in selectors:
-                for d in db.find(RUN_REGISTRY_DB, selector=sel, limit=LIST_SCAN_CAP):
+                for d in db.find(RUN_REGISTRY_DB, selector=sel, fields=LIST_FIELDS,
+                                 limit=LIST_SCAN_CAP):
                     by_id[d.get("run_id") or d.get("_id")] = d
             docs = list(by_id.values())
         except Exception as e:

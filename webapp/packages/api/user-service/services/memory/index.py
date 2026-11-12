@@ -28,7 +28,10 @@ MAX_HITS = 1000
 # Fields a caller may filter on with equality.
 FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "origin", "run")
 
+# CouchDB uses an index only when the selector names every one of its
+# fields, so a domain's plain {"domain": d} needs ["domain"] alone.
 _INDEXES = (
+    ["domain"],
     ["domain", "created"],
     ["domain", "type"],
     ["domain", "trust_tier"],
