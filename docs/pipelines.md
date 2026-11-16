@@ -1,6 +1,6 @@
 # Pipelines: import and export
 
-A pipeline is a set of agents that call each other: one entry agent and every agent it reaches through its Governor agents. A single agent is a pipeline of one. Pipelines live in git as plain files and move in and out of gofannon from the home page (**Import** on the Agents card) and an agent's page (**Export pipeline**, beside Run and Deploy).
+A pipeline is a set of agents that call each other: one entry agent and every agent it reaches through its Governor agents. A single agent is a pipeline of one. Pipelines live in git as plain files and move in and out of Governor from the home page (**Import** on the Agents card) and an agent's page (**Export pipeline**, beside Run and Deploy).
 
 ## The folder
 

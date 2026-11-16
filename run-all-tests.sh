@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-all-tests.sh — run every test suite in the gofannon webapp and print a summary.
+# run-all-tests.sh — run every test suite in the Governor webapp and print a summary.
 #
 # Assumes:
 #   - You're running this from the repo root (where ./webapp lives), OR you've

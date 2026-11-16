@@ -38,7 +38,7 @@ function HomepageHeader() {
               </Link>
               <Link
                 className={styles.secondaryButton}
-                href="https://github.com/apache/tooling-governor">
+                href="https://github.com/apache/rai-governor">
                 View on GitHub
               </Link>
             </div>

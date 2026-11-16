@@ -20,12 +20,12 @@ const config: Config = {
   url: isGitHubPages ? 'https://apache.github.io' : 'https://your-docusaurus-site.example.com',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: isGitHubPages ? '/tooling-governor/' : '/',
+  baseUrl: isGitHubPages ? '/rai-governor/' : '/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
   organizationName: 'apache', // Usually your GitHub org/user name.
-  projectName: 'tooling-governor', // Usually your repo name.
+  projectName: 'rai-governor', // Usually your repo name.
 
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
@@ -207,7 +207,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/apache/tooling-governor',
+              href: 'https://github.com/apache/rai-governor',
             },
           ],
         },

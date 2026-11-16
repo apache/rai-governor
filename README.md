@@ -7,8 +7,8 @@
 
 # Governor
 
-[![License](https://img.shields.io/github/license/apache/tooling-governor)](LICENSE)
-[![Issues](https://img.shields.io/github/issues/apache/tooling-governor)](https://github.com/apache/tooling-governor/issues)
+[![License](https://img.shields.io/github/license/apache/rai-governor)](LICENSE)
+[![Issues](https://img.shields.io/github/issues/apache/rai-governor)](https://github.com/apache/rai-governor/issues)
 
 Governor is a provider- and model-agnostic toolkit and web application for prototyping AI agents and the lightweight web UIs that wrap them. Subject matter experts compose tools, data sources, and decision paths through a guided interface, preview agent interactions in real time, and hand off working agent-driven experiences without committing to a single AI framework or model provider.
 
@@ -21,8 +21,8 @@ Governor is a provider- and model-agnostic toolkit and web application for proto
 ## Quickstart
 
 ```bash
-git clone https://github.com/apache/tooling-governor.git
-cd tooling-governor/webapp/infra/docker
+git clone https://github.com/apache/rai-governor.git
+cd rai-governor/webapp/infra/docker
 docker-compose up --build
 ```
 
@@ -30,7 +30,7 @@ See the [quickstart guide](docs/quickstart/README.md) for details, including req
 
 ## Documentation
 
-Full documentation lives in [`docs/`](docs/) and is published at <https://apache.github.io/tooling-governor/>. Highlights:
+Full documentation lives in [`docs/`](docs/) and is published at <https://apache.github.io/rai-governor/>. Highlights:
 
 - [Quickstart](docs/quickstart/README.md)
 - [Developer quickstart](docs/developers-quickstart.md)
@@ -48,8 +48,8 @@ Planned features and their current status are tracked in [ROADMAP.md](ROADMAP.md
 
 ## Community
 
-- Report bugs or request features in [GitHub Issues](https://github.com/apache/tooling-governor/issues).
-- Ask questions and discuss ideas in [GitHub Discussions](https://github.com/apache/tooling-governor/discussions).
+- Report bugs or request features in [GitHub Issues](https://github.com/apache/rai-governor/issues).
+- Ask questions and discuss ideas in [GitHub Discussions](https://github.com/apache/rai-governor/discussions).
 
 ## Contributing
 
@@ -57,9 +57,9 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get
 
 ## Acknowledgments
 
-Governor is a fork of [Gofannon](https://github.com/the-ai-alliance/gofannon), created by The AI Alliance. Thanks to its authors and to the open-source community for contributions and support that have made this project possible.
+Governor is a fork of [Gofannon](https://github.com/apache/tooling-gofannon), originally created by The AI Alliance. Thanks to its authors and to the open-source community for contributions and support that have made this project possible.
 
-[![Contributors](https://contrib.rocks/image?repo=apache/tooling-governor)](https://github.com/apache/tooling-governor/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=apache/rai-governor)](https://github.com/apache/rai-governor/graphs/contributors)
 
 ## License
 

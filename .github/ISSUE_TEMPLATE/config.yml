@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://apache.github.io/tooling-governor/
+    url: https://apache.github.io/rai-governor/
     about: Check the documentation for answers to common questions
   - name: Discussions
-    url: https://github.com/apache/tooling-governor/discussions
+    url: https://github.com/apache/rai-governor/discussions
     about: Ask questions and discuss ideas with the community
   - name: Contributing Guide
-    url: https://github.com/apache/tooling-governor/blob/main/CONTRIBUTING.md
+    url: https://github.com/apache/rai-governor/blob/main/CONTRIBUTING.md
     about: Learn how to contribute to Governor

@@ -1,7 +1,7 @@
 ## Proposed Features
 
-- [Design Docs](https://github.com/apache/tooling-governor/wiki)
-- [Discussions](https://github.com/apache/tooling-governor/discussions)
+- [Design Docs](https://github.com/The-AI-Alliance/gofannon/wiki)
+- [Discussions](https://github.com/apache/rai-governor/discussions)
 
 # Roadmap
 

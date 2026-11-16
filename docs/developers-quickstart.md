@@ -20,14 +20,14 @@ We follow a fork-based workflow.
 2.  **Clone your fork** locally:
 
     ```bash
-    git clone https://github.com/YOUR_USERNAME/tooling-governor.git
-    cd tooling-governor
+    git clone https://github.com/YOUR_USERNAME/rai-governor.git
+    cd rai-governor
     ```
 
 3.  **Add the upstream remote** to keep your fork in sync:
 
     ```bash
-    git remote add upstream https://github.com/apache/tooling-governor.git
+    git remote add upstream https://github.com/apache/rai-governor.git
     ```
 
 ## 2. Setting Up the Environment
@@ -67,7 +67,7 @@ The project is a monorepo containing a Python backend and a React frontend. You 
 
 ### Frontend (Node.js/React)
 
-1.  Navigate to the `tooling-governor/webapp` directory:
+1.  Navigate to the `rai-governor/webapp` directory:
 
     ```bash
     cd ../../../../../ # Assuming you were in the api directory

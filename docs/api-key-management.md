@@ -296,4 +296,4 @@ To migrate from environment variables to user-specific keys:
 ---
 
 **Last Updated**: January 2026
-**Maintainer**: AI Alliance Governor Team
+**Maintainer**: Governor maintainers

@@ -2,8 +2,8 @@
 
 ## Install
 ```bash
-git clone https://github.com/apache/tooling-governor.git
-cd tooling-governor/webapp/infra/docker
+git clone https://github.com/apache/rai-governor.git
+cd rai-governor/webapp/infra/docker
 ```
 Add `webapp/infra/docker/.env` file with these contents:
 ```bash
@@ -21,7 +21,7 @@ docker-compose up --build
 ```
 ### Rebuild after pulling new work from `main`
 ```
-cd tooling-governor/webapp/infra/docker
+cd rai-governor/webapp/infra/docker
 docker-compose down && docker-compose up -d --build
 ```
 

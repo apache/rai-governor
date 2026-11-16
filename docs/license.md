@@ -6,4 +6,4 @@ Governor is open source software.
 
 This project is licensed under the Apache License, Version 2.0.
 
-See the [LICENSE](https://github.com/apache/tooling-governor/blob/main/LICENSE) file in the repository for the full license text.
+See the [LICENSE](https://github.com/apache/rai-governor/blob/main/LICENSE) file in the repository for the full license text.

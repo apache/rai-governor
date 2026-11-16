@@ -44,7 +44,7 @@ The built files will be output to the `website/build` directory.
 This repo supports GitHub Pages by switching the Docusaurus `url` and `baseUrl` when the `FOR_GH_PAGES` environment variable is set.
 
 - **Local/dev builds**: Do nothing; defaults to `baseUrl: /`.
-- **GitHub Pages builds**: Set `FOR_GH_PAGES=true` so the site builds under `/tooling-governor/`.
+- **GitHub Pages builds**: Set `FOR_GH_PAGES=true` so the site builds under `/rai-governor/`.
 
 To preview a GitHub Pages-style build locally:
 

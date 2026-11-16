@@ -698,4 +698,4 @@ When adding new providers or models:
 ---
 
 **Last Updated**: January 2026
-**Maintainer**: AI Alliance Governor Team
+**Maintainer**: Governor maintainers
