@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "firebase": "^12.4.0",
-    "react-split-pane": "^0.1.92"
+    "react-split-pane": "^3.3.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": []
