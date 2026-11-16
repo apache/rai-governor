@@ -413,7 +413,9 @@ export function DigestPanel({ domain, repo, canReview }) {
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
         {current ? <>Scans use the version accepted {current.created?.slice(0, 10)} (<RouterLink to={`/memories/entries/${encodeURIComponent(current.id)}`}>{current.id}</RouterLink>).</>
           : 'No digest accepted yet: scans get the guidance entries one by one.'}
-        {pending > 0 && ` ${pending} ${pending === 1 ? 'decision is' : 'decisions are'} newer than it; run the guidance digest workload for ${repo} to draft a new version.`}
+        {pending > 0 && (current
+          ? ` ${pending} ${pending === 1 ? 'decision is' : 'decisions are'} newer than it; run the guidance digest workload for ${repo} to draft a new version.`
+          : ` ${pending} ${pending === 1 ? 'decision' : 'decisions'} so far; run the guidance digest workload for ${repo} to draft one.`)}
       </Typography>
       {draft && (
         <Box sx={{ mt: 1.5 }}>
