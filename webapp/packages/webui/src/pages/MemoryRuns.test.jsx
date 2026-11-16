@@ -8,6 +8,7 @@ import memoryService from '../services/memoryService';
 
 vi.mock('../services/memoryService', () => ({
   default: {
+    guidanceRepos: vi.fn(() => Promise.resolve({ repos: [] })),
     domains: vi.fn(),
     search: vi.fn(),
     get: vi.fn(),

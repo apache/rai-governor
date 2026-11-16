@@ -77,8 +77,15 @@ function MemoriesPanel({ runId, finished }) {
                 </Box>
               ))}
             </Box>
-            <Button component={RouterLink} to={memoriesPath(d.domain, runId)} variant="contained"
-              sx={{ bgcolor: '#18181b', textTransform: 'none', '&:hover': { bgcolor: '#27272a' } }}>
+            {findings > 0 && (
+              <Button component={RouterLink} to={memoriesPath(d.domain, runId, null, 'triage')} variant="contained"
+                sx={{ bgcolor: '#18181b', textTransform: 'none', '&:hover': { bgcolor: '#27272a' } }}>
+                Triage findings
+              </Button>
+            )}
+            <Button component={RouterLink} to={memoriesPath(d.domain, runId)} variant={findings > 0 ? 'outlined' : 'contained'}
+              sx={findings > 0 ? { textTransform: 'none', color: '#18181b', borderColor: '#d4d4d8' }
+                : { bgcolor: '#18181b', textTransform: 'none', '&:hover': { bgcolor: '#27272a' } }}>
               Review in Memory
             </Button>
             {d.canReview && findings > 0 && (

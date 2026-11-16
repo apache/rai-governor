@@ -10,8 +10,9 @@ import memoryService from '../services/memoryService';
 import BrowseTab from '../components/memory/BrowseTab';
 import AskTab from '../components/memory/AskTab';
 import ReviewTab from '../components/memory/ReviewTab';
+import TriageTab from '../components/memory/TriageTab';
 
-const TABS = ['browse', 'ask', 'review'];
+const TABS = ['browse', 'ask', 'review', 'triage'];
 
 // Which run the list is limited to, and a way back to it (B11).
 function RunBand({ runId, domain, onClear }) {
@@ -47,8 +48,9 @@ export default function MemoryPage() {
   const navigate = useNavigate();
   const { domain: routeDomain } = useParams();
   const [params, setParams] = useSearchParams();
-  const tab = TABS.includes(params.get('tab')) ? params.get('tab') : 'browse';
   const run = params.get('run') || null;
+  // Triage is a run's: the findings one scan wrote (scans that remember).
+  const tab = TABS.includes(params.get('tab')) && (params.get('tab') !== 'triage' || run) ? params.get('tab') : 'browse';
   const select = params.get('select') || null;
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
@@ -127,8 +129,9 @@ export default function MemoryPage() {
                 </Box>
               )}
             />
+            {run && <Tab value="triage" label="Triage" />}
           </Tabs>
-          {run && tab === 'browse' && (
+          {run && (tab === 'browse' || tab === 'triage') && (
             <RunBand runId={run} domain={domain} onClear={() => {
               const p = new URLSearchParams(params);
               p.delete('run');
@@ -139,6 +142,12 @@ export default function MemoryPage() {
           {tab === 'browse' && (
             <BrowseTab
               key={`${domain}:${run || ''}`} domain={domain} run={run} select={select}
+              canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
+            />
+          )}
+          {tab === 'triage' && run && (
+            <TriageTab
+              key={`${domain}:${run}`} domain={domain} run={run}
               canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
             />
           )}

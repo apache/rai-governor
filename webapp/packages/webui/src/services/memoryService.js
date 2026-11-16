@@ -29,6 +29,14 @@ async function request(path, options = {}) {
 
 const enc = encodeURIComponent;
 
+function dispositionBody({ kind, why, duplicateOf, filedAs, guidance }) {
+  const body = { kind, why: why || '' };
+  if (duplicateOf) body.duplicate_of = duplicateOf;
+  if (filedAs) body.filed_as = filedAs;
+  if (guidance) body.guidance = guidance;
+  return body;
+}
+
 // One /memory/status call per page load decides whether memory is on.
 // Not /memory/domains: that counts every domain's entries, and every page
 // asks this for its nav link.
@@ -51,9 +59,11 @@ const memoryService = {
     enabledOnce = null;
   },
 
-  search(domain, { q, type, trustTier, dueBy, includeInactive, order, limit, run, queue } = {}) {
+  search(domain, { q, type, trustTier, dueBy, includeInactive, order, limit, run, queue, origins, disposition } = {}) {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
+    (origins || []).forEach((o) => params.append('origin', o));
+    if (disposition) params.set('disposition', disposition);
     if (run) params.set('run', run);
     if (type) params.set('type', type);
     if (trustTier) params.set('trust_tier', trustTier);
@@ -104,6 +114,42 @@ const memoryService = {
 
   undoBatch(batch) {
     return request(`/memory/reviews/batch/${enc(batch)}/undo`, { method: 'POST' });
+  },
+
+  // Triage (scans that remember). A disposition is { kind, why,
+  // duplicateOf, filedAs, guidance: { text, summary, scope, always } }.
+  dispose(id, d) {
+    return request(`/memory/entries/${enc(id)}/disposition`, { method: 'POST', body: JSON.stringify(dispositionBody(d)) });
+  },
+
+  disposeBatch(ids, d) {
+    return request('/memory/dispositions/batch', { method: 'POST', body: JSON.stringify({ ids, ...dispositionBody(d) }) });
+  },
+
+  acceptProposals(ids, { why, edits } = {}) {
+    return request('/memory/proposals/accept', { method: 'POST', body: JSON.stringify({ ids, why: why || '', edits: edits || {} }) });
+  },
+
+  rejectProposals(ids, why) {
+    return request('/memory/proposals/reject', { method: 'POST', body: JSON.stringify({ ids, why }) });
+  },
+
+  guidanceRepos(domain) {
+    return request(`/memory/${enc(domain)}/guidance-repos`);
+  },
+
+  guidance(domain, repo, scanner) {
+    const params = new URLSearchParams({ repo });
+    if (scanner) params.set('scanner', scanner);
+    return request(`/memory/${enc(domain)}/guidance?${params}`);
+  },
+
+  digest(domain, repo) {
+    return request(`/memory/${enc(domain)}/digest?${new URLSearchParams({ repo })}`);
+  },
+
+  acceptDigest(id, why) {
+    return request(`/memory/digests/${enc(id)}/accept`, { method: 'POST', body: JSON.stringify({ why: why || '' }) });
   },
 
   review(id, { action, why, reviewBy }) {

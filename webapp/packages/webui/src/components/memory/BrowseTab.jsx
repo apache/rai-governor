@@ -28,6 +28,7 @@ import { EntryMetaLine } from './memoryBits';
 import EntryPanel from './EntryPanel';
 import { today } from './memoryFormat';
 import BatchBar, { BatchResult } from './BatchBar';
+import GuidanceView from './GuidanceView';
 
 const TYPES = ['decision', 'fact', 'convention', 'method', 'handoff', 'policy'];
 const TIERS = ['raw', 'curated', 'verified'];
@@ -93,6 +94,15 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
   const [hits, setHits] = useState(null);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null);
+  // Guidance for a repo (scans that remember): a view of its own.
+  const [repos, setRepos] = useState([]);
+  const [guidanceRepo, setGuidanceRepo] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    memoryService.guidanceRepos(domain).then((o) => { if (live) setRepos(o.repos || []); }, () => {});
+    return () => { live = false; };
+  }, [domain]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -210,7 +220,18 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
         >
           {run ? 'Show demoted' : 'Show superseded'}
         </ToggleButton>
+        {repos.length > 0 && !run && (
+          <TextField
+            select size="small" label="Guidance for" value={guidanceRepo} onChange={(e) => setGuidanceRepo(e.target.value)}
+            sx={{ minWidth: 220, bgcolor: '#fff' }}
+          >
+            <MenuItem value="">all entries</MenuItem>
+            {repos.map((r) => <MenuItem key={r} value={r}>{r}</MenuItem>)}
+          </TextField>
+        )}
       </Stack>
+      {guidanceRepo && <GuidanceView domain={domain} repo={guidanceRepo} canReview={canReview} />}
+      {!guidanceRepo && (<>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {result && <BatchResult key={result.batch} result={result} onUndone={async () => { await load(); onReviewed?.(); }} />}
@@ -287,6 +308,7 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
           onChange={(e) => setWhy(e.target.value)} sx={{ mt: 2, bgcolor: '#fff', maxWidth: 640 }}
         />
       )}
+      </>)}
     </Box>
   );
 }

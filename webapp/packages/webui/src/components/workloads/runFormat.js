@@ -36,8 +36,9 @@ export function runTarget(inputs) {
 
 export const runPath = (runId) => `/run/${encodeURIComponent(runId)}`;
 
-export const memoriesPath = (domain, runId, select) => {
+export const memoriesPath = (domain, runId, select, tab) => {
   const p = new URLSearchParams({ run: runId });
   if (select) p.set('select', select);
+  if (tab) p.set('tab', tab);
   return `/memories/${encodeURIComponent(domain)}?${p}`;
 };
