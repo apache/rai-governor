@@ -20,7 +20,7 @@ github:
     catchall: "[GH] {title} ({repository})"
   protected_branches:
     main: {}
-  # Docs site: .github/workflows/build-site.yml builds it and pushes the result here.
+  # Docs site: built by .github/workflows/build-site.yml, served from gh-pages.
   ghp_branch: gh-pages
   ghp_path: /
 
