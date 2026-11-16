@@ -94,7 +94,7 @@ describe('Triage', () => {
     expect(within(list).getByText('Suggested: false positive, the scanner lacked context')).toBeInTheDocument();
     expect(within(list).getByText('#1657 closed, not planned')).toBeInTheDocument();
     // The digest panel loads on its own; wait for it.
-    expect(await screen.findByText(/3 decisions so far; run the guidance digest workload/)).toBeInTheDocument();
+    expect(await screen.findByText(/3 decisions so far; the next scan of apache\/tooling-trusted-releases drafts one/)).toBeInTheDocument();
   });
 
   it('a suggestion fills the form in, and nothing is decided until it is recorded', async () => {

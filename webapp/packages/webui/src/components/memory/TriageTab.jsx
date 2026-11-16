@@ -394,8 +394,8 @@ function ProposalBatchBar({ ids, onDone, onClear }) {
 }
 
 // The repo's guidance digest: what scans are given now, the draft after
-// it and what it changes, with Accept. Rebuilding is a run of the
-// guidance digest agent (a workload), not a button here.
+// it and what it changes, with Accept. The next scan of the repo drafts a
+// new version when decisions are newer than the accepted one.
 export function DigestPanel({ domain, repo, canReview }) {
   const [view, setView] = useState(null);
   const [error, setError] = useState(null);
@@ -414,8 +414,8 @@ export function DigestPanel({ domain, repo, canReview }) {
         {current ? <>Scans use the version accepted {current.created?.slice(0, 10)} (<RouterLink to={`/memories/entries/${encodeURIComponent(current.id)}`}>{current.id}</RouterLink>).</>
           : 'No digest accepted yet: scans get the guidance entries one by one.'}
         {pending > 0 && (current
-          ? ` ${pending} ${pending === 1 ? 'decision is' : 'decisions are'} newer than it; run the guidance digest workload for ${repo} to draft a new version.`
-          : ` ${pending} ${pending === 1 ? 'decision' : 'decisions'} so far; run the guidance digest workload for ${repo} to draft one.`)}
+          ? ` ${pending} ${pending === 1 ? 'decision is' : 'decisions are'} newer than it; the next scan of ${repo} drafts a new version for you to accept here.`
+          : ` ${pending} ${pending === 1 ? 'decision' : 'decisions'} so far; the next scan of ${repo} drafts one for you to accept here.`)}
       </Typography>
       {draft && (
         <Box sx={{ mt: 1.5 }}>
