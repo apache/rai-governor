@@ -28,6 +28,13 @@ MAX_HITS = 1000
 # Fields a caller may filter on with equality.
 FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "origin", "run")
 
+# Row fields that are gofannon's own, not derived from the entry: a person's
+# disposition of a finding, and what a scan found about it. The frontmatter
+# is shared with tooling-memory and stays as it is, so these live on the row
+# only, and a rewrite of the row from the entry (a review, a supersede) keeps
+# them.
+ROW_ONLY = ("disposition", "decision", "evidence")
+
 # CouchDB uses an index only when the selector names every one of its
 # fields, so a domain's plain {"domain": d} needs ["domain"] alone.
 _INDEXES = (
@@ -72,21 +79,36 @@ class MemoryIndex:
         for fields in _INDEXES:
             self.db.ensure_index(INDEX_DB, fields, index_name="memory_" + "_".join(fields))
 
-    def upsert(self, entry: Entry) -> Dict[str, Any]:
+    def upsert(self, entry: Entry, extra: Optional[Dict[str, Any]] = None,
+               clear: tuple = ()) -> Dict[str, Any]:
         """Write the entry's row, replacing the one there.
 
-        CouchDB refuses a save over an existing document without its _rev
-        (409), so a replaced row (a review, a supersede) takes the current _rev
-        and saves again.
+        The ROW_ONLY fields carry over from the row replaced, then ``extra``
+        sets fields and ``clear`` removes them. That needs the row first, on
+        every backend: the in-memory one overwrites without a conflict. It
+        also gives the save its _rev, which CouchDB wants for a replacement
+        (409 without), and a conflict from a concurrent write is retried once.
         """
-        row = row_for(entry)
-        try:
-            self.db.save(INDEX_DB, row["_id"], dict(row))
-        except HTTPException as exc:
-            if exc.status_code != 409:
-                raise
-            current = self.db.get(INDEX_DB, row["_id"])
-            self.db.save(INDEX_DB, row["_id"], {**row, "_rev": current.get("_rev")})
+        bad = set(extra or {}) - set(ROW_ONLY)
+        if bad:
+            raise ValueError(f"not a row-only field: {sorted(bad)}")
+        for attempt in (1, 2):
+            row = row_for(entry)
+            current = self.get(row["_id"])
+            if current:
+                row.update({k: current[k] for k in ROW_ONLY if k in current})
+            row.update(extra or {})
+            for k in clear:
+                row.pop(k, None)
+            doc = dict(row)
+            if current and current.get("_rev"):
+                doc["_rev"] = current["_rev"]
+            try:
+                self.db.save(INDEX_DB, row["_id"], doc)
+                return row
+            except HTTPException as exc:
+                if exc.status_code != 409 or attempt == 2:
+                    raise
         return row
 
     def get(self, entry_id: str) -> Optional[Dict[str, Any]]:
@@ -105,7 +127,11 @@ class MemoryIndex:
         limit: int = 20,
         oldest_first: bool = False,
         review_queue: bool = False,
+        origins: Optional[List[str]] = None,
+        disposition: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """``origins``: any of these. ``disposition``: a kind, "any" for
+        decided, "none" for not decided."""
         selector: Dict[str, Any] = {"domain": domain}
         # The review queue: raw entries, and others past their review date.
         # Chosen before the limit, or a domain's older reviewed entries fill
@@ -118,10 +144,21 @@ class MemoryIndex:
         rows = self.db.find(INDEX_DB, selector, limit=None)
 
         terms = query_terms(query)
+        want_origins = set(origins or ())
         hits = []
         for row in rows:
             if not include_inactive and row.get("status") in _INACTIVE:
                 continue
+            if want_origins and row.get("origin") not in want_origins:
+                continue
+            if disposition:
+                have = row.get("disposition")
+                if disposition == "none" and have:
+                    continue
+                if disposition == "any" and not have:
+                    continue
+                if disposition not in ("none", "any") and have != disposition:
+                    continue
             if due_by is not None:
                 if not row.get("review_by") or row["review_by"] > due_by.isoformat():
                     continue

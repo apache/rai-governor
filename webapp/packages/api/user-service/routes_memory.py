@@ -15,6 +15,8 @@ import asyncio
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -32,6 +34,7 @@ from services.memory.service import (
     get_memory_service,
     human_author,
 )
+from services.memory.triage import MAX_GUIDANCE_CHARS, Kind, Triage
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -84,6 +87,66 @@ class ReviewBody(BaseModel):
 class BatchReviewBody(ReviewBody):
     ids: List[str] = Field(..., min_length=1, max_length=1000)
     restore_superseded: bool = False
+
+
+class GuidanceBody(BaseModel):
+    text: str = Field("", max_length=MAX_GUIDANCE_CHARS)
+    summary: Optional[str] = Field(None, max_length=300)
+    title: Optional[str] = Field(None, max_length=200)
+    scope: Literal["all", "asvs", "glasswing"] = "all"
+    always: bool = False
+    # Only when the finding's origin doesn't say: owner/repo.
+    repo: Optional[str] = Field(None, max_length=200)
+
+
+class DispositionBody(BaseModel):
+    kind: Kind
+    why: str = Field("", max_length=2000)
+    duplicate_of: Optional[str] = Field(None, max_length=500)
+    filed_as: Optional[str] = Field(None, max_length=500)
+    guidance: Optional[GuidanceBody] = None
+
+
+class BatchDispositionBody(DispositionBody):
+    ids: List[str] = Field(..., min_length=1, max_length=1000)
+
+
+class ProposalEdit(BaseModel):
+    text: Optional[str] = Field(None, max_length=MAX_GUIDANCE_CHARS)
+    summary: Optional[str] = Field(None, max_length=300)
+    title: Optional[str] = Field(None, max_length=200)
+    scope: Literal["all", "asvs", "glasswing"] = "all"
+    always: bool = False
+
+
+class AcceptProposalsBody(BaseModel):
+    ids: List[str] = Field(..., min_length=1, max_length=1000)
+    why: str = Field("", max_length=2000)
+    edits: Dict[str, ProposalEdit] = Field(default_factory=dict)
+
+
+class RejectProposalsBody(BaseModel):
+    ids: List[str] = Field(..., min_length=1, max_length=1000)
+    why: str = Field(..., min_length=1, max_length=2000)
+
+
+class AcceptDigestBody(BaseModel):
+    why: str = Field("", max_length=2000)
+
+
+def _gates(user: dict):
+    """may_read and may_review for a caller, as batch review has them."""
+    return (lambda d: access.exists(d) and access.can_read(user, d),
+            lambda d: access.can_write(user, d))
+
+
+def _single(out: Dict[str, Any], key: str = "applied") -> Dict[str, Any]:
+    """One entry's result, or the error its skip reason means."""
+    if out.get(key):
+        return out
+    reason = (out.get("skipped") or [{}])[0].get("reason") or "Not applied"
+    code = 404 if reason == "No such entry" else 403 if "someone else" in reason else 409
+    raise HTTPException(status_code=code, detail=reason)
 
 
 @router.get("/status")
@@ -146,12 +209,15 @@ async def search(
     limit: int = Query(20, ge=1, le=1000),
     run: Optional[str] = Query(None, max_length=64),
     queue: bool = False,
+    origin: Optional[List[str]] = Query(None, max_length=50),
+    disposition: Optional[str] = Query(None, pattern="^(none|any|valid|duplicate|fp_wrong|fp_context|by_design)$"),
     user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ) -> Dict[str, Any]:
     """include_inactive adds demoted and superseded entries; order=oldest is the review queue's;
     run limits it to the entries one run wrote; queue keeps only what's waiting for review
-    (raw, or past its review date)."""
+    (raw, or past its review date). origin (repeatable) keeps entries from any of those
+    origins; disposition is a kind, any (decided) or none (not decided)."""
     filters: Dict[str, Any] = {}
     if run:
         filters["run"] = run
@@ -162,6 +228,7 @@ async def search(
     hits = await get_memory_service(db).search(
         _domain(domain, user), q, filters, due_by, limit,
         include_inactive=include_inactive, oldest_first=order == "oldest", review_queue=queue,
+        origins=origin, disposition=disposition,
     )
     return {"domain": domain, "query": q, "hits": hits}
 
@@ -356,3 +423,140 @@ async def recall(
     return await get_memory_service(db).recall(
         body.question, _domain(domain, user), user_service=user_service, user_id=user["uid"]
     )
+
+
+# ----------------------------------------------------------------------
+# Triage (scans that remember): dispositions, proposals, guidance, digest
+# ----------------------------------------------------------------------
+
+
+def _triage(db) -> Triage:
+    return Triage(get_memory_service(db))
+
+
+async def _dispose(db, user, ids, body: DispositionBody) -> Dict[str, Any]:
+    may_read, may_review = _gates(user)
+    try:
+        return await _triage(db).dispose(
+            ids, body.kind, human_author(user["uid"]), body.why,
+            duplicate_of=body.duplicate_of, filed_as=body.filed_as,
+            guidance=body.guidance.model_dump() if body.guidance else None,
+            may_read=may_read, may_review=may_review)
+    except Refused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/entries/{entry_id}/disposition")
+async def dispose_entry(
+    entry_id: str,
+    body: DispositionBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """A person's decision on one finding: the trust action it implies, the
+    reason, and for "needs context" and "by design" a guidance entry. Undo
+    with the batch id it returns."""
+    return _single(await _dispose(db, user, [entry_id], body))
+
+
+@router.post("/dispositions/batch")
+async def dispose_batch(
+    body: BatchDispositionBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """One disposition and one reason for many findings. Guidance written
+    with it is one entry per repo, citing every finding it covers."""
+    return await _dispose(db, user, body.ids, body)
+
+
+@router.post("/proposals/accept")
+async def accept_proposals(
+    body: AcceptProposalsBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """Each proposal becomes guidance written by the caller, optionally as
+    edited, and is superseded by it."""
+    may_read, may_review = _gates(user)
+    return await _triage(db).accept_proposals(
+        body.ids, human_author(user["uid"]), body.why,
+        edits={k: v.model_dump() for k, v in body.edits.items()},
+        may_read=may_read, may_review=may_review)
+
+
+@router.post("/proposals/reject")
+async def reject_proposals(
+    body: RejectProposalsBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    may_read, may_review = _gates(user)
+    try:
+        return await _triage(db).reject_proposals(
+            body.ids, human_author(user["uid"]), body.why,
+            may_read=may_read, may_review=may_review)
+    except Refused as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{domain}/guidance-repos")
+async def guidance_repos(
+    domain: str,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """Repos with guidance or proposals in the domain, for the Browse filter."""
+    return {"domain": domain, "repos": await _triage(db).guidance_repos(_domain(domain, user))}
+
+
+@router.get("/{domain}/guidance")
+async def guidance(
+    domain: str,
+    repo: str = Query(..., pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
+    scanner: Optional[str] = Query(None, pattern="^(asvs|glasswing)$"),
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """What every scan of a repo is given from this domain, with how many
+    runs loaded and cited each entry, and the proposals still waiting."""
+    t = _triage(db)
+    d = _domain(domain, user)
+    out = await t.guidance_for([d], repo, scanner)
+    props = await get_memory_service(db).search(
+        d, None, None, None, 1000, origins=[f"proposal:guidance:{repo}"])
+    ids = [e["id"] for e in out["entries"]] + ([out["digest"]["id"]] if out["digest"] else [])
+    out["usage"] = await t.usage(ids)
+    out["proposals"] = props
+    return out
+
+
+@router.get("/{domain}/digest")
+async def digest(
+    domain: str,
+    repo: str = Query(..., pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """The accepted digest, the newest draft, what it changes, and how many
+    decisions are newer than the accepted version."""
+    return await _triage(db).digest_view(_domain(domain, user), repo)
+
+
+@router.post("/digests/{entry_id}/accept")
+async def accept_digest(
+    entry_id: str,
+    body: AcceptDigestBody,
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    may_read, may_review = _gates(user)
+    try:
+        return await _triage(db).accept_digest(entry_id, human_author(user["uid"]), body.why,
+                                               may_read=may_read, may_review=may_review)
+    except NotFound:
+        raise HTTPException(status_code=404, detail="No such entry")
+    except OwnEntry as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Refused as exc:
+        raise HTTPException(status_code=409, detail=str(exc))

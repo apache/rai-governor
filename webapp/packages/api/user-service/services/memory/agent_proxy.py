@@ -20,6 +20,15 @@ Which domains a run reaches (ISSUE-002, rules in access.py):
   reads the open ones), first one default.
 
 A write to a domain the run can't write raises PermissionError.
+
+For scans that remember (triage): ``search`` takes ``include_inactive`` (to
+see findings a person demoted as false positives), ``origins`` and
+``disposition``, and ``domain="*"`` for every domain the run reads; each hit
+carries ``disposition``, ``why``, ``decided_by`` and ``decided_at``.
+``guidance(repo, scanner)`` returns the guidance a scan loads,
+``used(ids, how)`` records that the run loaded or cited it, and
+``annotate(id, evidence)`` puts what the scan found about a finding where
+triage shows it.
 """
 
 from __future__ import annotations
@@ -30,7 +39,7 @@ from typing import Any, Dict, List, Optional
 
 from . import access
 from .entry import Confidence, EntryType
-from .service import NotFound, WriteRequest, agent_author, get_memory_service
+from .service import NotFound, WriteRequest, _CURRENT_RUN, agent_author, get_memory_service
 
 
 def _csv(name: str, default: str = "") -> List[str]:
@@ -106,8 +115,13 @@ class AgentMemory:
         trust_tier: Optional[str] = None,
         origin: Optional[str] = None,
         limit: int = 20,
+        include_inactive: bool = False,
+        origins: Optional[List[str]] = None,
+        disposition: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Summaries of live entries, best match first. Never bodies."""
+        """Summaries, best match first. Never bodies. Live entries only,
+        unless include_inactive. ``domain="*"``: every domain the run reads,
+        each hit with its ``domain``."""
         filters: Dict[str, Any] = {}
         if type:
             filters["type"] = EntryType(type).value
@@ -115,7 +129,49 @@ class AgentMemory:
             filters["trust_tier"] = trust_tier
         if origin:
             filters["origin"] = origin
-        return await self._service().search(self._domain(domain), query, filters, None, limit)
+        service = self._service()
+        targets = list(self.domains) if domain == "*" else [self._domain(domain)]
+        out: List[Dict[str, Any]] = []
+        for d in targets:
+            hits = await service.search(d, query, filters, None, limit,
+                                        include_inactive=include_inactive,
+                                        origins=list(origins) if origins else None,
+                                        disposition=disposition)
+            out += [{**h, "domain": d} for h in hits]
+        return out[:max(1, limit)] if domain == "*" else out
+
+    async def guidance(self, repo: str, scanner: Optional[str] = None,
+                       min_trust: str = "human") -> Dict[str, Any]:
+        """The guidance a scan of ``repo`` (owner/repo) by ``scanner`` (asvs,
+        glasswing) loads, from every domain the run reads: ``{"entries":
+        [...], "digest": {...} or None}``. Entries carry body and chars,
+        Always use (policy) first. A person's guidance counts at any tier and
+        an agent's once curated; min_trust="curated" asks curation of all."""
+        from .triage import Triage
+        return await Triage(self._service()).guidance_for(list(self.domains), repo, scanner, min_trust)
+
+    async def used(self, entry_ids: List[str], how: str = "loaded") -> int:
+        """Record that this run loaded (or cited) these guidance entries."""
+        from .triage import Triage
+        ids = [i for i in entry_ids if isinstance(i, str)]
+        readable = []
+        for i in ids:
+            if await self.get(i) is not None:
+                readable.append(i)
+        return await Triage(self._service()).used(readable, _CURRENT_RUN.get(), how,
+                                                  self._agent_name)
+
+    async def annotate(self, entry_id: str, evidence: Dict[str, Any]) -> None:
+        """Put what the scan found about a finding (matches, the patch
+        verdict, a suggested disposition) on its index row, for triage.
+        Only in a domain this run writes."""
+        from .triage import Triage
+        entry = await self.get(entry_id)
+        if entry is None:
+            raise ValueError(f"no entry {entry_id} this run can read")
+        if entry["frontmatter"]["domain"] not in self._writable:
+            raise PermissionError(f"this run may not annotate entries in {entry['frontmatter']['domain']}")
+        await Triage(self._service()).annotate(entry_id, evidence)
 
     async def get(self, entry_id: str) -> Optional[Dict[str, Any]]:
         """``{"frontmatter", "body"}``, or None if there is no such entry."""

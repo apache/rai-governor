@@ -103,6 +103,15 @@ def _summary(row: Dict[str, Any]) -> Dict[str, Any]:
         "review_by": row.get("review_by"),
         "supersedes": row.get("supersedes"),
         "run": row.get("run"),
+        "origin": row.get("origin"),
+        # Gofannon's own row fields (index.ROW_ONLY): a person's disposition
+        # of a finding, and what the scan found about it.
+        "disposition": row.get("disposition"),
+        "why": (row.get("decision") or {}).get("why"),
+        "decided_by": (row.get("decision") or {}).get("by"),
+        "decided_at": (row.get("decision") or {}).get("at"),
+        "decision": row.get("decision"),
+        "evidence": row.get("evidence"),
     }
 
 
@@ -161,11 +170,14 @@ class MemoryService:
         include_inactive: bool = False,
         oldest_first: bool = False,
         review_queue: bool = False,
+        origins: Optional[List[str]] = None,
+        disposition: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Summaries only, never bodies."""
         rows = await asyncio.to_thread(
             self.index.search,
             domain, query, filters, due_by, include_inactive, limit, oldest_first, review_queue,
+            origins, disposition,
         )
         return [_summary(r) for r in rows]
 
@@ -203,8 +215,13 @@ class MemoryService:
         why: str = "",
         review_by: Optional[date] = None,
         batch: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None,
+        row: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Record a person's judgement of an entry, then write the version it makes.
+
+        ``extra`` goes into the review record (a disposition), ``row`` onto
+        the index row (index.ROW_ONLY fields).
 
         ``batch`` ties the record to a batch review, which can be undone as
         one. The record keeps the frontmatter the review replaced, for undo.
@@ -258,15 +275,17 @@ class MemoryService:
         }
         if batch:
             record["batch"] = batch
+        record.update(extra or {})
         doc_id = f"{entry_id}:{now.strftime('%Y%m%dT%H%M%S.%fZ')}"
         await asyncio.to_thread(self.index.db.save, REVIEWS_DB, doc_id, record)
         await asyncio.to_thread(self.blobs.put, entry)
-        await asyncio.to_thread(self.index.upsert, entry)
+        await asyncio.to_thread(self.index.upsert, entry, row)
         return {"frontmatter": front.to_dict(), "review": record}
 
     async def _record(self, entry: Entry, action: str, by: str, why: str,
                       before_front: Dict[str, Any], before_text: str, batch: str,
-                      extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                      extra: Optional[Dict[str, Any]] = None,
+                      row: Optional[Dict[str, Any]] = None, clear: tuple = ()) -> Dict[str, Any]:
         """Write a review record for a change made outside review(): a
         superseded entry brought back, or an undo."""
         front = entry.front
@@ -283,7 +302,7 @@ class MemoryService:
         await asyncio.to_thread(
             self.index.db.save, REVIEWS_DB, f"{front.id}:{now.strftime('%Y%m%dT%H%M%S.%fZ')}", record)
         await asyncio.to_thread(self.blobs.put, entry)
-        await asyncio.to_thread(self.index.upsert, entry)
+        await asyncio.to_thread(self.index.upsert, entry, row, clear)
         return record
 
     async def batch_review(
@@ -357,7 +376,9 @@ class MemoryService:
         """Put back what a batch changed, where nothing has changed it since.
         Each entry put back gets an undo record of its own."""
         records = await asyncio.to_thread(self.index.db.find, REVIEWS_DB, {"batch": batch}, None, None)
-        records = [r for r in records if r.get("action") != "undo"]
+        # An undo isn't undone, and nor is guidance withdrawn because no
+        # finding took its disposition.
+        records = [r for r in records if r.get("action") not in ("undo", "withdraw")]
         # Records in domains the caller can't review don't exist for them:
         # not undone, not listed, and a batch with none left is missing.
         if may_review is not None:
@@ -365,7 +386,7 @@ class MemoryService:
         if not records:
             raise NotFound(batch)
         undo = "u-" + batch
-        undone, skipped = [], []
+        undone, skipped, withdrawn = [], [], []
         # Newest first: a restore after its demote is undone before it.
         for rec in sorted(records, key=lambda r: r.get("at") or "", reverse=True):
             entry_id = rec.get("entry")
@@ -383,10 +404,31 @@ class MemoryService:
                 continue
             before_text, before_front = entry.render(), entry.front.to_dict()
             entry.front = Frontmatter.from_dict(rec["before"])
+            # A disposition comes off the row with the review it came with.
+            clear = ("disposition", "decision") if rec.get("disposition") else ()
             await self._record(entry, "undo", reviewer, f"undo of batch {batch}",
-                               before_front, before_text, undo, {"undoes": batch})
+                               before_front, before_text, undo, {"undoes": batch}, clear=clear)
             undone.append(entry_id)
-        return {"batch": batch, "undo": undo, "undone": undone, "skipped": skipped}
+            gid = (rec.get("disposition") or {}).get("guidance_id")
+            if gid and gid not in withdrawn:
+                if await self._withdraw(gid, reviewer, f"undo of batch {batch}", undo):
+                    withdrawn.append(gid)
+        return {"batch": batch, "undo": undo, "undone": undone, "skipped": skipped,
+                "withdrawn": withdrawn}
+
+    async def _withdraw(self, entry_id: str, by: str, why: str, batch: str) -> bool:
+        """Take out of use guidance written with a disposition that was undone.
+        Its author is the person undoing, so this is not a review."""
+        try:
+            entry = await self.get(entry_id)
+        except NotFound:
+            return False
+        if entry.front.status is not None:
+            return False
+        before_text, before_front = entry.render(), entry.front.to_dict()
+        entry.front.status = Status.DEMOTED
+        await self._record(entry, "withdraw", by, why, before_front, before_text, batch)
+        return True
 
     async def history(self, entry_id: str) -> Dict[str, Any]:
         """The versions an entry replaced and the reviews it had, oldest first."""
