@@ -3,9 +3,10 @@
 // (memory.annotate). Evidence shape, all optional:
 //   finding:   { global_id, severity, file, commit }
 //   matches:   [{ relation, ref, title, url, state, state_reason, confidence, why, decision }]
-//                relation: tracks | addresses | fixed | declined | same_finding | decided_before
+//                relation: tracks | addresses | fixed | declined | same_finding | decided_before | seen_before
 //   patch:     { status, reason }
 //   suggested: { kind, confidence, why, guidance, duplicate_of, scope }
+//   seen_again: [{ commit, finding_id }]   later scans that found it again
 
 export const KINDS = [
   { kind: 'valid', label: 'Valid', hint: 'worth fixing' },
@@ -51,6 +52,7 @@ const PATCH = {
   skipped_not_planned: 'skipped',
   skipped_informational: 'not patched',
   skipped_decided: 'skipped, decided before',
+  skipped_duplicate: 'skipped, duplicate',
 };
 
 export const patchText = (p) => (p?.status ? PATCH[p.status] || p.status.replace(/_/g, ' ') : null);
@@ -63,9 +65,10 @@ export function matchText(m) {
     case 'fixed': return `${m.ref} closed, fixed`;
     case 'declined': return `${m.ref} closed, not planned`;
     case 'same_finding': return `Same as ${m.ref}`;
+    case 'seen_before': return `Seen before: ${m.ref}`;
     case 'decided_before': {
       const d = m.decision || {};
-      return `Dismissed before: ${kindLabel(d.kind) || 'decided'}${d.by ? `, ${d.by.replace(/^human:/, '')}` : ''}`;
+      return `Decided before: ${kindLabel(d.kind) || 'decided'}${d.by ? `, ${d.by.replace(/^human:/, '')}` : ''}`;
     }
     default: return m.ref || m.relation;
   }

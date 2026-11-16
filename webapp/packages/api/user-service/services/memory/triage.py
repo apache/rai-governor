@@ -57,8 +57,9 @@ USAGE_DB = "memory_usage"
 
 SCANNERS = ("asvs", "glasswing")
 
-# Most guidance text one entry holds, and most one disposition reason.
-MAX_GUIDANCE_CHARS = 8000
+# Most guidance text one entry holds: an imported audit_guidance file can
+# be long, and a scan already loads such files whole today.
+MAX_GUIDANCE_CHARS = 32000
 MAX_EVIDENCE_CHARS = 16000
 
 

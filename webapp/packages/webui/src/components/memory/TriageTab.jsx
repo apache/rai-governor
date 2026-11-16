@@ -61,6 +61,9 @@ function Badges({ hit }) {
     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.75 }}>
       {(ev.matches || []).map((m, i) => <Chip key={i} label={matchText(m)} size="small" sx={badgeSx} />)}
       {patch && <Chip label={`Patch: ${patch}`} size="small" sx={badgeSx} />}
+      {ev.seen_again?.length > 0 && (
+        <Chip label={`Found again by ${ev.seen_again.length} later ${ev.seen_again.length === 1 ? 'scan' : 'scans'}`} size="small" sx={badgeSx} />
+      )}
       {hit.disposition && <Chip label={`Decided: ${kindLabel(hit.disposition)}`} size="small" sx={decidedSx} />}
       {!hit.disposition && ev.suggested?.kind && (
         <Chip label={`Suggested: ${kindLabel(ev.suggested.kind)}${ev.suggested.duplicate_of ? ` of ${ev.suggested.duplicate_of}` : ''}`}

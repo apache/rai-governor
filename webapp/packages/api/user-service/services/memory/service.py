@@ -104,6 +104,7 @@ def _summary(row: Dict[str, Any]) -> Dict[str, Any]:
         "supersedes": row.get("supersedes"),
         "run": row.get("run"),
         "origin": row.get("origin"),
+        "source": row.get("source") or [],
         # Gofannon's own row fields (index.ROW_ONLY): a person's disposition
         # of a finding, and what the scan found about it.
         "disposition": row.get("disposition"),
