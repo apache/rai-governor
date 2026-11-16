@@ -28,7 +28,7 @@ MAX_HITS = 1000
 # Fields a caller may filter on with equality.
 FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "origin", "run")
 
-# Row fields that are gofannon's own, not derived from the entry: a person's
+# Row fields that are Governor's own, not derived from the entry: a person's
 # disposition of a finding, and what a scan found about it. The frontmatter
 # is shared with tooling-memory and stays as it is, so these live on the row
 # only, and a rewrite of the row from the entry (a review, a supersede) keeps
