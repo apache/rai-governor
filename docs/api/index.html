@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en" dir="ltr" class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-api" data-has-hydrated="false">
+<head>
+<meta charset="UTF-8">
+<meta name="generator" content="Docusaurus v3.9.2">
+<title data-rh="true">User Service API | Governor</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://apache.github.io/rai-governor/img/governor-icon-512.png"><meta data-rh="true" name="twitter:image" content="https://apache.github.io/rai-governor/img/governor-icon-512.png"><meta data-rh="true" property="og:url" content="https://apache.github.io/rai-governor/docs/api"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="User Service API | Governor"><meta data-rh="true" name="description" content="This document describes the HTTP surface of the user-service FastAPI app. The service powers provider discovery, chat orchestration, agent lifecycle management, demo generation, and deployment management. All routes are relative to the service root (e.g., http8000)."><meta data-rh="true" property="og:description" content="This document describes the HTTP surface of the user-service FastAPI app. The service powers provider discovery, chat orchestration, agent lifecycle management, demo generation, and deployment management. All routes are relative to the service root (e.g., http8000)."><link data-rh="true" rel="icon" href="/rai-governor/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://apache.github.io/rai-governor/docs/api"><link data-rh="true" rel="alternate" href="https://apache.github.io/rai-governor/docs/api" hreflang="en"><link data-rh="true" rel="alternate" href="https://apache.github.io/rai-governor/docs/api" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"User Service API","item":"https://apache.github.io/rai-governor/docs/api"}]}</script><link rel="alternate" type="application/rss+xml" href="/rai-governor/blog/rss.xml" title="Governor RSS Feed">
+<link rel="alternate" type="application/atom+xml" href="/rai-governor/blog/atom.xml" title="Governor Atom Feed">
+
+<link rel="preconnect" href="https://www.google-analytics.com">
+<link rel="preconnect" href="https://www.googletagmanager.com">
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-S4YL0CG31S"></script>
+<script>function gtag(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],gtag("js",new Date),gtag("config","G-S4YL0CG31S",{anonymize_ip:!0})</script><link rel="stylesheet" href="/rai-governor/assets/css/styles.fac7efa6.css">
+<script src="/rai-governor/assets/js/runtime~main.fe6c0066.js" defer="defer"></script>
+<script src="/rai-governor/assets/js/main.4c4554b2.js" defer="defer"></script>
+</head>
+<body class="navigation-with-keyboard">
+<svg style="display: none;"><defs>
+<symbol id="theme-svg-external-link" viewBox="0 0 24 24"><path fill="currentColor" d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t=function(){try{return new URLSearchParams(window.location.search).get("docusaurus-theme")}catch(t){}}()||function(){try{return window.localStorage.getItem("theme")}catch(t){}}();document.documentElement.setAttribute("data-theme",t||(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")),document.documentElement.setAttribute("data-theme-choice",t||"system")}(),function(){try{const c=new URLSearchParams(window.location.search).entries();for(var[t,e]of c)if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id="__docusaurus"><link rel="preload" as="image" href="/rai-governor/img/governor-symbol.svg"><link rel="preload" as="image" href="/rai-governor/img/governor-symbol-dark.svg"><div role="region" aria-label="Skip to main content"><a class="skipToContent_fXgn" href="#__docusaurus_skipToContent_fallback">Skip to main content</a></div><nav aria-label="Main" class="theme-layout-navbar navbar navbar--fixed-top"><div class="navbar__inner"><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded="false" class="navbar__toggle clean-btn" type="button"><svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="2" d="M4 7h22M4 15h22M4 23h22"></path></svg></button><a class="navbar__brand" href="/rai-governor/"><div class="navbar__logo"><img src="/rai-governor/img/governor-symbol.svg" alt="Governor" class="themedComponent_mlkZ themedComponent--light_NVdE"><img src="/rai-governor/img/governor-symbol-dark.svg" alt="Governor" class="themedComponent_mlkZ themedComponent--dark_xIcU"></div><b class="navbar__title text--truncate">Governor</b></a><a aria-current="page" class="navbar__item navbar__link navbar__link--active" href="/rai-governor/">Home</a><a aria-current="page" class="navbar__item navbar__link navbar__link--active" href="/rai-governor/docs/quickstart/">Quickstart</a><div class="navbar__item dropdown dropdown--hoverable"><a href="#" aria-haspopup="true" aria-expanded="false" role="button" class="navbar__link">Developers</a><ul class="dropdown__menu"><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/developers-quickstart">Developer Quickstart</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/api">API Reference</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/architecture">Architecture / Services</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/llm-provider-configuration">LLM Provider Configuration</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/observability">Observability</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/testing/">Testing</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/testing/contributing">Contributing</a></li></ul></div><div class="navbar__item dropdown dropdown--hoverable"><a href="#" aria-haspopup="true" aria-expanded="false" role="button" class="navbar__link">Project</a><ul class="dropdown__menu"><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/about-name-origin">About / Name Origin</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/roadmap">Roadmap</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/contact-community">Contact / Community</a></li><li><a aria-current="page" class="dropdown__link dropdown__link--active" href="/rai-governor/docs/license">License</a></li></ul></div></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><div class="toggle_vylO colorModeToggle_DEke"><button class="clean-btn toggleButton_gllP toggleButtonDisabled_aARS" type="button" disabled="" title="system mode" aria-label="Switch between dark and light mode (currently system mode)"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP lightToggleIcon_pyhR"><path fill="currentColor" d="M12,9c1.65,0,3,1.35,3,3s-1.35,3-3,3s-3-1.35-3-3S10.35,9,12,9 M12,7c-2.76,0-5,2.24-5,5s2.24,5,5,5s5-2.24,5-5 S14.76,7,12,7L12,7z M2,13l2,0c0.55,0,1-0.45,1-1s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S1.45,13,2,13z M20,13l2,0c0.55,0,1-0.45,1-1 s-0.45-1-1-1l-2,0c-0.55,0-1,0.45-1,1S19.45,13,20,13z M11,2v2c0,0.55,0.45,1,1,1s1-0.45,1-1V2c0-0.55-0.45-1-1-1S11,1.45,11,2z M11,20v2c0,0.55,0.45,1,1,1s1-0.45,1-1v-2c0-0.55-0.45-1-1-1C11.45,19,11,19.45,11,20z M5.99,4.58c-0.39-0.39-1.03-0.39-1.41,0 c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0s0.39-1.03,0-1.41L5.99,4.58z M18.36,16.95 c-0.39-0.39-1.03-0.39-1.41,0c-0.39,0.39-0.39,1.03,0,1.41l1.06,1.06c0.39,0.39,1.03,0.39,1.41,0c0.39-0.39,0.39-1.03,0-1.41 L18.36,16.95z M19.42,5.99c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06c-0.39,0.39-0.39,1.03,0,1.41 s1.03,0.39,1.41,0L19.42,5.99z M7.05,18.36c0.39-0.39,0.39-1.03,0-1.41c-0.39-0.39-1.03-0.39-1.41,0l-1.06,1.06 c-0.39,0.39-0.39,1.03,0,1.41s1.03,0.39,1.41,0L7.05,18.36z"></path></svg><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP darkToggleIcon_wfgR"><path fill="currentColor" d="M9.37,5.51C9.19,6.15,9.1,6.82,9.1,7.5c0,4.08,3.32,7.4,7.4,7.4c0.68,0,1.35-0.09,1.99-0.27C17.45,17.19,14.93,19,12,19 c-3.86,0-7-3.14-7-7C5,9.07,6.81,6.55,9.37,5.51z M12,3c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9c0-0.46-0.04-0.92-0.1-1.36 c-0.98,1.37-2.58,2.26-4.4,2.26c-2.98,0-5.4-2.42-5.4-5.4c0-1.81,0.89-3.42,2.26-4.4C12.92,3.04,12.46,3,12,3L12,3z"></path></svg><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" class="toggleIcon_g3eP systemToggleIcon_QzmC"><path fill="currentColor" d="m12 21c4.971 0 9-4.029 9-9s-4.029-9-9-9-9 4.029-9 9 4.029 9 9 9zm4.95-13.95c1.313 1.313 2.05 3.093 2.05 4.95s-0.738 3.637-2.05 4.95c-1.313 1.313-3.093 2.05-4.95 2.05v-14c1.857 0 3.637 0.737 4.95 2.05z"></path></svg></button></div><div class="navbarSearchContainer_Bca1"></div></div></div><div role="presentation" class="navbar-sidebar__backdrop"></div></nav><div id="__docusaurus_skipToContent_fallback" class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class="docsWrapper_hBAB"><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type="button"></button><div class="docRoot_UBD9"><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class="sidebarViewport_aRkj"><div class="sidebar_njMd"><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/rai-governor/docs/data-store/"><span title="Data Store" class="categoryLinkLabel_W154">Data Store</span></a><button aria-label="Expand sidebar category &#x27;Data Store&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/quickstart/"><span title="Quickstart" class="linkLabel_WmDU">Quickstart</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/developers-quickstart"><span title="Developer Quickstart Guide" class="linkLabel_WmDU">Developer Quickstart Guide</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/rai-governor/docs/database-service/"><span title="Database Service" class="categoryLinkLabel_W154">Database Service</span></a><button aria-label="Expand sidebar category &#x27;Database Service&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/database-service"><span title="Database Service Documentation" class="linkLabel_WmDU">Database Service Documentation</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role="button" aria-expanded="false" href="/rai-governor/docs/developers/agent-trace"><span title="Developers" class="categoryLinkLabel_W154">Developers</span></a></div></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/llm-provider-configuration"><span title="LLM Provider Configuration Guide" class="linkLabel_WmDU">LLM Provider Configuration Guide</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/architecture"><span title="Architecture / Services" class="linkLabel_WmDU">Architecture / Services</span></a></li><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item menu__list-item--collapsed"><div class="menu__list-item-collapsible"><a class="categoryLink_byQd menu__link menu__link--sublist" href="/rai-governor/docs/testing/"><span title="Testing" class="categoryLinkLabel_W154">Testing</span></a><button aria-label="Expand sidebar category &#x27;Testing&#x27;" aria-expanded="false" type="button" class="clean-btn menu__caret"></button></div></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link menu__link--active" aria-current="page" href="/rai-governor/docs/api"><span title="User Service API" class="linkLabel_WmDU">User Service API</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/EXTENSION_EXAMPLE"><span title="External extension example: Echo card, page, and API" class="linkLabel_WmDU">External extension example: Echo card, page, and API</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/about-name-origin"><span title="Origins of the name Governor" class="linkLabel_WmDU">Origins of the name Governor</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/api-key-management"><span title="API Key Management" class="linkLabel_WmDU">API Key Management</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/contact-community"><span title="Contact &amp; Community" class="linkLabel_WmDU">Contact &amp; Community</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/context-window-awareness"><span title="Context Window Awareness" class="linkLabel_WmDU">Context Window Awareness</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/data-store"><span title="Agent Data Store" class="linkLabel_WmDU">Agent Data Store</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/license"><span title="License" class="linkLabel_WmDU">License</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/memory"><span title="Memory" class="linkLabel_WmDU">Memory</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/observability"><span title="Observability &amp; Logging Guide" class="linkLabel_WmDU">Observability &amp; Logging Guide</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/pipelines"><span title="Pipelines: import and export" class="linkLabel_WmDU">Pipelines: import and export</span></a></li><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class="menu__link" href="/rai-governor/docs/roadmap"><span title="Roadmap" class="linkLabel_WmDU">Roadmap</span></a></li></ul></nav></div></div></aside><main class="docMainContainer_TBSr"><div class="container padding-top--md padding-bottom--lg"><div class="row"><div class="col docItemCol_VOVn"><div class="docItemContainer_Djhp"><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label="Breadcrumbs"><ul class="breadcrumbs"><li class="breadcrumbs__item"><a aria-label="Home page" class="breadcrumbs__link" href="/rai-governor/"><svg viewBox="0 0 24 24" class="breadcrumbHomeIcon_YNFT"><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill="currentColor"></path></svg></a></li><li class="breadcrumbs__item breadcrumbs__item--active"><span class="breadcrumbs__link">User Service API</span></li></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type="button" class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>User Service API</h1></header>
+<p>This document describes the HTTP surface of the user-service FastAPI app. The service powers provider discovery, chat orchestration, agent lifecycle management, demo generation, and deployment management. All routes are relative to the service root (e.g., <code>http://localhost:8000</code>).</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="authentication-and-headers">Authentication and headers<a href="#authentication-and-headers" class="hash-link" aria-label="Direct link to Authentication and headers" title="Direct link to Authentication and headers" translate="no">​</a></h2>
+<p>The auth provider is selected by <code>APP_ENV</code> (and the per-provider config under <code>auth/</code>). Three modes:</p>
+<ul>
+<li class=""><strong>Dev (default):</strong> session-cookie auth via the <code>dev_stub</code> provider. The browser-side login flow is <code>GET /auth/login/dev_stub</code> → backend picker → callback sets the <code>gofannon_sid</code> httpOnly cookie. API calls then carry the cookie automatically.</li>
+<li class=""><strong>Real OAuth deployments:</strong> the same session model with Google/Microsoft/GitHub/ASF/etc. providers in place of <code>dev_stub</code>. Same cookie carries the session.</li>
+<li class=""><strong>Firebase deployments:</strong> send <code>Authorization: Bearer &lt;ID token&gt;</code>; the token is verified with Firebase and the decoded user is attached to <code>request.state.user</code>.</li>
+</ul>
+<p>Most routes rely on dependency injection for authorization (<code>get_current_user</code>); admin-only routes require <code>require_admin_access</code>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="error-handling">Error handling<a href="#error-handling" class="hash-link" aria-label="Direct link to Error handling" title="Direct link to Error handling" translate="no">​</a></h2>
+<ul>
+<li class="">Standard FastAPI error responses are returned with a JSON body shaped as <code>{&quot;detail&quot;: &lt;message&gt;}</code> when validation or downstream services fail.</li>
+<li class="">Background tasks (e.g., chat processing) store status and errors in the database; clients should poll for completion.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="endpoint-summary">Endpoint summary<a href="#endpoint-summary" class="hash-link" aria-label="Direct link to Endpoint summary" title="Direct link to Endpoint summary" translate="no">​</a></h2>
+<ul>
+<li class=""><strong>Service metadata:</strong> <code>GET /</code>, <code>GET /health</code></li>
+<li class=""><strong>Logging:</strong> <code>POST /log/client</code></li>
+<li class=""><strong>Provider catalog:</strong> <code>GET /providers</code>, <code>/providers/{provider}</code>, <code>/providers/{provider}/models</code>, <code>/providers/{provider}/models/{model}</code></li>
+<li class=""><strong>User profile &amp; usage:</strong> <code>GET /users/me</code>, <code>PUT /users/me/monthly-allowance</code>, <code>PUT /users/me/allowance-reset-date</code>, <code>PUT /users/me/spend-remaining</code>, <code>POST /users/me/usage</code>, <code>POST /users/me/reset-allowance</code></li>
+<li class=""><strong>Admin users:</strong> <code>GET /admin/users</code>, <code>PUT /admin/users/{user_id}</code></li>
+<li class=""><strong>Chat:</strong> <code>POST /chat</code>, <code>GET /chat/{ticket_id}</code></li>
+<li class=""><strong>Session configuration:</strong> <code>POST /sessions/{session_id}/config</code>, <code>GET /sessions/{session_id}/config</code>, <code>DELETE /sessions/{session_id}</code></li>
+<li class=""><strong>Agents:</strong> CRUD at <code>/agents</code> plus <code>POST /agents/generate-code</code>, <code>POST /agents/run-code</code></li>
+<li class=""><strong>Deployments:</strong> <code>POST /agents/{agent_id}/deploy</code>, <code>DELETE /agents/{agent_id}/undeploy</code>, <code>GET /agents/{agent_id}/deployment</code>, <code>GET /deployments</code>, <code>POST /rest/{friendly_name}</code></li>
+<li class=""><strong>MCP connectors:</strong> <code>POST /mcp/tools</code></li>
+<li class=""><strong>Specs:</strong> <code>POST /specs/fetch</code></li>
+<li class=""><strong>Demos:</strong> <code>POST /demos/generate-code</code>, CRUD at <code>/demos</code></li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="endpoint-details">Endpoint details<a href="#endpoint-details" class="hash-link" aria-label="Direct link to Endpoint details" title="Direct link to Endpoint details" translate="no">​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="service-metadata">Service metadata<a href="#service-metadata" class="hash-link" aria-label="Direct link to Service metadata" title="Direct link to Service metadata" translate="no">​</a></h3>
+<ul>
+<li class=""><code>GET /</code> → Simple heartbeat payload with service name.</li>
+<li class=""><code>GET /health</code> → <code>{ &quot;status&quot;: &quot;healthy&quot;, &quot;service&quot;: &quot;user-service&quot; }</code> for readiness probes.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="logging">Logging<a href="#logging" class="hash-link" aria-label="Direct link to Logging" title="Direct link to Logging" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /log/client</code>
+<ul>
+<li class="">Body: <code>{ &quot;eventType&quot;: string, &quot;message&quot;: string, &quot;level&quot;: &quot;INFO&quot;|&quot;WARN&quot;|..., &quot;metadata&quot;: object? }</code></li>
+<li class="">Behavior: Enriches metadata with <code>client_host</code> and <code>user_agent</code>, then writes to observability service. Returns <code>{ &quot;status&quot;: &quot;logged&quot; }</code>.</li>
+</ul>
+</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="provider-catalog">Provider catalog<a href="#provider-catalog" class="hash-link" aria-label="Direct link to Provider catalog" title="Direct link to Provider catalog" translate="no">​</a></h3>
+<ul>
+<li class=""><code>GET /providers</code> → Map of provider configurations keyed by provider slug.</li>
+<li class=""><code>GET /providers/{provider}</code> → Provider config, 404 if missing.</li>
+<li class=""><code>GET /providers/{provider}/models</code> → List of model slugs for the provider.</li>
+<li class=""><code>GET /providers/{provider}/models/{model}</code> → Model configuration, 404 if provider or model missing.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="user-profile--usage">User profile &amp; usage<a href="#user-profile--usage" class="hash-link" aria-label="Direct link to User profile &amp; usage" title="Direct link to User profile &amp; usage" translate="no">​</a></h3>
+<ul>
+<li class=""><code>GET /users/me</code> → Current user profile (<code>User</code> schema with <code>basicInfo</code>, <code>billingInfo</code>, <code>usageInfo</code>).</li>
+<li class=""><code>PUT /users/me/monthly-allowance</code>
+<ul>
+<li class="">Body: <code>{ &quot;monthlyAllowance&quot;: number }</code></li>
+<li class="">Effect: Updates allowance limit.</li>
+</ul>
+</li>
+<li class=""><code>PUT /users/me/allowance-reset-date</code>
+<ul>
+<li class="">Body: <code>{ &quot;allowanceResetDate&quot;: number }</code></li>
+<li class="">Effect: Updates reset timestamp.</li>
+</ul>
+</li>
+<li class=""><code>PUT /users/me/spend-remaining</code>
+<ul>
+<li class="">Body: <code>{ &quot;spendRemaining&quot;: number }</code></li>
+<li class="">Effect: Updates remaining spend.</li>
+</ul>
+</li>
+<li class=""><code>POST /users/me/usage</code>
+<ul>
+<li class="">Body: <code>{ &quot;responseCost&quot;: number, &quot;metadata&quot;?: object }</code></li>
+<li class="">Effect: Appends usage entry and updates spend remaining.</li>
+</ul>
+</li>
+<li class=""><code>POST /users/me/reset-allowance</code> → Resets usage tracking for the current user.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="admin-users">Admin users<a href="#admin-users" class="hash-link" aria-label="Direct link to Admin users" title="Direct link to Admin users" translate="no">​</a></h3>
+<ul>
+<li class=""><code>GET /admin/users</code> → Lists all users (admin-only dependency).</li>
+<li class=""><code>PUT /admin/users/{user_id}</code>
+<ul>
+<li class="">Body: any combination of <code>monthlyAllowance</code>, <code>allowanceResetDate</code>, <code>spendRemaining</code>.</li>
+<li class="">Effect: Updates targeted user&#x27;s usage info (admin-only).</li>
+</ul>
+</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="chat">Chat<a href="#chat" class="hash-link" aria-label="Direct link to Chat" title="Direct link to Chat" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /chat</code>
+<ul>
+<li class="">Body: <code>ChatRequest</code> containing <code>messages</code> (role <code>user|assistant|system</code>), <code>provider</code>, <code>model</code>, optional <code>parameters</code>, and <code>builtInTools</code>.</li>
+<li class="">Effect: Queues background chat processing and returns <code>{ &quot;ticket_id&quot;: &lt;uuid&gt;, &quot;status&quot;: &quot;pending&quot; }</code>.</li>
+</ul>
+</li>
+<li class=""><code>GET /chat/{ticket_id}</code> → <code>ChatResponse</code> with <code>status</code>, <code>result</code>, and <code>error</code> once processing completes.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="session-configuration">Session configuration<a href="#session-configuration" class="hash-link" aria-label="Direct link to Session configuration" title="Direct link to Session configuration" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /sessions/{session_id}/config</code>
+<ul>
+<li class="">Body: <code>ProviderConfig</code> (<code>provider</code>, <code>model</code>, <code>parameters</code>).</li>
+<li class="">Effect: Creates or updates session document and returns confirmation.</li>
+</ul>
+</li>
+<li class=""><code>GET /sessions/{session_id}/config</code> → Stored <code>provider_config</code> for the session.</li>
+<li class=""><code>DELETE /sessions/{session_id}</code> → Deletes session and returns <code>{ &quot;message&quot;: &quot;Session deleted&quot; }</code>.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="agents">Agents<a href="#agents" class="hash-link" aria-label="Direct link to Agents" title="Direct link to Agents" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /agents</code>
+<ul>
+<li class="">Body: <code>CreateAgentRequest</code> (name, description, code, optional <code>friendlyName</code>, tool metadata, schemas, invokable models, composer metadata).</li>
+<li class="">Effect: Persists agent and returns saved <code>Agent</code> with <code>_id</code> and <code>_rev</code>.</li>
+</ul>
+</li>
+<li class=""><code>GET /agents</code> → List of all agents.</li>
+<li class=""><code>GET /agents/{agent_id}</code> → Single agent document.</li>
+<li class=""><code>PUT /agents/{agent_id}</code>
+<ul>
+<li class="">Body: <code>UpdateAgentRequest</code> (partial updates across the same fields as creation).</li>
+<li class="">Effect: Merges with existing document, preserves creation metadata, returns updated agent.</li>
+</ul>
+</li>
+<li class=""><code>DELETE /agents/{agent_id}</code> → Deletes agent, 204 on success.</li>
+<li class=""><code>POST /agents/generate-code</code>
+<ul>
+<li class="">Body: <code>GenerateCodeRequest</code> (description, <code>tools</code>, input/output schemas, composer <code>modelConfig</code>, optional swagger specs and invokable models).</li>
+<li class="">Effect: Returns generated agent code and metadata.</li>
+</ul>
+</li>
+<li class=""><code>POST /agents/run-code</code>
+<ul>
+<li class="">Body: <code>RunCodeRequest</code> (<code>code</code>, <code>inputDict</code>, <code>tools</code>, optional <code>gofannonAgents</code>).</li>
+<li class="">Effect: Executes code in sandbox; response contains <code>result</code> or raises with logged failure details.</li>
+</ul>
+</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="deployments">Deployments<a href="#deployments" class="hash-link" aria-label="Direct link to Deployments" title="Direct link to Deployments" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /agents/{agent_id}/deploy</code> → Registers agent for REST exposure; 201 with deployment info.</li>
+<li class=""><code>DELETE /agents/{agent_id}/undeploy</code> → Removes deployment; 204 on success.</li>
+<li class=""><code>GET /agents/{agent_id}/deployment</code> → Deployment metadata for the agent, or 404 if not deployed.</li>
+<li class=""><code>GET /deployments</code> → List of deployed APIs (<code>DeployedApi</code> objects).</li>
+<li class=""><code>POST /rest/{friendly_name}</code> → Runs a deployed agent by its public name using the JSON body as <code>input_dict</code>.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="specs">Specs<a href="#specs" class="hash-link" aria-label="Direct link to Specs" title="Direct link to Specs" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /specs/fetch</code>
+<ul>
+<li class="">Body: <code>{ &quot;url&quot;: string }</code></li>
+<li class="">Effect: Fetches and returns OpenAPI/Swagger spec content from a remote URL.</li>
+</ul>
+</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="mcp-connectors">MCP connectors<a href="#mcp-connectors" class="hash-link" aria-label="Direct link to MCP connectors" title="Direct link to MCP connectors" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /mcp/tools</code>
+<ul>
+<li class="">Body: <code>{ &quot;mcp_url&quot;: string, &quot;auth_token&quot;?: string }</code></li>
+<li class="">Effect: Connects to a remote MCP server and returns <code>{ &quot;mcp_url&quot;: ..., &quot;tools&quot;: [...] }</code>.</li>
+</ul>
+</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="demo-apps">Demo apps<a href="#demo-apps" class="hash-link" aria-label="Direct link to Demo apps" title="Direct link to Demo apps" translate="no">​</a></h3>
+<ul>
+<li class=""><code>POST /demos/generate-code</code>
+<ul>
+<li class="">Body: <code>GenerateDemoCodeRequest</code> (user prompt, selected deployed APIs, composer <code>modelConfig</code>, optional <code>builtInTools</code>).</li>
+<li class="">Effect: Returns generated <code>html</code>, <code>css</code>, <code>js</code>, and optional <code>thoughts</code>.</li>
+</ul>
+</li>
+<li class=""><code>POST /demos</code>
+<ul>
+<li class="">Body: <code>CreateDemoAppRequest</code> (name, description, selected APIs, composer config, prompt, generated code, optional composer thoughts).</li>
+<li class="">Effect: Saves a demo app and returns the stored <code>DemoApp</code>.</li>
+</ul>
+</li>
+<li class=""><code>GET /demos</code> → List of saved demo apps.</li>
+<li class=""><code>GET /demos/{demo_id}</code> → Single demo app.</li>
+<li class=""><code>PUT /demos/{demo_id}</code> → Replace demo app content using the same schema as creation.</li>
+<li class=""><code>DELETE /demos/{demo_id}</code> → Deletes demo app, 204 on success.</li>
+</ul></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/rai-governor/docs/testing/unit-testing"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Unit Testing Guide</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/rai-governor/docs/EXTENSION_EXAMPLE"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">External extension example: Echo card, page, and API</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#authentication-and-headers" class="table-of-contents__link toc-highlight">Authentication and headers</a></li><li><a href="#error-handling" class="table-of-contents__link toc-highlight">Error handling</a></li><li><a href="#endpoint-summary" class="table-of-contents__link toc-highlight">Endpoint summary</a></li><li><a href="#endpoint-details" class="table-of-contents__link toc-highlight">Endpoint details</a><ul><li><a href="#service-metadata" class="table-of-contents__link toc-highlight">Service metadata</a></li><li><a href="#logging" class="table-of-contents__link toc-highlight">Logging</a></li><li><a href="#provider-catalog" class="table-of-contents__link toc-highlight">Provider catalog</a></li><li><a href="#user-profile--usage" class="table-of-contents__link toc-highlight">User profile &amp; usage</a></li><li><a href="#admin-users" class="table-of-contents__link toc-highlight">Admin users</a></li><li><a href="#chat" class="table-of-contents__link toc-highlight">Chat</a></li><li><a href="#session-configuration" class="table-of-contents__link toc-highlight">Session configuration</a></li><li><a href="#agents" class="table-of-contents__link toc-highlight">Agents</a></li><li><a href="#deployments" class="table-of-contents__link toc-highlight">Deployments</a></li><li><a href="#specs" class="table-of-contents__link toc-highlight">Specs</a></li><li><a href="#mcp-connectors" class="table-of-contents__link toc-highlight">MCP connectors</a></li><li><a href="#demo-apps" class="table-of-contents__link toc-highlight">Demo apps</a></li></ul></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class="footer__title">Docs</div><ul class="footer__items clean-list"><li class="footer__item"><a class="footer__link-item" href="/rai-governor/docs/quickstart">Quickstart</a></li></ul></div><div class="theme-layout-footer-column col footer__col"><div class="footer__title">Community</div><ul class="footer__items clean-list"></ul></div><div class="theme-layout-footer-column col footer__col"><div class="footer__title">More</div><ul class="footer__items clean-list"><li class="footer__item"><a class="footer__link-item" href="/rai-governor/blog">Blog</a></li><li class="footer__item"><a href="https://github.com/apache/rai-governor" target="_blank" rel="noopener noreferrer" class="footer__link-item">GitHub<svg width="13.5" height="13.5" aria-label="(opens in new tab)" class="iconExternalLink_nPIU"><use href="#theme-svg-external-link"></use></svg></a></li></ul></div></div><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2026 The AI Alliance. Built with Docusaurus.</div></div></div></footer></div>
+</body>
+</html>

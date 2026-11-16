@@ -1,0 +1,1 @@
+"use strict";(globalThis.webpackChunkwebsite=globalThis.webpackChunkwebsite||[]).push([[1903],{1912(o){o.exports=JSON.parse('{"blogBasePath":"/rai-governor/blog","blogTitle":"Blog","authorsListPath":"/rai-governor/blog/authors"}')}}]);
