@@ -1,75 +1,76 @@
-# Contributing
+# Contributing to Governor
 
-### Good First Issues
-[`good first issue`](https://github.com/apache/rai-governor/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)s 
-are intentionally very simple tasks, often involving fixing spelling typos, 
-updating documentation, or making other minor changes. These issues are 
-specifically designed to help newcomers become familiar with the project's 
-contribution workflow - from forking the repository to submitting a pull request
-and going through the review process. They require minimal technical knowledge 
-while providing a complete end-to-end experience of contributing to the project.
+Thanks for helping. Governor is an Apache Software Foundation project:
+contributions are accepted under the [Apache License 2.0](LICENSE), and
+everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-We encourage new contributors to start with one or two Good First Issues to get 
-comfortable with our workflow (but advanced users can skip if they are 
-comfortable using GitHub). Once you've successfully completed a couple of these 
-and feel confident navigating the commit/PR/review process, we recommend moving 
-on to more substantive contributions (such as a new tool, a bug, or an infra 
-task) as outlined in our contribution flow chart. This progression helps you 
-build confidence while gradually tackling more complex issues that have greater 
-impact on the project.
+## Find something to work on
 
-We maintain some documents to help you in this step [here](https://apache.github.io/rai-governor/developers/first_contribution.html).
+- Issues labelled
+  [`good first issue`](https://github.com/apache/rai-governor/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)
+  are small and self-contained: a good way to learn the workflow from fork to
+  merged pull request.
+- For a bug, check the [open issues](https://github.com/apache/rai-governor/issues)
+  first, then open one with steps to reproduce.
+- For anything bigger than a small fix, open an issue describing the change
+  before writing it, so the approach can be agreed first.
 
-## New Tool
-We have a curated guide on how to contribute a tool, you can find it hosted
-[here](https://apache.github.io/rai-governor/developers/contribute_tool.html).
+## Set up
 
-## New Framework
-We also have a curated guide on how to contribute a new agentic framework, you 
-can find it hosted [here](https://apache.github.io/rai-governor/developers/contribute_agentic_framework.html).
+The [developer quickstart](docs/developers-quickstart.md) covers cloning the
+repository, setting up the backend and frontend, and running the stack locally
+with Docker Compose. [Architecture](docs/architecture.md) and the
+[API reference](docs/api.md) explain how the pieces fit together.
 
-## New Examples
-New examples are a great way to come up with ideas for new tools, frameworks, or
-improvements to existing tools. This is why we have a new example as a possible
-second step on your contribution journey. 
+## Before you open a pull request
 
-We do not currently have a curated guide for creating new examples.
+Run the checks CI runs on pull requests:
 
-Mainly note that we use Google Colab as the defacto runtime for our examples 
-because it removes issues revolving around different people's local environments.
+```bash
+# Frontend: lint, then tests with the coverage floor
+cd webapp/packages/webui
+pnpm lint
+pnpm test:coverage
 
-## Bugs, Infra improvements, other
-This would be 'other' types of issues. The nature of which precludes being able 
-to write a general guide. This is more of the traditional types of issues any repo
-face. They're not the exciting cool issues; they are what keeps the lights on, 
-and we appreciate your help.
-
-## Flow Chart
-
-This is an example- you're a volunteer you can do whatever you want in any order
-you want, but this guide may help. 
-
-```mermaid  
-graph TD  
-    A[good first issue] --> B[create a tool]  
-    A --> C[create an example]  
-    A --> D[bugs, infra, other]  
-    B -->|create an example about your tool| C
-    B --> D 
-    B --> E[create agentic framework]
-    C -->|create the tools your example needs| B
-    C -->|fix bugs you found while making your example| D
-    C --> E
+# Backend: unit tests with the coverage floor
+cd webapp/packages/api/user-service
+python -m pytest tests/unit
 ```
-## PR Requirements
 
-- Code changes require:
-    - Passing unit tests
-    - Code review approval
-    - Updated documentation if API changes (or for additions)
+Depending on what you changed:
 
-- Documentation changes require:
-    - Successful site build
-    - No code review required (but still appreciated)
+- **`requirements.txt`**: regenerate the lock, or CI fails:
+  ```bash
+  cd webapp/packages/api/user-service
+  uv pip compile requirements.txt --universal --python-version 3.12 \
+    --no-header -o requirements.lock
+  ```
+- **`docs/` or `website/`**: build the docs site:
+  ```bash
+  cd website && npm ci && npm run build
+  ```
+- **Anything touching the running stack**: `./run-all-tests.sh` from the
+  repository root runs every suite, including integration and end-to-end
+  tests, against the Docker Compose stack.
 
-- Mixed changes must satisfy all relevant requirements  
+The [testing guide](docs/testing/contributing.md) explains what tests a change
+needs and where they go. Coverage floors live in
+`webapp/packages/webui/vitest.config.ts` and
+`webapp/packages/api/user-service/pytest.ini`; a change should not lower them.
+
+## Pull request requirements
+
+- Code changes need:
+  - Passing CI
+  - Approval from a reviewer
+  - Updated documentation when behaviour or an API changes
+- Documentation changes need a successful docs site build. Review is welcome
+  but not required.
+- Changes that mix both must meet both sets of requirements.
+
+## Dependencies
+
+Dependabot proposes updates weekly and only for releases at least seven days
+old; see `.github/dependabot.yml`. The `overrides` in `website/package.json` and
+`pnpm.overrides` in `webapp/package.json` pin transitive dependencies for
+security fixes and are updated by hand.

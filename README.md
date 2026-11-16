@@ -52,7 +52,7 @@ Planned features and their current status are tracked in the [roadmap](docs/road
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, including the "good first issue" label for newcomers and contribution guides for adding tools, integrating new agentic frameworks, and extending the web UI.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started, from the "good first issue" label to the checks to run before opening a pull request.
 
 ## Acknowledgments
 

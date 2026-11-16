@@ -7,9 +7,11 @@ This guide provides instructions for setting up your development environment to 
 Before you begin, ensure you have the following installed:
 
 - **Operating System:** Linux, macOS, or WSL (Windows Subsystem for Linux).
-- **Python:** Version 3.10 or higher.
-- **Node.js:** Version 18 or higher.
-- **pnpm:** Version 8 or higher (Installation: `npm install -g pnpm`).
+- **Python:** 3.12, the version CI and the API container use.
+- **Node.js:** 22 (20 at minimum), the version CI and the web UI container use.
+- **pnpm:** the version pinned in `webapp/package.json` (`packageManager`). Run `corepack enable` once and Node picks it up automatically.
+- **uv:** to regenerate `requirements.lock` when you change `requirements.txt` ([installation](https://docs.astral.sh/uv/getting-started/installation/)).
+- **Docker** with Compose: to run the full stack locally and the integration tests.
 - **Git:** For version control.
 
 ## 1. Cloning the Project
