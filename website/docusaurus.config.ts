@@ -194,7 +194,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} The Apache Software Foundation. Licensed under the Apache License, Version 2.0.<br/>Apache and the Apache feather logo are trademarks of The Apache Software Foundation.`,
+      copyright: `Copyright © ${new Date().getFullYear()} The Apache Software Foundation. Licensed under the Apache License, Version 2.0.<br/>Apache and the Apache logo are trademarks of The Apache Software Foundation.`,
     },
     prism: {
       theme: prismThemes.github,
