@@ -54,7 +54,9 @@ FOR_GH_PAGES=true npm run build
 FOR_GH_PAGES=true npm run serve
 ```
 
-The GitHub Actions workflow sets this variable during Pages deployments.
+### How the live site is published
+
+On every push to `main`, `.github/workflows/build-site.yml` builds the site with `FOR_GH_PAGES=true` and pushes the output to the `gh-pages` branch. `.asf.yaml` (`ghp_branch: gh-pages`, `ghp_path: /`) tells GitHub Pages to serve that branch at <https://apache.github.io/rai-governor/>. ASF self-serve only supports branch-based Pages, so the workflow pushes to a branch instead of using `actions/deploy-pages`. You can also run the workflow by hand from the Actions tab.
 
 ## Serving the Production Build
 

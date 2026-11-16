@@ -40,16 +40,15 @@ Full documentation lives in [`docs/`](docs/) and is published at <https://apache
 
 ## About the name
 
-A centrifugal governor is the spinning flyball regulator that kept steam engines at a steady speed by feeding their own output back into their control. See [About the name](docs/about-name-origin.md) for why it fits a project for building and steering AI agents.
+Governor began as a fork of Gofannon, the Welsh god of tooling. His Irish relative Goibniu (pronounced Gov-nyoo) led to the similar-sounding Apache Governor: in machinery, a governor automatically controls a machine's operation to keep it safe. See [About the name](docs/about-name-origin.md) for more.
 
 ## Roadmap
 
-Planned features and their current status are tracked in [ROADMAP.md](ROADMAP.md).
+Planned features and their current status are tracked in the [roadmap](docs/roadmap.md).
 
 ## Community
 
 - Report bugs or request features in [GitHub Issues](https://github.com/apache/rai-governor/issues).
-- Ask questions and discuss ideas in [GitHub Discussions](https://github.com/apache/rai-governor/discussions).
 
 ## Contributing
 
