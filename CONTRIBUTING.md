@@ -33,9 +33,7 @@ New examples are a great way to come up with ideas for new tools, frameworks, or
 improvements to existing tools. This is why we have a new example as a possible
 second step on your contribution journey. 
 
-We do not currently have a curated guide for creating new examples, however there
-is an open issue to create one [here](https://github.com/The-AI-Alliance/gofannon/issues/229)
-which might have some helpful pointers. 
+We do not currently have a curated guide for creating new examples.
 
 Mainly note that we use Google Colab as the defacto runtime for our examples 
 because it removes issues revolving around different people's local environments.

@@ -281,7 +281,7 @@ This is by design. If `get_context_window()` returns 128,000 for a model you exp
 
 ---
 
-**Related:** [LLM Provider Configuration](llm-provider-configuration.md) · [Issue #565](https://github.com/The-AI-Alliance/gofannon/issues/565) · [PR #567](https://github.com/The-AI-Alliance/gofannon/pull/567)
+**Related:** [LLM Provider Configuration](llm-provider-configuration.md) · [Gofannon issue #565](https://github.com/The-AI-Alliance/gofannon/issues/565) · [Gofannon PR #567](https://github.com/The-AI-Alliance/gofannon/pull/567)
 
 **Last Updated:** February 2026
 **Maintainer:** Governor maintainers

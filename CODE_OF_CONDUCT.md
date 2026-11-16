@@ -1,6 +1,9 @@
-# The AI Alliance - Code of Conduct and Covenant
+# Code of Conduct
 
-The AI Alliance code of conduct can be found on the AI Alliance [here](https://ai-alliance.cdn.prismic.io/ai-alliance/Zl-MG5m069VX1dgH_AIAllianceCodeofConduct.pdf) (PDF).  Rather than maintain copies in two places, we refer you to that webpage for the details.
+Governor is an Apache Software Foundation project and follows the
+[ASF Code of Conduct](https://www.apache.org/foundation/policies/conduct).
+It applies to everyone taking part in the project: in this repository, its
+issues and pull requests, and its mailing lists and chat channels.
 
-See also [this page](https://thealliance.ai/contribute) for additional information on contributing to AI Alliance projects.
-
+To raise a concern, follow the
+[ASF reporting guidelines](https://www.apache.org/foundation/policies/conduct#reporting-guidelines).
