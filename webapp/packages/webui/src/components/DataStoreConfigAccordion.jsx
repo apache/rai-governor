@@ -31,50 +31,52 @@ import StorageIcon from '@mui/icons-material/Storage';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import dataStoreService from '../services/dataStoreService';
 
+// One side of the flow preview. Defined at module level so React keeps the
+// same component type across renders instead of remounting it each time.
+const FlowColumn = ({ title, items, accent, empty }) => (
+  <Paper
+    variant="outlined"
+    sx={{
+      flex: 1,
+      p: 1.5,
+      minHeight: 120,
+      borderColor: accent,
+      borderStyle: items.length === 0 ? 'dashed' : 'solid',
+    }}
+  >
+    <Typography variant="overline" sx={{ color: accent, fontSize: '0.68rem', fontWeight: 600 }}>
+      {title}
+    </Typography>
+    <Box sx={{ mt: 0.5, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+      {items.length === 0 ? (
+        <Typography variant="caption" color="text.secondary">{empty}</Typography>
+      ) : items.map((c) => (
+        <Box key={c.namespace} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <StorageIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+          <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
+            {c.namespace}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  </Paper>
+);
+
+FlowColumn.propTypes = {
+  title: PropTypes.string.isRequired,
+  items: PropTypes.array.isRequired,
+  accent: PropTypes.string.isRequired,
+  empty: PropTypes.string.isRequired,
+};
+
 // Flow preview: "Reads From  →  [agent]  →  Writes To"
 const FlowPreview = ({ agentName, configs }) => {
   const reads = configs.filter((c) => c.access === 'read' || c.access === 'both');
   const writes = configs.filter((c) => c.access === 'write' || c.access === 'both');
 
-  const Column = ({ title, items, accent, empty }) => (
-    <Paper
-      variant="outlined"
-      sx={{
-        flex: 1,
-        p: 1.5,
-        minHeight: 120,
-        borderColor: accent,
-        borderStyle: items.length === 0 ? 'dashed' : 'solid',
-      }}
-    >
-      <Typography variant="overline" sx={{ color: accent, fontSize: '0.68rem', fontWeight: 600 }}>
-        {title}
-      </Typography>
-      <Box sx={{ mt: 0.5, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-        {items.length === 0 ? (
-          <Typography variant="caption" color="text.secondary">{empty}</Typography>
-        ) : items.map((c) => (
-          <Box key={c.namespace} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-            <StorageIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-            <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 500 }}>
-              {c.namespace}
-            </Typography>
-          </Box>
-        ))}
-      </Box>
-    </Paper>
-  );
-
-  Column.propTypes = {
-    title: PropTypes.string.isRequired,
-    items: PropTypes.array.isRequired,
-    accent: PropTypes.string.isRequired,
-    empty: PropTypes.string.isRequired,
-  };
-
   return (
     <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1, mb: 2 }}>
-      <Column title="Reads from" items={reads} accent="#075985" empty="(none)" />
+      <FlowColumn title="Reads from" items={reads} accent="#075985" empty="(none)" />
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
         <ArrowRightAltIcon sx={{ color: 'text.secondary' }} />
       </Box>
@@ -100,7 +102,7 @@ const FlowPreview = ({ agentName, configs }) => {
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
         <ArrowRightAltIcon sx={{ color: 'text.secondary' }} />
       </Box>
-      <Column title="Writes to" items={writes} accent="#166534" empty="(none)" />
+      <FlowColumn title="Writes to" items={writes} accent="#166534" empty="(none)" />
     </Box>
   );
 };

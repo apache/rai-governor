@@ -165,10 +165,6 @@ const ApiKeysTab = () => {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
-  useEffect(() => {
-    loadApiKeys();
-  }, []);
-
   const loadApiKeys = async () => {
     try {
       setLoading(true);
@@ -181,6 +177,10 @@ const ApiKeysTab = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadApiKeys();
+  }, []);
 
   const handleSave = async (provider, apiKey) => {
     try {
