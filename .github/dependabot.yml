@@ -1,8 +1,5 @@
-# website/ is intentionally not watched: the Docusaurus site is built and
-# deployed from upstream, not from this fork.
-#
 # requirements.lock is not maintained by Dependabot; the pip ecosystem does not
-# recognise that filename. Refresh it upstream:
+# recognise that filename. Refresh it by hand:
 #
 #   cd webapp/packages/api/user-service
 #   uv pip compile requirements.txt --universal --python-version 3.12 \
@@ -132,6 +129,38 @@ updates:
           - minor
           - patch
       js-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # The Docusaurus docs site, published to GitHub Pages by build-site.yml.
+  # Nothing here ships in the app, so minor and patch bumps go in one PR.
+  # The overrides in website/package.json are not updated by Dependabot;
+  # raise them by hand when an alert names an overridden package.
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - javascript
+    ignore:
+      # With the v4 future flag, Docusaurus 3.10 needs @docusaurus/faster;
+      # move Docusaurus by hand. All @docusaurus/* packages must match.
+      - dependency-name: "@docusaurus/*"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+    groups:
+      website-minor-and-patch:
         patterns:
           - "*"
         update-types:
