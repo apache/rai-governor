@@ -20,6 +20,9 @@ github:
     catchall: "[GH] {title} ({repository})"
   protected_branches:
     main: {}
+  # Docs site: built by .github/workflows/build-site.yml, served from gh-pages.
+  ghp_branch: gh-pages
+  ghp_path: /
 
 notifications:
   commits:      commits@rai.apache.org
