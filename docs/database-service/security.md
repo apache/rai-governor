@@ -447,7 +447,7 @@ sudo ufw deny 5984
 # Create security group for DynamoDB access
 aws ec2 create-security-group \
   --group-name gofannon-database \
-  --description "Database access for Gofannon"
+  --description "Database access for Governor"
 
 # Allow outbound HTTPS for DynamoDB
 aws ec2 authorize-security-group-egress \

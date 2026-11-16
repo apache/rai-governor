@@ -71,4 +71,4 @@ Fixes #
 
 ---
 
-By submitting this PR, I confirm that I have read and agree to follow the project's [Code of Conduct](https://github.com/the-ai-alliance/gofannon/blob/main/CODE_OF_CONDUCT.md) and [Contributing Guidelines](https://github.com/the-ai-alliance/gofannon/blob/main/CONTRIBUTING.md).
+By submitting this PR, I confirm that I have read and agree to follow the project's [Code of Conduct](https://github.com/apache/tooling-governor/blob/main/CODE_OF_CONDUCT.md) and [Contributing Guidelines](https://github.com/apache/tooling-governor/blob/main/CONTRIBUTING.md).

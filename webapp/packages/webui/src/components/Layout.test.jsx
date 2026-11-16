@@ -10,10 +10,10 @@ vi.mock('./ProfileMenu', () => ({
   default: () => <div data-testid="profile-menu">Profile Menu</div>,
 }));
 
-vi.mock('./AnvilIcon', () => ({
+vi.mock('./GovernorIcon', () => ({
   default: ({ size, color }) => (
-    <div data-testid="anvil-icon" data-size={size} data-color={color}>
-      Anvil Icon
+    <div data-testid="governor-icon" data-size={size} data-color={color}>
+      Governor Icon
     </div>
   ),
 }));
@@ -45,26 +45,26 @@ describe('Layout', () => {
     expect(screen.getByText('Test Content')).toBeInTheDocument();
   });
 
-  it('renders app bar with Gofannon title', () => {
+  it('renders app bar with Governor title', () => {
     renderWithRouter(
       <Layout>
         <div>Content</div>
       </Layout>
     );
 
-    expect(screen.getByText('Gofannon')).toBeInTheDocument();
+    expect(screen.getByText('Governor')).toBeInTheDocument();
   });
 
-  it('renders AnvilIcon with correct props', () => {
+  it('renders GovernorIcon with correct props', () => {
     renderWithRouter(
       <Layout>
         <div>Content</div>
       </Layout>
     );
 
-    const icon = screen.getByTestId('anvil-icon');
+    const icon = screen.getByTestId('governor-icon');
     expect(icon).toBeInTheDocument();
-    expect(icon).toHaveAttribute('data-size', '28');
+    expect(icon).toHaveAttribute('data-size', '32');
     expect(icon).toHaveAttribute('data-color', '#ffffff');
   });
 
@@ -96,8 +96,8 @@ describe('Layout', () => {
       </Layout>
     );
 
-    // Find the clickable logo area (Box with Gofannon text)
-    const logo = screen.getByText('Gofannon').closest('div');
+    // Find the clickable logo area (Box with Governor text)
+    const logo = screen.getByText('Governor').closest('div');
 
     // Verify it's clickable (has onClick handler)
     expect(logo).toBeInTheDocument();

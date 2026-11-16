@@ -2,7 +2,7 @@
 
 ## What Was Implemented
 
-This document summarizes the complete testing infrastructure rebuild for the Gofannon project.
+This document summarizes the complete testing infrastructure rebuild for the Governor project.
 
 ## Key Achievements
 

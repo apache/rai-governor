@@ -21,7 +21,7 @@ function HomepageHeader() {
       <div className="container">
         <div className={styles.heroInner}>
           <div className={styles.heroCopy}>
-            <div className={styles.heroGofannon}>gofannon</div>
+            <div className={styles.heroGofannon}>governor</div>
             <div className={styles.heroBadge}>Prototype-ready agents</div>
             <Heading as="h1" className={styles.heroTitle}>
               Prototype AI Agents
@@ -38,7 +38,7 @@ function HomepageHeader() {
               </Link>
               <Link
                 className={styles.secondaryButton}
-                href="https://github.com/the-ai-alliance/gofannon">
+                href="https://github.com/apache/tooling-governor">
                 View on GitHub
               </Link>
             </div>

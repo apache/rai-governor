@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const isGitHubPages = process.env.FOR_GH_PAGES === 'true' || process.env.FOR_GH_PAGES === '1';
 
 const config: Config = {
-  title: 'Gofannon',
+  title: 'Governor',
   tagline: 'A web app for rapidly prototyping AI agents and the lightweight web UIs that wrap them—build flows, preview interactions, and share agent-driven experiences without lock-in.',
   favicon: 'img/favicon.ico',
 
@@ -17,15 +17,15 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: isGitHubPages ? 'https://the-ai-alliance.github.io' : 'https://your-docusaurus-site.example.com',
+  url: isGitHubPages ? 'https://apache.github.io' : 'https://your-docusaurus-site.example.com',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: isGitHubPages ? '/gofannon/' : '/',
+  baseUrl: isGitHubPages ? '/tooling-governor/' : '/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'the-ai-alliance', // Usually your GitHub org/user name.
-  projectName: 'gofannon', // Usually your repo name.
+  organizationName: 'apache', // Usually your GitHub org/user name.
+  projectName: 'tooling-governor', // Usually your repo name.
 
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
@@ -77,15 +77,16 @@ const config: Config = {
 
   themeConfig: {
     // Replace with your project's social card
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/governor-icon-512.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'Project Docs',
+      title: 'Governor',
       logo: {
-        alt: 'TODO: Create logo SVG',
-        src: 'img/logo.svg',
+        alt: 'Governor',
+        src: 'img/governor-symbol.svg',
+        srcDark: 'img/governor-symbol-dark.svg',
       },
       items: [
         {
@@ -206,7 +207,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/the-ai-alliance/gofannon',
+              href: 'https://github.com/apache/tooling-governor',
             },
           ],
         },

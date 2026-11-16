@@ -1,9 +1,9 @@
-# Gofannon Quickstart
+# Governor Quickstart
 
 ## Install
 ```bash
-git clone https://github.com/The-AI-Alliance/gofannon.git
-cd gofannon/webapp/infra/docker
+git clone https://github.com/apache/tooling-governor.git
+cd tooling-governor/webapp/infra/docker
 ```
 Add `webapp/infra/docker/.env` file with these contents:
 ```bash
@@ -21,7 +21,7 @@ docker-compose up --build
 ```
 ### Rebuild after pulling new work from `main`
 ```
-cd gofannon/webapp/infra/docker
+cd tooling-governor/webapp/infra/docker
 docker-compose down && docker-compose up -d --build
 ```
 
@@ -35,7 +35,7 @@ http://127.0.0.1:3000/
 ### Choose tools if needed
 * MCP server by URL
 * Swagger spec by file or URL
-* Agents and tools already deployed on this Gofannon instance
+* Agents and tools already deployed on this Governor instance
 
 ### Add description (prompt)
 ![Add description](images/add-description.png)

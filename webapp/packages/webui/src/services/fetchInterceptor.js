@@ -1,7 +1,7 @@
 // webapp/packages/webui/src/services/fetchInterceptor.js
 //
 // Wraps ``window.fetch`` once at module load so that any request to the
-// Gofannon API base URL automatically includes credentials (the
+// Governor API base URL automatically includes credentials (the
 // ``gofannon_sid`` cookie, once Phase B is on).
 //
 // Why this shim instead of editing each service's fetch call:

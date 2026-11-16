@@ -30,5 +30,5 @@ switch (env) {
     config = localConfig;
 }
 
-config.name = "Gofannon WebApp"
+config.name = "Governor WebApp"
 export default config;

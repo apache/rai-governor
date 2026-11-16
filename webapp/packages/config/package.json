@@ -1,7 +1,7 @@
 {
   "name": "@gofannon/config",
   "version": "1.0.0",
-  "description": "Shared environment-based configuration for the Gofannon app.",
+  "description": "Shared environment-based configuration for the Governor app.",
   "main": "index.js",
   "type": "module",
   "author": "",

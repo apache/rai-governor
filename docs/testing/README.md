@@ -1,6 +1,6 @@
 # Testing Documentation
 
-This directory contains comprehensive documentation for testing the Gofannon project.
+This directory contains comprehensive documentation for testing the Governor project.
 
 ## Quick Links
 
@@ -15,7 +15,7 @@ This directory contains comprehensive documentation for testing the Gofannon pro
 
 ## Testing Philosophy
 
-Gofannon maintains a comprehensive testing strategy with:
+Governor maintains a comprehensive testing strategy with:
 
 - **95% minimum code coverage** for all new code (goal not enforced yet)
 - **Unit tests** run on every PR

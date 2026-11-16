@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Gofannon database service uses an abstraction layer to support multiple database backends through a unified interface. This design allows the application to remain database-agnostic while supporting different deployment scenarios.
+The Governor database service uses an abstraction layer to support multiple database backends through a unified interface. This design allows the application to remain database-agnostic while supporting different deployment scenarios.
 
 ## Directory Structure
 

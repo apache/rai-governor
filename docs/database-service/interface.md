@@ -2,7 +2,7 @@
 
 ## Overview
 
-All database implementations in Gofannon must inherit from the `DatabaseService` abstract base class and implement four core methods. This document provides detailed specifications for the interface.
+All database implementations in Governor must inherit from the `DatabaseService` abstract base class and implement four core methods. This document provides detailed specifications for the interface.
 
 ## Abstract Base Class
 

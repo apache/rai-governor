@@ -1,6 +1,6 @@
 # Coverage Requirements
 
-This document outlines the code coverage requirements and reporting for Gofannon.
+This document outlines the code coverage requirements and reporting for Governor.
 
 ## Coverage Thresholds
 

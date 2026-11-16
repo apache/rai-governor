@@ -1,5 +1,5 @@
 /**
- * Gofannon - SNES/Genesis RPG Style Theme
+ * Governor - SNES/Genesis RPG Style Theme
  * Inspired by Final Fantasy VI, Chrono Trigger, and classic 16-bit RPGs
  */
 
@@ -10,7 +10,7 @@
    COLOR PALETTE & CSS VARIABLES
    ============================================ */
 :root {
-  /* Gofannon brand colors */
+  /* Governor brand colors */
   --ifm-color-primary: #04B2D9;
   --ifm-color-primary-dark: #03a0c4;
   --ifm-color-primary-darker: #0390b0;
@@ -219,7 +219,8 @@ article header h2 a:hover {
 }
 
 .navbar__logo {
-  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.5));
+  /* The Governor engraving is fine line-work; a pixel drop-shadow muddies it. */
+  height: 2.25rem;
 }
 
 /* ============================================

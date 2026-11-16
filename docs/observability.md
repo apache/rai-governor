@@ -3,7 +3,7 @@ The documentation has been updated to use the new `GCP_PROJECT_ID` environment v
 ```markdown
 # Observability & Logging Guide
 
-This document explains the pluggable logging system integrated into the Gofannon web application, covering both the frontend (React) and backend (Python API). The system is designed to be extensible, allowing for easy integration with various third-party observability platforms.
+This document explains the pluggable logging system integrated into the Governor web application, covering both the frontend (React) and backend (Python API). The system is designed to be extensible, allowing for easy integration with various third-party observability platforms.
 
 ## System Overview
 

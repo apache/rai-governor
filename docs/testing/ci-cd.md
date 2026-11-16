@@ -4,7 +4,7 @@ This guide covers the automated testing workflows in GitHub Actions.
 
 ## Overview
 
-Gofannon uses GitHub Actions to run tests automatically on PRs and on a nightly schedule.
+Governor uses GitHub Actions to run tests automatically on PRs and on a nightly schedule.
 
 ## Workflows
 

@@ -199,12 +199,12 @@ async def _execute_agent_code(
                             self.agent_map[agent.base_name] = agent
                 except Exception as e:
                     print(f"Error loading dependent agents: {e}")
-                    raise ValueError("Could not load one or more dependent Gofannon agents.")
+                    raise ValueError("Could not load one or more dependent Governor agents.")
 
         async def call(self, agent_name: str, input_dict: dict) -> Any:
             agent_to_run = self.agent_map.get(agent_name)
             if not agent_to_run:
-                raise ValueError(f"Gofannon agent '{agent_name}' not found or not imported for this run.")
+                raise ValueError(f"Governor agent '{agent_name}' not found or not imported for this run.")
 
             # Recursive call. The active trace (if any) flows in via the
             # contextvar so nested events appear in the same trace as
@@ -756,7 +756,7 @@ def get_available_providers(user_id: Optional[str] = None, user_basic_info: Opti
             available_providers["gofannon"] = {"models": gofannon_models}
 
     except Exception as e:
-        print(f"Could not load Gofannon agents as a provider: {e}")
+        print(f"Could not load Governor agents as a provider: {e}")
 
     return available_providers
 
@@ -988,7 +988,7 @@ async def build_agent_chain(
                 "tools": list(tool_names or []),
             })
 
-        # Gofannon agent edges (and recurse)
+        # Governor agent edges (and recurse)
         for dep_id in (agent.gofannon_agents or []):
             new_path = path | {agent_id}
             outcome = await visit(dep_id, depth + 1, new_path)

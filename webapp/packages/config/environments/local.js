@@ -2,7 +2,7 @@
 const localConfig = {
   env: 'local',
   app: {
-    name: 'Gofannon',
+    name: 'Governor',
   },
   api: {
     baseUrl: '', // same-origin; nginx proxies /auth/* etc. to api:8000

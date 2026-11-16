@@ -1,6 +1,6 @@
-# Gofannon Web UI
+# Governor Web UI
 
-This package contains the front-end for the Gofannon web application. It uses Vite and React, and is designed to be the foundation for downstream distributions that may add their own extensions and configuration.
+This package contains the front-end for the Governor web application. It uses Vite and React, and is designed to be the foundation for downstream distributions that may add their own extensions and configuration.
 
 ## Card extension system
 

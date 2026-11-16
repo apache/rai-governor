@@ -1,6 +1,6 @@
 # Integration Testing Guide
 
-This guide covers how to write and run integration tests for Gofannon.
+This guide covers how to write and run integration tests for Governor.
 
 ## Overview
 

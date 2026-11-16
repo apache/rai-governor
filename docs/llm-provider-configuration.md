@@ -1,6 +1,6 @@
 # LLM Provider Configuration Guide
 
-This guide explains how to set up and add LLM providers in Gofannon. Provider configurations determine which models are available and how they interact with the system.
+This guide explains how to set up and add LLM providers in Governor. Provider configurations determine which models are available and how they interact with the system.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ This guide explains how to set up and add LLM providers in Gofannon. Provider co
 
 ## Overview
 
-Gofannon uses a centralized provider configuration system that abstracts LLM provider implementations through [LiteLLM](https://github.com/BerriAI/litellm). All provider configurations are defined in:
+Governor uses a centralized provider configuration system that abstracts LLM provider implementations through [LiteLLM](https://github.com/BerriAI/litellm). All provider configurations are defined in:
 
 ```
 webapp/packages/api/user-service/config/
@@ -33,7 +33,7 @@ webapp/packages/api/user-service/services/llm_service.py
 
 ## API Key Management
 
-Gofannon supports **two ways** to configure API keys:
+Governor supports **two ways** to configure API keys:
 
 ### 1. Environment Variables (System-wide)
 Set by administrators and used as fallback for all users:
@@ -60,7 +60,7 @@ When making an LLM API call:
 
 ## Why LiteLLM?
 
-Gofannon relies on [LiteLLM](https://github.com/BerriAI/litellm) to abstract multiple LLM providers and manage their dependencies. This architectural decision has important implications:
+Governor relies on [LiteLLM](https://github.com/BerriAI/litellm) to abstract multiple LLM providers and manage their dependencies. This architectural decision has important implications:
 
 ### Advantages
 
@@ -547,11 +547,11 @@ PROVIDER_CONFIG = {
 
 ## LiteLLM Mapping Reference
 
-This section explains how Gofannon's configuration maps to LiteLLM function calls.
+This section explains how Governor's configuration maps to LiteLLM function calls.
 
 ### Model String Format
 
-Gofannon constructs model strings in the format `"provider/model"`:
+Governor constructs model strings in the format `"provider/model"`:
 
 ```python
 # From llm_service.py:53
@@ -644,7 +644,7 @@ if isinstance(message.content, list):  # Anthropic's block-based content
 - [LiteLLM Documentation](https://docs.litellm.ai/docs/)
 - [LiteLLM Supported Providers](https://docs.litellm.ai/docs/providers)
 - [LiteLLM API Reference](https://docs.litellm.ai/docs/completion)
-- [Gofannon LLM Service Implementation](webapp/packages/api/user-service/services/llm_service.py)
+- [Governor LLM Service Implementation](webapp/packages/api/user-service/services/llm_service.py)
 
 ## Troubleshooting
 
@@ -698,4 +698,4 @@ When adding new providers or models:
 ---
 
 **Last Updated**: January 2026
-**Maintainer**: AI Alliance Gofannon Team
+**Maintainer**: AI Alliance Governor Team

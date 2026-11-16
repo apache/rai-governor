@@ -1,6 +1,6 @@
 # Implementing a New Database
 
-This guide provides step-by-step instructions for adding a new database backend to Gofannon.
+This guide provides step-by-step instructions for adding a new database backend to Governor.
 
 ## Overview
 

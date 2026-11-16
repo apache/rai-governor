@@ -1,6 +1,6 @@
 # Context Window Awareness
 
-This guide explains how Gofannon gives generated agent code full visibility into model context window limits, enabling reliable batch processing of large datasets without token overflows.
+This guide explains how Governor gives generated agent code full visibility into model context window limits, enabling reliable batch processing of large datasets without token overflows.
 
 ## Table of Contents
 
@@ -19,7 +19,7 @@ This guide explains how Gofannon gives generated agent code full visibility into
 
 Every LLM has a maximum input size (context window). When an agent processes large datasets — scanning hundreds of files for a security audit, for example — the generated code needs to split work into batches that fit within these limits and consolidate results without overflowing during the merge step.
 
-Gofannon addresses this with three layers:
+Governor addresses this with three layers:
 
 1. **`context_window` metadata** on every model in the provider config
 2. **`get_context_window(provider, model)`** available in the agent sandbox at runtime
@@ -281,7 +281,7 @@ This is by design. If `get_context_window()` returns 128,000 for a model you exp
 
 ---
 
-**Related:** [LLM Provider Configuration](llm-provider-configuration.md) · [Issue #565](https://github.com/The-AI-Alliance/gofannon/issues/565) · [PR #567](https://github.com/The-AI-Alliance/gofannon/pull/567)
+**Related:** [LLM Provider Configuration](llm-provider-configuration.md) · [Issue #565](https://github.com/apache/tooling-governor/issues/565) · [PR #567](https://github.com/apache/tooling-governor/pull/567)
 
 **Last Updated:** February 2026
-**Maintainer:** AI Alliance Gofannon Team
+**Maintainer:** AI Alliance Governor Team

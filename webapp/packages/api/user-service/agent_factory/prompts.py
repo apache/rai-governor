@@ -658,9 +658,9 @@ Refer to the specific documentation for each tool to know the correct URL, HTTP 
 """
 
 how_to_use_gofannon_agents = """
-# How to Call Other Gofannon Agents
+# How to Call Other Governor Agents
 
-You are provided with a pre-initialized client called `gofannon_client` to call other Gofannon agents that have been imported into your context.
+You are provided with a pre-initialized client called `gofannon_client` to call other Governor agents that have been imported into your context.
 
 **ALL agent calls are asynchronous and MUST use the `await` keyword.**
 
@@ -668,7 +668,7 @@ To call another agent, you **MUST** use the `.call()` method on the `gofannon_cl
 
 Here is the documentation for the `call` method:
 `async def call(self, agent_name: str, input_dict: dict) -> Any:`
-    Calls a specific Gofannon agent by its name.
+    Calls a specific Governor agent by its name.
 
     :param agent_name:
         The **name** of the agent as a string.
@@ -843,7 +843,7 @@ This function will receive:
 - `tools`: A dictionary of tool configurations.
 
 An asynchronous HTTP client `http_client` is available for making API calls to Swagger/OpenAPI specs.
-A client for calling other Gofannon agents named `gofannon_client` is also available if you have imported any.
+A client for calling other Governor agents named `gofannon_client` is also available if you have imported any.
 A dictionary of MCP clients named `mcpc` is already initialized for you like this:
 `mcpc = {{ url : RemoteMCPClient(remote_url = url) for url in tools.keys() }}`
 You can use it to call tools as described in the documentation.
@@ -852,7 +852,7 @@ You can use it to call tools as described in the documentation.
 - `mcpc` - Dictionary of MCP clients for calling external tools
 - `http_client` - Async HTTP client (httpx) for REST API calls
 - `call_llm` - For calling language models via `await call_llm(provider, model, messages, parameters, ...)`
-- `gofannon_client` - For calling other Gofannon agents
+- `gofannon_client` - For calling other Governor agents
 - `data_store` - For persisting and sharing data across agent executions (see data store documentation)
 - `asyncio`, `json`, `re` - Standard Python libraries
 

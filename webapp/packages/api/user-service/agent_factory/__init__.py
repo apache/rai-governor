@@ -51,7 +51,7 @@ async def generate_agent_code(request: GenerateCodeRequest, user_id: str = None,
     gofannon_agent_docs = ""
     if request.gofannon_agents:
         db = get_database_service(settings)
-        agent_docs_parts = ["## Gofannon Agents\n\nThe agent can call the following other Gofannon agents using the `gofannon_client`:\n"]
+        agent_docs_parts = ["## Governor Agents\n\nThe agent can call the following other Governor agents using the `gofannon_client`:\n"]
         for agent_id in request.gofannon_agents:
             try:
                 agent_data = db.get("agents", agent_id)

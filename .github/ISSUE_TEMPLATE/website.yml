@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve the Gofannon documentation website!
+        Thanks for helping improve the Governor documentation website!
 
   - type: dropdown
     id: issue-type
@@ -31,7 +31,7 @@ body:
     attributes:
       label: Page URL
       description: What is the URL of the affected page?
-      placeholder: https://the-ai-alliance.github.io/gofannon/...
+      placeholder: https://apache.github.io/tooling-governor/...
     validations:
       required: false
 
@@ -86,7 +86,7 @@ body:
     id: terms
     attributes:
       label: Code of Conduct
-      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/the-ai-alliance/gofannon/blob/main/CODE_OF_CONDUCT.md).
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/apache/tooling-governor/blob/main/CODE_OF_CONDUCT.md).
       options:
         - label: I agree to follow this project's Code of Conduct
           required: true

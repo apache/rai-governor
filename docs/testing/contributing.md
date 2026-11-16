@@ -1,6 +1,6 @@
 # Contributing Tests
 
-This guide explains the testing requirements for contributing code to Gofannon.
+This guide explains the testing requirements for contributing code to Governor.
 
 ## Pull Request Requirements
 

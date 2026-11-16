@@ -1,6 +1,6 @@
 # Memory
 
-Memory is a shared record of what agents and people have found: facts, decisions, conventions, methods and handoffs. Each entry records where it came from and how far it has been checked. It is a pilot. Entries use the format [apache/tooling-memory](https://github.com/apache/tooling-memory) uses, so that project's tools can read what gofannon writes.
+Memory is a shared record of what agents and people have found: facts, decisions, conventions, methods and handoffs. Each entry records where it came from and how far it has been checked. It is a pilot. Entries use the format [apache/tooling-memory](https://github.com/apache/tooling-memory) uses, so that project's tools can read what Governor writes.
 
 ## Turning it on
 

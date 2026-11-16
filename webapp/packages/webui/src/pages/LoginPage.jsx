@@ -20,7 +20,7 @@ import BusinessIcon from '@mui/icons-material/Business';
 import ScienceIcon from '@mui/icons-material/Science';
 import { useAuth } from '../contexts/AuthContextValue';
 import { useConfig } from '../contexts/ConfigContextValue';
-import AnvilIcon from '../components/AnvilIcon';
+import GovernorIcon from '../components/GovernorIcon';
 import { fetchAuthProviders, sessionAuth } from '../services/authService';
 
 // Legacy Firebase social providers shown when appConfig.auth.socialProviders
@@ -340,7 +340,7 @@ const LoginPage = () => {
             gap: 1.5, 
             mb: 4 
           }}>
-            <AnvilIcon size={36} color="#18181b" />
+            <GovernorIcon size={44} color="#18181b" />
             <Typography 
               variant="h5" 
               sx={{ 
@@ -349,7 +349,7 @@ const LoginPage = () => {
                 color: '#18181b'
               }}
             >
-              Gofannon
+              Governor
             </Typography>
           </Box>
 

@@ -1,6 +1,6 @@
 # Frontend Testing Guide
 
-This guide covers how to test React components in Gofannon using Vitest.
+This guide covers how to test React components in Governor using Vitest.
 
 ## Overview
 

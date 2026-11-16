@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers migrating data between different database providers in Gofannon. Common scenarios include:
+This guide covers migrating data between different database providers in Governor. Common scenarios include:
 
 - Moving from development (memory) to production (CouchDB/Firestore/DynamoDB)
 - Changing cloud providers
@@ -60,7 +60,7 @@ Use native replication tools when available.
 ```python
 #!/usr/bin/env python3
 """
-Migrate data between Gofannon database providers.
+Migrate data between Governor database providers.
 
 Usage:
     python migrate.py --source memory --target couchdb
@@ -72,7 +72,7 @@ from typing import List
 from services.database_service import get_database_service
 from config import Settings
 
-# All Gofannon collections
+# All Governor collections
 ALL_COLLECTIONS = ["agents", "deployments", "users", "sessions", "tickets", "demos"]
 
 
@@ -171,7 +171,7 @@ def migrate_database(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Migrate Gofannon database")
+    parser = argparse.ArgumentParser(description="Migrate Governor database")
     parser.add_argument(
         "--source",
         required=True,
@@ -245,7 +245,7 @@ python migrate.py --source firestore --target dynamodb
 ```python
 #!/usr/bin/env python3
 """
-Export Gofannon database to JSON files.
+Export Governor database to JSON files.
 
 Usage:
     python export.py --output backup.json
@@ -317,7 +317,7 @@ def export_database(provider: str, output_file: str, collections: List[str] = No
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Export Gofannon database")
+    parser = argparse.ArgumentParser(description="Export Governor database")
     parser.add_argument(
         "--provider",
         default="memory",
@@ -352,7 +352,7 @@ if __name__ == "__main__":
 ```python
 #!/usr/bin/env python3
 """
-Import Gofannon database from JSON files.
+Import Governor database from JSON files.
 
 Usage:
     python import.py --input backup.json --target couchdb
@@ -439,7 +439,7 @@ def import_database(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Import Gofannon database")
+    parser = argparse.ArgumentParser(description="Import Governor database")
     parser.add_argument(
         "--input",
         required=True,

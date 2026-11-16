@@ -1,8 +1,8 @@
-# Gofannon Database Service Documentation
+# Governor Database Service Documentation
 
 ## Overview
 
-The Gofannon database service provides a flexible, abstraction-based approach to data persistence. It supports multiple database backends through a common interface, allowing you to switch between database providers without changing application code.
+The Governor database service provides a flexible, abstraction-based approach to data persistence. It supports multiple database backends through a common interface, allowing you to switch between database providers without changing application code.
 
 **Current Supported Databases:**
 - In-Memory (default for testing)
@@ -162,7 +162,7 @@ See [Migration Guide](migration.md) for details.
 - **Firestore**: https://firebase.google.com/docs/firestore
 - **DynamoDB**: https://docs.aws.amazon.com/dynamodb/
 
-### Related Gofannon Documentation
+### Related Governor Documentation
 
 - [LLM Provider Configuration](../llm-provider-configuration.md)
 - [Developer Quickstart](../developers-quickstart.md)
@@ -179,4 +179,4 @@ If you encounter issues:
 
 **Documentation Version**: 1.0
 **Last Updated**: 2026-01-11
-**Maintainer**: Gofannon Development Team
+**Maintainer**: Governor Development Team

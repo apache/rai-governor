@@ -12,10 +12,10 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'The-AI-Alliance/gofannon'
+    if: github.repository == 'apache/tooling-governor'
     uses: ./.github/workflows/build-site-build.yml
 
   deploy:
     needs: build
-    if: github.repository == 'The-AI-Alliance/gofannon'
+    if: github.repository == 'apache/tooling-governor'
     uses: ./.github/workflows/build-site-deploy.yml

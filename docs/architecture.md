@@ -1,10 +1,10 @@
 # Architecture / Services
 
-This page provides an overview of the Gofannon architecture and its core services.
+This page provides an overview of the Governor architecture and its core services.
 
 ## Overview
 
-Gofannon is designed as a modular system for rapidly prototyping AI agents and their associated web UIs.
+Governor is designed as a modular system for rapidly prototyping AI agents and their associated web UIs.
 
 ## Core Services
 

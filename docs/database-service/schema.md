@@ -2,7 +2,7 @@
 
 ## Required Collections
 
-The Gofannon system uses the following collections/tables. Each must be supported by your database implementation:
+The Governor system uses the following collections/tables. Each must be supported by your database implementation:
 
 | Collection Name | Purpose | Primary Key | Description |
 |-----------------|---------|-------------|-------------|
@@ -38,7 +38,7 @@ Location: [models/agent.py](../../../webapp/packages/api/user-service/models/age
         "results": "array",
         "count": "integer"
     },
-    "gofannon_agents": [                            # Dependent Gofannon agents
+    "gofannon_agents": [                            # Dependent Governor agents
         "agent-id-1",
         "agent-id-2"
     ],

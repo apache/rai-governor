@@ -1,6 +1,6 @@
 # Pipelines: import and export
 
-A pipeline is a set of agents that call each other: one entry agent and every agent it reaches through its gofannon agents. A single agent is a pipeline of one. Pipelines live in git as plain files and move in and out of gofannon from the home page (**Import** on the Agents card) and an agent's page (**Export pipeline**, beside Run and Deploy).
+A pipeline is a set of agents that call each other: one entry agent and every agent it reaches through its Governor agents. A single agent is a pipeline of one. Pipelines live in git as plain files and move in and out of gofannon from the home page (**Import** on the Agents card) and an agent's page (**Export pipeline**, beside Run and Deploy).
 
 ## The folder
 
@@ -31,7 +31,7 @@ Every path is relative to `pipeline.yaml`. Other optional fields per agent: `fri
 
 Env files are `KEY=VALUE` lines. `#` starts a comment at the beginning of a line or after whitespace; a quoted value keeps its `#`. Env vars are plaintext (see [API key management](api-key-management.md) for secrets), so never put a token in one.
 
-`calls` may also name an agent that already exists in gofannon and isn't in the folder, such as a shared helper; it is linked by name.
+`calls` may also name an agent that already exists in Governor and isn't in the folder, such as a shared helper; it is linked by name.
 
 ## Starting from agents you already have
 
@@ -53,6 +53,6 @@ Every import lands in a copy of the pipeline under a **label**: the short commit
 - Importing the same pipeline with the same label updates that copy in place: same agents, same ids, same deployments.
 - A new label makes another copy alongside, for a branch or a big change, without touching the copy you're running.
 
-Agent code doesn't change between copies. It still calls `gofannon_client.call("asvs_audit", …)`, and gofannon resolves the plain name to the agent in the caller's own copy.
+Agent code doesn't change between copies. It still calls `gofannon_client.call("asvs_audit", …)`, and Governor resolves the plain name to the agent in the caller's own copy.
 
 Deployment paths include the label too (`/rest/asvs-orchestrate-3194087`), so two copies can be deployed at once.

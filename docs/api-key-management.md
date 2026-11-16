@@ -1,6 +1,6 @@
 # API Key Management
 
-This guide explains how users can manage their own API keys for LLM providers in Gofannon. User-specific API keys take precedence over system-wide environment variables.
+This guide explains how users can manage their own API keys for LLM providers in Governor. User-specific API keys take precedence over system-wide environment variables.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ This guide explains how users can manage their own API keys for LLM providers in
 
 ## Overview
 
-Gofannon supports two ways to configure API keys for LLM providers:
+Governor supports two ways to configure API keys for LLM providers:
 
 1. **Environment Variables** (System-wide): Set by administrators for all users
 2. **User Profile Keys** (User-specific): Each user can configure their own API keys
@@ -214,7 +214,7 @@ def get_available_providers(user_id=None, user_basic_info=None):
 
 ### Best Practices
 
-1. **Use environment variables for shared deployments**: If running Gofannon as a shared service, consider using environment variables rather than user-specific keys
+1. **Use environment variables for shared deployments**: If running Governor as a shared service, consider using environment variables rather than user-specific keys
 2. **Rotate keys regularly**: Encourage users to rotate their API keys periodically
 3. **Monitor usage**: Track API usage per user to detect potential key abuse
 4. **Secure database**: Ensure the database has proper access controls and encryption
@@ -296,4 +296,4 @@ To migrate from environment variables to user-specific keys:
 ---
 
 **Last Updated**: January 2026
-**Maintainer**: AI Alliance Gofannon Team
+**Maintainer**: AI Alliance Governor Team

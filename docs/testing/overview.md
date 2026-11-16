@@ -1,10 +1,10 @@
 # Testing Overview
 
-This document provides an introduction to the testing strategy used in Gofannon.
+This document provides an introduction to the testing strategy used in Governor.
 
 ## Testing Philosophy
 
-Gofannon maintains a comprehensive testing strategy with:
+Governor maintains a comprehensive testing strategy with:
 
 - **Unit tests** for individual functions, classes, and components
 - **Integration tests** for testing components working together

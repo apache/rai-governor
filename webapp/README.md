@@ -1,6 +1,6 @@
-# Gofannon Web Application
+# Governor Web Application
 
-This monorepo contains the complete scaffolding for the Gofannon web application, including the React Web UI, Python API microservices, and infrastructure configurations.
+This monorepo contains the complete scaffolding for the Governor web application, including the React Web UI, Python API microservices, and infrastructure configurations.
 
 ## Project Structure
 

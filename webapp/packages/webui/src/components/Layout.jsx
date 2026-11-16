@@ -11,7 +11,7 @@ import {
   Button,
 } from '@mui/material';
 import ProfileMenu from './ProfileMenu';
-import AnvilIcon from './AnvilIcon';
+import GovernorIcon from './GovernorIcon';
 import FloatingChat from './FloatingChat';
 import ViewAsBand from './ViewAsBand';
 import memoryService from '../services/memoryService';
@@ -51,7 +51,7 @@ const Layout = ({ children }) => {
             }} 
             onClick={() => navigate('/')}
           >
-            <AnvilIcon size={28} color="#ffffff" />
+            <GovernorIcon size={32} color="#ffffff" />
             <Typography 
               variant="h6" 
               noWrap 
@@ -62,7 +62,7 @@ const Layout = ({ children }) => {
                 color: '#fff'
               }}
             >
-              Gofannon
+              Governor
             </Typography>
           </Box>
           <Button

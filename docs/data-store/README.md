@@ -202,7 +202,7 @@ See [API Reference](api.md) for complete documentation.
 
 ## Storage Backend
 
-The data store uses the same database backend as the rest of Gofannon (CouchDB, Firestore, or DynamoDB). Documents are stored in a dedicated `agent_data_store` collection/database.
+The data store uses the same database backend as the rest of Governor (CouchDB, Firestore, or DynamoDB). Documents are stored in a dedicated `agent_data_store` collection/database.
 
 Document IDs are constructed as: `{user_id}:{namespace}:{base64_encoded_key}`
 
@@ -234,4 +234,4 @@ If you encounter issues:
 
 **Documentation Version**: 1.1
 **Last Updated**: 2026-02-11
-**Maintainer**: Gofannon Development Team
+**Maintainer**: Governor Development Team

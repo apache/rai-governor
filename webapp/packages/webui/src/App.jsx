@@ -76,7 +76,7 @@ const renderRoute = (route, keyPrefix, index) => {
 
 function App() {
   useEffect(() => {
-    document.title = config?.app?.name || 'Gofannon: Web UI';
+    document.title = config?.app?.name || 'Governor: Web UI';
   }, []);
 
   const routes = useMemo(() => loadRoutesConfig(), []);

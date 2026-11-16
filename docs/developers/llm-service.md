@@ -1,10 +1,10 @@
 # LLM Service Architecture
 
-This document explains the centralized LLM service in Gofannon and why all LLM calls must go through it.
+This document explains the centralized LLM service in Governor and why all LLM calls must go through it.
 
 ## Overview
 
-The Gofannon user service uses a centralized LLM service (`services/llm_service.py`) as the single point of interaction with language model providers. This design provides several critical benefits for cost management, observability, and maintainability.
+The Governor user service uses a centralized LLM service (`services/llm_service.py`) as the single point of interaction with language model providers. This design provides several critical benefits for cost management, observability, and maintainability.
 
 ## Why Use `call_llm` Instead of `litellm` Directly?
 

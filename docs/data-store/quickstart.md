@@ -4,7 +4,7 @@ Get started with the Agent Data Store in 5 minutes.
 
 ## Prerequisites
 
-- A working Gofannon webapp installation
+- A working Governor webapp installation
 - At least one agent created
 
 ## Step 1: Basic Storage

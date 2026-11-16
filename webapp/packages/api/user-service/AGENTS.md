@@ -1,4 +1,4 @@
-# Agent Guidelines for the Gofannon User Service
+# Agent Guidelines for the Governor User Service
 
 ## LLM Calls: Use `call_llm`, NOT `litellm` Directly
 
@@ -57,7 +57,7 @@ response = await acompletion(model="openai/gpt-4", messages=[...])
 
 ### Agent Code Execution
 
-When writing code for Gofannon agents (code that runs in the agent sandbox), use `call_llm` which is available in the execution context:
+When writing code for Governor agents (code that runs in the agent sandbox), use `call_llm` which is available in the execution context:
 
 ```python
 async def run(input_dict, tools):

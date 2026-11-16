@@ -156,7 +156,7 @@ const ViewAgent = () => {
     fetchProviders();
   }, []);
 
-  // Fetch available agents when Gofannon tab is selected
+  // Fetch available agents when Governor tab is selected
   useEffect(() => {
     const fetchAgents = async () => {
       setLoadingAgents(true);
@@ -464,7 +464,7 @@ const ViewAgent = () => {
     }
   };
 
-  // Agent names are used as slugs for deployment URLs and for Gofannon
+  // Agent names are used as slugs for deployment URLs and for Governor
   // inter-agent dispatch. Only [A-Za-z0-9_] is valid. Any other character
   // the user types is substituted with '_' live so what-you-see-is-what-
   // you-save. friendlyName is always kept identical to name.
@@ -847,7 +847,7 @@ const ViewAgent = () => {
                     <Tabs value={toolsTabIndex} onChange={(e, v) => setToolsTabIndex(v)}>
                         <Tab label="MCP Servers" />
                         <Tab label="Swagger / OpenAPI" />
-                        <Tab label="Gofannon Agents" />
+                        <Tab label="Governor Agents" />
                     </Tabs>
                 </Box>
 
@@ -953,7 +953,7 @@ const ViewAgent = () => {
                     </Box>
                 )}
 
-                {/* Gofannon Agents Tab */}
+                {/* Governor Agents Tab */}
                 {toolsTabIndex === 2 && (
                     <Box>
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -1187,7 +1187,7 @@ const ViewAgent = () => {
                 <AccordionDetails>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                         Visual map of this agent&apos;s transitive dependencies: other
-                        Gofannon agents it calls and the MCP tool servers it uses.
+                        Governor agents it calls and the MCP tool servers it uses.
                     </Typography>
                     <AgentChainView agentId={agentId} />
                 </AccordionDetails>
