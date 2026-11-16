@@ -1,10 +1,9 @@
 github:
   description: "Governor"
-  homepage: https://tooling.apache.org/
+  homepage: https://rai.apache.org/
   del_branch_on_merge: true
   features:
     issues: true
-    discussions: true
   enabled_merge_buttons:
     squash:  true
     squash_commit_message: DEFAULT
@@ -23,7 +22,6 @@ github:
     main: {}
 
 notifications:
-  commits:      private-commits@tooling.apache.org
-  issues:       private-commits@tooling.apache.org
-  pullrequests: private-commits@tooling.apache.org
-  discussions:  private-commits@tooling.apache.org
+  commits:      commits@rai.apache.org
+  issues:       dev@rai.apache.org
+  pullrequests: dev@rai.apache.org
