@@ -159,6 +159,11 @@ updates:
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
+      # TypeScript 7 removed baseUrl, which @docusaurus/tsconfig sets, so
+      # tsc fails until Docusaurus updates its shared tsconfig.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
     groups:
       website-minor-and-patch:
         patterns:

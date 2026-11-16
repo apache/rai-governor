@@ -1,6 +1,7 @@
 name: Build and Deploy Site
 
-# Builds the Docusaurus docs site and publishes it to the gh-pages branch.
+# Builds the Docusaurus docs site on pull requests that touch it, and builds
+# and publishes it to the gh-pages branch on pushes to main.
 # .asf.yaml (ghp_branch: gh-pages, ghp_path: /) tells GitHub Pages to serve
 # that branch at https://apache.github.io/rai-governor/. ASF self-serve only
 # supports branch-based Pages, so the site is pushed to a branch rather than
@@ -11,13 +12,24 @@ on:
   push:
     branches:
       - main
+  # Build, without publishing, on pull requests that can change the site,
+  # so a broken dependency bump fails before it is merged.
+  pull_request:
+    paths:
+      - "website/**"
+      - "docs/**"
+      - ".github/workflows/build-site.yml"
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  # Publishes run one at a time; a newer push to the same pull request
+  # cancels its older build.
+  group: ${{ github.event_name == 'pull_request' && format('site-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Named "build" for pull requests and "build and publish" on main.
   deploy:
+    name: ${{ github.event_name == 'pull_request' && 'build' || 'build and publish' }}
     if: github.repository == 'apache/rai-governor'
     runs-on: ubuntu-latest
     permissions:
@@ -44,6 +56,7 @@ jobs:
         working-directory: website
 
       - name: Publish to gh-pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
