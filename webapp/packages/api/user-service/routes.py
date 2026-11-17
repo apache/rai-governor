@@ -3,11 +3,11 @@ import copy
 import json
 import traceback
 import uuid
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Literal, Union
 
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic.config import ConfigDict
 
 from config import settings
@@ -219,11 +219,25 @@ class ListMcpToolsRequest(BaseModel):
     auth_token: Optional[str] = None
 
 
+MAX_CLIENT_LOG_METADATA = 8192
+
+
 class ClientLogPayload(BaseModel):
-    eventType: str
-    message: str
-    level: str = "INFO"
+    """An event from the browser. Anyone can send one, signed in or not (a
+    failed login is logged before there is a session), so it is bounded and
+    marked as the client's: its event type is stored as "client:<type>" and
+    can't pose as a server event."""
+    eventType: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    message: str = Field(..., max_length=2000)
+    level: Literal["DEBUG", "INFO", "WARN", "WARNING", "ERROR"] = "INFO"
     metadata: Optional[Dict[str, Any]] = None
+
+    @field_validator("metadata")
+    @classmethod
+    def _small_metadata(cls, v):
+        if v is not None and len(json.dumps(v, default=str)) > MAX_CLIENT_LOG_METADATA:
+            raise ValueError(f"metadata is over {MAX_CLIENT_LOG_METADATA} bytes")
+        return v
 
 
 class FetchSpecRequest(BaseModel):
@@ -283,7 +297,7 @@ def log_client_event(
     metadata['user_agent'] = request.headers.get("user-agent")
 
     logger.log(
-        event_type=payload.eventType,
+        event_type=f"client:{payload.eventType}",
         message=payload.message,
         level=payload.level,
         service="webui",
