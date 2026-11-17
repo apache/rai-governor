@@ -219,6 +219,7 @@ def _exchange_jwt_for_access_token(jwt: str, cfg: dict) -> dict:
         json=body,
         headers={"Content-Type": "application/json"},
         timeout=10,
+        allow_redirects=False,
     )
 
     if resp.status_code != 200:
