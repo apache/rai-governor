@@ -377,7 +377,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         request_data = {
             "method": request.method,
             "path": request.url.path,
-            "headers": {k: v for k, v in request.headers.items() if k.lower() not in ['authorization', 'cookie']},
+            "headers": {k: v for k, v in request.headers.items() if k.lower() not in ['authorization', 'cookie', 'x-api-key']},
             "client_host": request.client.host if request.client else "unknown",
         }
 
