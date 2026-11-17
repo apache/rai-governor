@@ -411,7 +411,6 @@ class RunRegistry:
         # cache briefly to avoid re-fetching on close-together reads
         # by the polling UI.
         self._records: Dict[str, RunRecord] = {}
-        self._lock = asyncio.Lock()
         # Lazy DB binding; set on first persistence operation when
         # the caller has access to settings. Tests can pass None.
         self._db = db
