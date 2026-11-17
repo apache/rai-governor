@@ -650,7 +650,8 @@ class TestAgentDataStoreProxy:
 
     def test_get_delegates_to_service(self, agent_proxy, mock_db):
         """Test that get() delegates to service with correct params."""
-        mock_db.get.return_value = {"value": "test-value"}
+        mock_db.get.return_value = {"value": "test-value", "userId": agent_proxy._user_id,
+                                    "namespace": agent_proxy._namespace}
         
         result = agent_proxy.get("my-key")
         
@@ -853,11 +854,19 @@ class TestDataStoreWorkflows:
         proxy_a.set("report", {"data": "from-agent-a"})
         
         mock_db.get.side_effect = None
-        mock_db.get.return_value = {"value": {"data": "from-agent-a"}}
+        mock_db.get.return_value = {"value": {"data": "from-agent-a"},
+                                    "userId": "user-123", "namespace": "shared"}
         
         proxy_b = AgentDataStoreProxy(service, "user-123", "agent-b", "shared")
         result = proxy_b.get("report")
         assert result == {"data": "from-agent-a"}
+
+    def test_a_doc_of_another_user_or_namespace_is_not_returned(self, mock_db):
+        """Doc ids join user, namespace and key with ":", which both may
+        contain; get() checks the doc really is this user's and namespace's."""
+        service = DataStoreService(mock_db)
+        mock_db.get.return_value = {"value": "x", "userId": "user-123:other", "namespace": "shared"}
+        assert service.get("user-123", "other:shared", "k") is None
 
     def test_user_isolation(self, data_store_service, mock_db):
         """Test that users cannot see each other's data."""

@@ -119,6 +119,9 @@ class DataStoreService:
         try:
             doc = self.db.get(DATA_STORE_DB, doc_id)
 
+            if doc and (doc.get("userId") != user_id or doc.get("namespace") != namespace):
+                return None
+
             if agent_name and doc:
                 doc["lastAccessedByAgent"] = agent_name
                 doc["lastAccessedAt"] = naive_utc_now().isoformat()
