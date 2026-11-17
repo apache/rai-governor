@@ -13,7 +13,7 @@ from config import settings
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 import time
 from fastapi.responses import JSONResponse
 from time_utils import naive_utc_now
@@ -387,6 +387,35 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             process_time = time.time() - start_time
             
             user_id = get_request_user_id(request)
+
+            # BaseHTTPMiddleware's except block does not see exceptions
+            # raised inside a StreamingResponse body iterator (consumed
+            # after dispatch returns). Wrap it so the observability
+            # service still records the failure.
+            if isinstance(response, StreamingResponse):
+                _orig_body = response.body_iterator
+                _obs = observability_service
+                _rid = user_id
+                _rdata = request_data
+                _t0 = start_time
+
+                async def _logged_stream():
+                    try:
+                        async for chunk in _orig_body:
+                            yield chunk
+                    except Exception as stream_exc:
+                        _obs.log_exception(
+                            stream_exc,
+                            user_id=_rid,
+                            metadata={
+                                **_rdata,
+                                "process_time": f"{time.time() - _t0:.4f}s",
+                                "streaming": True,
+                            },
+                        )
+                        raise
+
+                response.body_iterator = _logged_stream()
 
             # Pick log level by response status so 2xx noise can be
             # filtered at the console while 4xx/5xx stay visible. The
