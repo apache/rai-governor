@@ -11,6 +11,7 @@ const getAuthHeader = async () => {
   }
   try {
     const token = await user.getIdToken();
+    if (!token) return {};
     return { Authorization: `Bearer ${token}` };
   } catch (error) {
     console.error("Error getting auth token:", error);
