@@ -247,6 +247,7 @@ async def logout(
     await session_svc.delete(sid)
     resp = Response(status_code=204)
     resp.delete_cookie(SessionService.cookie_name(), path="/")
+    resp.headers["Clear-Site-Data"] = '"cookies", "storage", "cache"'
     return resp
 
 
