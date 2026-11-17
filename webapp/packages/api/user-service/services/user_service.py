@@ -108,10 +108,20 @@ class UserService:
         return self.save_user(user)
 
     def add_usage(self, user_id: str, response_cost: float, metadata: Optional[Any] = None, basic_info: Optional[dict] = None) -> User:
-        user = self.get_user(user_id, basic_info)
-        user.usage_info.usage.append(UsageEntry(responseCost=response_cost, metadata=metadata))
-        user.usage_info.spend_remaining = max(0.0, user.usage_info.spend_remaining - response_cost)
-        return self.save_user(user)
+        """Record a call's cost. Concurrent calls by the same user race on the
+        user doc; the one that loses gets a 409 and reads it again, so no
+        charge is lost. The allowance is checked before a call
+        (require_allowance), not here: the call has already been made."""
+        attempts = 5
+        for attempt in range(attempts):
+            user = self.get_user(user_id, basic_info)
+            user.usage_info.usage.append(UsageEntry(responseCost=response_cost, metadata=metadata))
+            user.usage_info.spend_remaining = max(0.0, user.usage_info.spend_remaining - response_cost)
+            try:
+                return self.save_user(user)
+            except HTTPException as e:
+                if e.status_code != 409 or attempt == attempts - 1:
+                    raise
 
     def get_api_keys(self, user_id: str, basic_info: Optional[dict] = None) -> ApiKeys:
         """Get the user's API keys (masked for security)"""
