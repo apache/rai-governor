@@ -39,8 +39,32 @@ describe('PipelineImportDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     await waitFor(() => expect(onImported).toHaveBeenCalledWith({ entryId: 'e1' }));
     expect(pipelineService.importFromGithub.mock.calls[1][0]).toMatchObject({
-      repo: 'apache/tooling-agents', path: 'ASVS', dryRun: false, label: '3194087', deploy: true,
+      repo: 'apache/tooling-agents', path: 'ASVS', dryRun: false, label: '3194087', deploy: true, labeled: true,
     });
+  });
+
+  it('unticking the label imports into the stable copy', async () => {
+    pipelineService.importFromGithub.mockResolvedValueOnce(plan({
+      label: '',
+      agents: [{ agent: 'asvs_orchestrate', name: 'asvs_orchestrate', action: 'update',
+        changes: ['code'], calls: [], externalCalls: [], envCount: 0 }],
+    }));
+    pipelineService.importFromGithub.mockResolvedValueOnce({ entryId: 'e1', deployed: [], deployProblems: [] });
+    render(<PipelineImportDialog open onClose={() => {}} onImported={() => {}} />);
+    const box = screen.getByRole('checkbox', { name: 'Label this copy' });
+    expect(box).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/^Label$/), { target: { value: 'typed' } });
+    fireEvent.click(box);
+    expect(screen.queryByLabelText(/^Label$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Imports into the stable copy/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Repository/), { target: { value: 'a/b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(await screen.findByText('asvs (stable)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(pipelineService.importFromGithub).toHaveBeenCalledTimes(2));
+    for (const [args] of pipelineService.importFromGithub.mock.calls) {
+      expect(args).toMatchObject({ labeled: false, label: undefined });
+    }
   });
 
   it('deploys every agent unless unticked', async () => {

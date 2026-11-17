@@ -165,6 +165,16 @@ const SavedAgentsPage = () => {
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>
                         {agent.baseName || agent.name}
+                        {agent.pipeline && !agent.pipelineLabel && (
+                          <Tooltip title={`${agent.pipeline}, stable copy · ${sourceText(agent.pipelineSource)}`} arrow>
+                            <Chip
+                              label="stable"
+                              size="small"
+                              variant="outlined"
+                              sx={{ ml: 1, fontSize: '0.7rem', height: 20 }}
+                            />
+                          </Tooltip>
+                        )}
                         {agent.pipelineLabel && (
                           <Tooltip title={`${agent.pipeline}@${agent.pipelineLabel} · ${sourceText(agent.pipelineSource)}`} arrow>
                             <Chip

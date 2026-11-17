@@ -30,8 +30,10 @@ export function sourceText(source) {
 
 const pipelineService = {
   // deploy (default true): deploy every agent the import writes.
-  async importFromGithub({ repo, ref, path, token, label, dryRun, deploy = true }) {
-    const body = { repo, ref: ref || 'main', path: path || '', dryRun, deploy };
+  // labeled (default true): false imports into the stable copy, at the plain
+  // agent names and /rest/<name>, and ignores label.
+  async importFromGithub({ repo, ref, path, token, label, dryRun, deploy = true, labeled = true }) {
+    const body = { repo, ref: ref || 'main', path: path || '', dryRun, deploy, labeled };
     if (token) body.token = token;
     if (label) body.label = label;
     const response = await fetch(`${API_BASE_URL}/pipelines/import/github`, {
@@ -44,7 +46,7 @@ const pipelineService = {
 
   // files: the FileList from <input webkitdirectory>. Each File carries the
   // path inside the picked folder as webkitRelativePath.
-  async importFromFolder({ files, label, dryRun, deploy = true }) {
+  async importFromFolder({ files, label, dryRun, deploy = true, labeled = true }) {
     const form = new FormData();
     Array.from(files).forEach((f) => {
       form.append('files', f, f.webkitRelativePath || f.name);
@@ -52,6 +54,7 @@ const pipelineService = {
     if (label) form.append('label', label);
     form.append('dryRun', dryRun ? 'true' : 'false');
     form.append('deploy', deploy ? 'true' : 'false');
+    form.append('labeled', labeled ? 'true' : 'false');
     const response = await fetch(`${API_BASE_URL}/pipelines/import/upload`, {
       method: 'POST',
       body: form,

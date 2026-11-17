@@ -15,7 +15,7 @@ describe('pipelineService', () => {
     await pipelineService.importFromGithub({ repo: 'apache/tooling-agents', ref: '', path: 'ASVS', dryRun: true });
     const [url, init] = globalThis.fetch.mock.calls[0];
     expect(url).toMatch(/\/pipelines\/import\/github$/);
-    expect(JSON.parse(init.body)).toEqual({ repo: 'apache/tooling-agents', ref: 'main', path: 'ASVS', dryRun: true, deploy: true });
+    expect(JSON.parse(init.body)).toEqual({ repo: 'apache/tooling-agents', ref: 'main', path: 'ASVS', dryRun: true, deploy: true, labeled: true });
   });
 
   it('uploads each file under its path inside the picked folder', async () => {
@@ -30,6 +30,15 @@ describe('pipelineService', () => {
     expect(form.get('label')).toBe('v1');
     expect(form.get('dryRun')).toBe('false');
     expect(form.get('deploy')).toBe('true');
+    expect(form.get('labeled')).toBe('true');
+  });
+
+  it('sends labeled false for the stable copy', async () => {
+    globalThis.fetch.mockResolvedValue(ok({ agents: [] }));
+    await pipelineService.importFromGithub({ repo: 'a/b', dryRun: true, labeled: false });
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body).labeled).toBe(false);
+    await pipelineService.importFromFolder({ files: [], dryRun: true, labeled: false });
+    expect(globalThis.fetch.mock.calls[1][1].body.get('labeled')).toBe('false');
   });
 
   it('sends deploy false when asked not to deploy', async () => {

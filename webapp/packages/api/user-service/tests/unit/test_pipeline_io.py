@@ -202,10 +202,18 @@ def test_a_call_to_an_existing_shared_agent_is_linked_by_name():
     assert result["agents"][1]["externalCalls"] == ["shared_helper"]
 
 
-@pytest.mark.parametrize("bad", ["", "has space", "a/b", "x" * 41])
+@pytest.mark.parametrize("bad", ["has space", "a/b", "x" * 41, "-lead"])
 def test_labels_are_checked(bad):
     with pytest.raises(pio.PipelineError, match="label"):
         pio.check_label(bad)
+
+
+def test_no_label_is_the_stable_copy_with_plain_names():
+    assert pio.check_label("") == pio.STABLE == ""
+    assert pio.copy_name("asvs_audit", "") == "asvs_audit"
+    assert pio.copy_friendly_name(None, "asvs_audit", "") == "asvs_audit"
+    assert pio.copy_name("asvs_audit", "3194087") == "asvs_audit@3194087"
+    assert pio.copy_friendly_name(None, "asvs_audit", "3194087") == "asvs_audit-3194087"
 
 
 def test_default_labels():

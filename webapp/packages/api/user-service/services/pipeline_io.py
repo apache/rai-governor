@@ -39,6 +39,11 @@ copies (a branch, a big change) live side by side. Agent code still calls
 the plain name: GofannonClient resolves it to the agent in the caller's own
 gofannon_agents, which point into the same copy. Importing the same
 pipeline and label again updates that copy in place.
+
+The stable copy has no label (STABLE, ""): its agents keep their own names
+and are deployed at /rest/<name>, and each unlabeled import updates it in
+place. So there are usually two copies worth having: stable, and the newest
+labelled one.
 """
 
 from __future__ import annotations
@@ -60,6 +65,9 @@ _PIPELINE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 # Agent names made in the UI can have spaces; code calls them by that name.
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,120}$")
 _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
+
+# The stable copy's label: none.
+STABLE = ""
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_FILES = 500
 MAX_FILE_BYTES = 2_000_000
@@ -249,6 +257,8 @@ def default_label(commit_sha: Optional[str] = None, now: Optional[datetime] = No
 
 def check_label(label: str) -> str:
     label = (label or "").strip()
+    if label == STABLE:
+        return STABLE
     if not _LABEL_RE.match(label):
         raise PipelineError(
             f"label {label!r}: letters, digits, '.', '_' or '-', up to 40 characters")
@@ -256,13 +266,15 @@ def check_label(label: str) -> str:
 
 
 def copy_name(base: str, label: str) -> str:
-    return f"{base}@{label}"
+    return f"{base}@{label}" if label else base
 
 
 def copy_friendly_name(friendly: Optional[str], base: str, label: str) -> str:
     """Friendly names are deployment URL paths (/rest/{friendly_name}), so the
     label is joined with '-' and the result kept URL-safe."""
     stem = re.sub(r"[^A-Za-z0-9_-]+", "-", friendly or base).strip("-") or base
+    if not label:
+        return stem
     return f"{stem}-{re.sub(r'[^A-Za-z0-9_-]+', '-', label)}"
 
 
@@ -323,7 +335,8 @@ def plan_import(manifest: Manifest, label: str, existing_agents: List[Dict[str, 
         if current is None and target in by_name:
             problems.append(
                 f"{target}: an agent with this name exists but is not part of "
-                f"{manifest.pipeline}@{label}; rename it or use another label")
+                + (f"{manifest.pipeline}@{label}; rename it or use another label" if label else
+                   f"{manifest.pipeline}'s stable copy; rename or delete it, or import with a label"))
         want = _manifest_fields(m, label)
         changes: List[str] = []
         if current is not None:
@@ -478,7 +491,7 @@ def build_export(docs: List[Dict[str, Any]], pipeline: Optional[str] = None) -> 
     manifest = {"pipeline": pipeline, "entry": name_of[root["_id"]], "agents": entries}
     if root.get("pipelineSource"):
         manifest["description"] = (
-            f"Exported from gofannon: {pipeline}@{root.get('pipelineLabel')}")
+            f"Exported from gofannon: {pipeline}@{root.get('pipelineLabel') or 'stable'}")
     files[MANIFEST] = yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True, width=100)
     return pipeline, files
 

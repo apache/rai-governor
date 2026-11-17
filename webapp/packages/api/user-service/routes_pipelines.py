@@ -1,12 +1,17 @@
 """Pipeline import and export (ISSUE-011). See services/pipeline_io.py.
 
-  POST /pipelines/import/github   {repo, ref, path, token?, label?, dryRun, deploy}
-  POST /pipelines/import/upload   multipart: files (a picked folder), label?, dryRun, deploy
+  POST /pipelines/import/github   {repo, ref, path, token?, label?, labeled, dryRun, deploy}
+  POST /pipelines/import/upload   multipart: files (a picked folder), label?, labeled, dryRun, deploy
   GET  /agents/{agent_id}/export  zip of the agent and every agent it calls
 
 Imports run as a dry run first: the response is the plan (create, update or
 unchanged per agent, with what changed) and any problem that would stop it.
 A GitHub token is used for that request only and never stored.
+
+labeled (default true) imports into a copy under the label: the given one,
+else the commit hash or a timestamp. labeled false imports into the stable
+copy, which has none: its agents keep their own names and deploy at
+/rest/<name>.
 
 An import also deploys every agent it wrote (deploy, default true), each at
 /rest/{its friendly name}, which carries the label. A deployment that can't
@@ -37,6 +42,7 @@ class GithubImport(BaseModel):
     path: str = ""
     token: Optional[str] = None
     label: Optional[str] = None
+    labeled: bool = True
     dry_run: bool = Field(True, alias="dryRun")
     deploy: bool = True
 
@@ -80,7 +86,7 @@ def _run_import(files, label, source, dry_run, db, user, logger):
         raise HTTPException(status_code=400, detail=str(e))
     logger.log(
         "user_action",
-        f"Pipeline {result['pipeline']}@{result['label']} imported "
+        f"Pipeline {result['pipeline']}@{result['label'] or 'stable'} imported "
         f"({len(result['written'])} agents).",
         user_id=user.get("uid"),
         metadata={"source": source, "agents": list(result["written"])},
@@ -101,7 +107,7 @@ async def import_from_github(
         raise HTTPException(status_code=400, detail=str(e))
     source = {"kind": "github", "repo": body.repo, "ref": body.ref,
               "path": body.path, "commit": sha}
-    label = body.label or pio.default_label(commit_sha=sha)
+    label = (body.label or pio.default_label(commit_sha=sha)) if body.labeled else pio.STABLE
     result = _run_import(files, label, source, body.dry_run, db, user, logger)
     if not body.dry_run and body.deploy:
         result = await _deploy_all(result, db)
@@ -113,6 +119,7 @@ async def import_from_github(
 async def import_from_upload(
     files: List[UploadFile] = File(...),
     label: Optional[str] = Form(None),
+    labeled: bool = Form(True),
     dry_run: bool = Form(True, alias="dryRun"),
     deploy: bool = Form(True),
     db: DatabaseService = Depends(get_db),
@@ -126,7 +133,7 @@ async def import_from_upload(
         file_map = pio.files_from_upload(entries)
     except pio.PipelineError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    label = label or pio.default_label()
+    label = (label or pio.default_label()) if labeled else pio.STABLE
     source = {"kind": "upload", "files": len(file_map)}
     result = _run_import(file_map, label, source, dry_run, db, user, logger)
     if not dry_run and deploy:

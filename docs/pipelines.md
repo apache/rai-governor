@@ -46,15 +46,19 @@ Open the entry agent and click **Export pipeline**. You get `<pipeline>.zip` wit
 
 **Preview** shows what each agent would become (create, update or unchanged, and what changed) and any problem that would stop the import, such as a call to an agent that doesn't exist. **Import** writes it.
 
-**Deploy every agent** is ticked by default: the import also deploys each agent it wrote, at `/rest/<friendly name>-<label>`, so the pipeline can be run, published as a workload, or called from outside right away. An agent whose deployment name is already taken by another agent is listed after the import as not deployed; the import itself still stands. Untick it to import without deploying.
+**Deploy every agent** is ticked by default: the import also deploys each agent it wrote, at `/rest/<friendly name>` (with `-<label>` for a labelled copy), so the pipeline can be run, published as a workload, or called from outside right away. An agent whose deployment name is already taken by another agent is listed after the import as not deployed; the import itself still stands. Untick it to import without deploying.
 
 ## Copies and labels
 
-Every import lands in a copy of the pipeline under a **label**: the short commit hash for GitHub, a UTC timestamp for a folder, or one you type. Agents in the copy are stored as `<name>@<label>`, for example `asvs_audit@3194087`, and shown with an `@label` chip.
+There are usually two useful versions of a pipeline: the **stable** one you run, and the **new** one you're trying.
+
+**Label this copy** is ticked by default, and the import lands in a copy under a **label**: the short commit hash for GitHub, a UTC timestamp for a folder, or one you type. Agents in the copy are stored as `<name>@<label>`, for example `asvs_audit@3194087`, and shown with an `@label` chip.
+
+Untick it to import into the **stable** copy: the agents keep their plain names (`asvs_audit`), are deployed at `/rest/<name>`, and show a `stable` chip. Each unlabelled import updates stable in place, so its endpoints don't change. The stable import refuses an agent with a plain name that isn't already part of the pipeline's stable copy, such as one made by hand; rename or delete it first.
 
 - Importing the same pipeline with the same label updates that copy in place: same agents, same ids, same deployments.
 - A new label makes another copy alongside, for a branch or a big change, without touching the copy you're running.
 
 Agent code doesn't change between copies. It still calls `gofannon_client.call("asvs_audit", …)`, and Governor resolves the plain name to the agent in the caller's own copy.
 
-Deployment paths include the label too (`/rest/asvs-orchestrate-3194087`), so two copies can be deployed at once.
+Deployment paths include the label too (`/rest/asvs-orchestrate-3194087`), so stable and any number of labelled copies can be deployed at once.

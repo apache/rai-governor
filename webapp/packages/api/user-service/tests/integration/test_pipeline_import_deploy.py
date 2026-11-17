@@ -87,3 +87,29 @@ def test_a_name_taken_by_another_agent_is_reported_not_raised(client):
     assert out["deployProblems"][0]["agent"] == "demo_step"
     assert "already exists" in out["deployProblems"][0]["reason"]
     assert len(out["written"]) == 2
+
+
+def test_an_unlabelled_import_is_the_stable_copy_at_the_plain_names(client):
+    """Two versions side by side: stable (no label, /rest/<name>) and a
+    labelled one. Each unlabelled import updates stable in place."""
+    stable = _upload(client, labeled="false").json()
+    assert stable["label"] == ""
+    assert [r["name"] for r in stable["agents"]] == ["demo_main", "demo_step"]
+    assert sorted(d["endpoint"] for d in stable["deployed"]) == ["/rest/demo_main", "/rest/demo_step"]
+    new = _upload(client, label="abc1234").json()
+    assert sorted(d["endpoint"] for d in new["deployed"]) == ["/rest/demo_main-abc1234", "/rest/demo_step-abc1234"]
+
+    again = _upload(client, labeled="false").json()
+    assert {n: w["id"] for n, w in again["written"].items()} == \
+        {n: w["id"] for n, w in stable["written"].items()}
+    deps = _deployments(client)
+    assert deps["demo_main"] == stable["written"]["demo_main"]["id"]
+    assert len(deps) == 4
+
+
+def test_the_stable_copy_will_not_take_over_an_agent_outside_the_pipeline(client):
+    client.db.save("agents", "manual-1", {"_id": "manual-1", "name": "demo_main", "code": CODE,
+                                         "friendlyName": "demo_main"})
+    r = _upload(client, labeled="false")
+    assert r.status_code == 400
+    assert "demo_main: an agent with this name exists but is not part of demo's stable copy" in r.json()["detail"]

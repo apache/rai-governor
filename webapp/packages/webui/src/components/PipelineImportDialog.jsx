@@ -1,10 +1,13 @@
 // Import a pipeline from GitHub or a local folder (ISSUE-011).
 //
 // Two steps: Preview (a dry run that shows what each agent would become),
-// then Import. Every import lands in a labelled copy: the commit hash for
-// GitHub, a timestamp for a folder, or a label you type. The same label
-// again updates that copy; a new one makes another alongside. Every agent
-// imported is also deployed, at /rest/{its friendly name}, unless unticked.
+// then Import. By default an import lands in a labelled copy: the commit hash
+// for GitHub, a timestamp for a folder, or a label you type. The same label
+// again updates that copy; a new one makes another alongside. Unticking
+// "Label this copy" imports into the stable copy instead: the plain agent
+// names at /rest/{name}, updated in place by each unlabelled import. Every
+// agent imported is also deployed, at /rest/{its friendly name}, unless
+// unticked.
 import React, { useRef, useState } from 'react';
 import {
   Alert,
@@ -82,6 +85,7 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
   const [label, setLabel] = useState('');
   const [plan, setPlan] = useState(null);
   const [deploy, setDeploy] = useState(true);
+  const [labeled, setLabeled] = useState(true);
   // After an import whose deployments didn't all go through: what failed.
   const [imported, setImported] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -107,10 +111,10 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
       // The import reuses the preview's label: for a folder the API makes a
       // fresh timestamp on every call, so without this the import would land
       // in a different copy from the one previewed.
-      const useLabel = label || (dryRun ? undefined : plan?.label);
+      const useLabel = labeled ? (label || (dryRun ? undefined : plan?.label)) : undefined;
       const result = tab === 'github'
-        ? await pipelineService.importFromGithub({ ...github, label: useLabel, dryRun, deploy })
-        : await pipelineService.importFromFolder({ files, label: useLabel, dryRun, deploy });
+        ? await pipelineService.importFromGithub({ ...github, label: useLabel, dryRun, deploy, labeled })
+        : await pipelineService.importFromFolder({ files, label: useLabel, dryRun, deploy, labeled });
       if (dryRun) {
         setPlan(result);
       } else if (result.deployProblems?.length) {
@@ -182,12 +186,23 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
           </Stack>
         )}
 
-        <TextField
-          label="Label" size="small" sx={{ mt: 2, width: 260 }}
-          placeholder={tab === 'github' ? 'commit hash' : 'timestamp'}
-          helperText="Same label updates that copy; a new one makes another."
-          value={label} onChange={(e) => { setLabel(e.target.value); reset(); }}
+        <FormControlLabel
+          sx={{ mt: 2, display: 'flex' }}
+          control={<Checkbox checked={labeled} onChange={(e) => { setLabeled(e.target.checked); reset(); }} />}
+          label={<Typography variant="body2">Label this copy</Typography>}
         />
+        {labeled ? (
+          <TextField
+            label="Label" size="small" sx={{ mt: 1, width: 260 }}
+            placeholder={tab === 'github' ? 'commit hash' : 'timestamp'}
+            helperText="Same label updates that copy; a new one makes another."
+            value={label} onChange={(e) => { setLabel(e.target.value); reset(); }}
+          />
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Imports into the stable copy: the plain agent names, each at /rest/ its name. It updates in place.
+          </Typography>
+        )}
 
         <FormControlLabel
           sx={{ mt: 1, display: 'flex' }}
@@ -206,7 +221,7 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
         {plan && (
           <Box sx={{ mt: 2 }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              {plan.pipeline}@{plan.label}
+              {plan.label ? `${plan.pipeline}@${plan.label}` : `${plan.pipeline} (stable)`}
               {plan.source?.commit && ` · ${plan.source.repo} ${plan.source.commit.slice(0, 7)}`}
             </Typography>
             {plan.problems.length > 0 && (
