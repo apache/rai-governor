@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -162,8 +163,9 @@ def export_pipeline(
     except pio.PipelineError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
     data = pio.zip_files(files, pipeline)
+    zip_name = f"{pipeline}.zip"
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{pipeline}.zip"'},
+        headers={"Content-Disposition": f"attachment; filename=\"{zip_name}\"; filename*=UTF-8''{quote(zip_name, safe='')}"},
     )

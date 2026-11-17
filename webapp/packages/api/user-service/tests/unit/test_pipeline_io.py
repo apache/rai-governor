@@ -373,7 +373,7 @@ def test_folder_upload_previews_then_imports_then_exports():
 
     r = c.get(f"/agents/{entry_id}/export")
     assert r.status_code == 200
-    assert r.headers["content-disposition"] == 'attachment; filename="demo.zip"'
+    assert r.headers["content-disposition"] == 'attachment; filename="demo.zip"; filename*=UTF-8\'\'demo.zip'
     names = set(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
     assert "demo/pipeline.yaml" in names and "demo/agents/child.py" in names
 
