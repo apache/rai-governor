@@ -55,7 +55,11 @@ def get_database_service(settings) -> DatabaseService:
                 region_name=region_name,
                 endpoint_url=endpoint_url,
             )
-        else:
-            # Default to in-memory if not configured
+        elif settings.DATABASE_PROVIDER == "memory":
             _db_instance = MemoryDBService()
+        else:
+            raise ValueError(
+                f"Unknown DATABASE_PROVIDER: {settings.DATABASE_PROVIDER!r}. "
+                f"Must be one of: 'couchdb', 'firestore', 'dynamodb', 'memory'."
+            )
     return _db_instance
