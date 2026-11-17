@@ -52,10 +52,11 @@ def _get_session_svc(db: DatabaseService = Depends(get_db)) -> SessionService:
 def _default_redirect_uri(request: Request, provider_type: str) -> str:
     """Build the ``redirect_uri`` the provider should bounce back to.
 
-    We compute this from the incoming request so local dev, staging,
-    and prod each use the correct absolute URL without per-env config.
+    AUTH_CALLBACK_BASE_URL, when set, is the public URL the callback is
+    reached at, and the request's Host header plays no part. Unset, the
+    URL comes from the request, so local dev works without configuration.
     """
-    base = str(request.base_url).rstrip("/")
+    base = (os.getenv("AUTH_CALLBACK_BASE_URL") or str(request.base_url)).rstrip("/")
     return f"{base}/auth/callback/{provider_type}"
 
 

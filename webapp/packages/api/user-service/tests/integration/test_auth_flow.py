@@ -206,3 +206,19 @@ def test_the_cookie_value_is_not_stored_and_the_stored_id_is_not_a_cookie(client
 def test_logout_deletes_the_stored_session(client, session):
     assert client.post("/auth/logout", cookies={"gofannon_sid": session}).status_code == 204
     assert client.db.dbs["user_sessions"] == {}
+
+
+# --- The OAuth redirect_uri ------------------------------------------------
+
+def test_the_callback_url_comes_from_the_request_by_default(client, monkeypatch):
+    monkeypatch.delenv("AUTH_CALLBACK_BASE_URL", raising=False)
+    r = client.get("/auth/login/dev_stub", headers={"Host": "other.example"})
+    assert "redirect_uri=http%3A%2F%2Fother.example%2Fauth%2Fcallback%2Fdev_stub" in r.headers["location"]
+
+
+def test_a_configured_callback_url_ignores_the_host_header(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_BASE_URL", "https://governor.example.org/")
+    r = client.get("/auth/login/dev_stub", headers={"Host": "other.example"})
+    loc = r.headers["location"]
+    assert "redirect_uri=https%3A%2F%2Fgovernor.example.org%2Fauth%2Fcallback%2Fdev_stub" in loc
+    assert "other.example" not in loc
