@@ -184,7 +184,14 @@ async def login_callback(
         redirect_uri = _default_redirect_uri(request, provider_type)
         user_info = await provider.exchange_code(code, redirect_uri)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Provider exchange failed: {e}")
+        logger.warning(
+            "OAuth callback exchange failed for provider %s: %s",
+            provider_type, e, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Authentication provider error. Please try again.",
+        )
 
     memberships = await provider.get_workspace_memberships(user_info)
     site_admins = list((settings.AUTH_CONFIG or {}).get("site_admins") or [])
