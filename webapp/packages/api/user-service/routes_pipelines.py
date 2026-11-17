@@ -38,11 +38,11 @@ router = APIRouter(tags=["pipelines"])
 
 
 class GithubImport(BaseModel):
-    repo: str = Field(..., description="owner/name")
-    ref: str = "main"
-    path: str = ""
-    token: Optional[str] = None
-    label: Optional[str] = None
+    repo: str = Field(..., description="owner/name", max_length=256)
+    ref: str = Field("main", max_length=256)
+    path: str = Field("", max_length=1024)
+    token: Optional[str] = Field(None, max_length=4096)
+    label: Optional[str] = Field(None, max_length=128)
     labeled: bool = True
     dry_run: bool = Field(True, alias="dryRun")
     deploy: bool = True
