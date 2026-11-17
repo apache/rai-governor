@@ -301,8 +301,9 @@ async def dev_stub_picker(
         )
 
     # Build the picker page. Plain HTML; no frontend code involved.
+    import html as _html
     links = "".join(
-        f'<li><a href="/auth/callback/dev_stub?code={u}&state={state}">{u}</a></li>'
+        f'<li><a href="/auth/callback/dev_stub?code={_html.escape(u, quote=True)}&state={_html.escape(state, quote=True)}">{_html.escape(u)}</a></li>'
         for u in user_list
     )
     html = f"""<!doctype html>
