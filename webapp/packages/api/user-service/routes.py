@@ -99,6 +99,11 @@ async def _verify_session_cookie(request: Request, sid: str) -> Optional[dict]:
     session = await svc.get_by_id(sid)
     if not session:
         return None
+    # Memberships and the site-admin flag were read at login; re-read them
+    # once they are older than the refresh interval (FINDING-018).
+    session = await svc.refresh_if_stale(session)
+    if not session:
+        return None
     from services.session_service import user_from_session
     user = user_from_session(session)
     request.state.user = user

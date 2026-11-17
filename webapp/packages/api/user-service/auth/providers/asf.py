@@ -27,6 +27,7 @@ from ..base import (
     LoginDecision,
     LoginDeny,
     Membership,
+    MembershipRefresh,
     UserInfo,
 )
 from ..ldap_client import LdapClient
@@ -148,7 +149,9 @@ class AsfProvider(AuthProvider):
         # that preserves existing memberships when query_succeeded=False.
         if not snapshot.query_succeeded:
             return []
+        return self._memberships_from(snapshot)
 
+    def _memberships_from(self, snapshot) -> List[Membership]:
         memberships: List[Membership] = []
         for project in sorted(snapshot.committer_groups):
             # Intersection with PMC groups upgrades role to admin.
@@ -162,6 +165,17 @@ class AsfProvider(AuthProvider):
                 source=source,
             ))
         return memberships
+
+    async def refresh_memberships(self, user_info: UserInfo) -> Optional[MembershipRefresh]:
+        """LDAP needs no user token, so a session's memberships, site-admin
+        flag and ban are re-read in the background. None if LDAP fails."""
+        loop = asyncio.get_event_loop()
+        snapshot = await loop.run_in_executor(None, self._ldap.get_memberships, user_info.external_id)
+        if not snapshot.query_succeeded:
+            return None
+        if snapshot.is_banned:
+            return MembershipRefresh(memberships=[], banned=True)
+        return MembershipRefresh(memberships=self._memberships_from(snapshot))
 
     async def evaluate_login(
         self,

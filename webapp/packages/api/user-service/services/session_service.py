@@ -20,6 +20,7 @@ access, and expired sessions are returned as "not authenticated" even
 if the cookie hasn't been cleared on the client.
 """
 import asyncio
+import logging
 import secrets
 from datetime import timedelta
 from typing import List, Optional, Tuple
@@ -37,6 +38,8 @@ from models.workspace import (
 from services.database_service import DatabaseService
 from time_utils import naive_utc_now
 
+
+logger = logging.getLogger(__name__)
 
 _SESSIONS_COLLECTION = "user_sessions"
 _COOKIE_NAME = "gofannon_sid"
@@ -217,6 +220,49 @@ class SessionService:
             session.model_dump(by_alias=True, mode="json"),
         )
         return session, diff
+
+    async def refresh_if_stale(self, session: Session) -> Optional[Session]:
+        """Bring a session's memberships and site-admin flag up to date once
+        they are older than ``workspace_refresh_minutes``; called on every
+        authenticated request. Returns the session to use, or None when the
+        user has been banned since login (the session is deleted).
+
+        Only providers that can look memberships up without the user
+        (``refresh_memberships``) take part; for the others, and when the
+        lookup fails, the memberships stay as they are and the next try is
+        a refresh interval later. A failure here never fails the request.
+        """
+        if not self.needs_refresh(session):
+            return session
+        provider = get_registry().get(session.provider_type)
+        try:
+            refreshed = None
+            if provider is not None:
+                user_info = UserInfo(
+                    provider_type=session.provider_type,
+                    external_id=session.user_uid.split(":", 1)[1],
+                    display_name=session.display_name,
+                    email=session.email,
+                )
+                refreshed = await provider.refresh_memberships(user_info)
+            if refreshed is not None and refreshed.banned:
+                logger.warning("session for %s ended: banned since login", session.user_uid)
+                await self.delete(session.id)
+                return None
+            now = naive_utc_now()
+            if refreshed is not None:
+                session.workspaces = _to_workspace_memberships(user_info, refreshed.memberships)
+                session.is_site_admin = session.user_uid in self._site_admins
+                session.updated_at = now
+            session.last_refresh_at = now
+            await asyncio.to_thread(
+                self.db.save, _SESSIONS_COLLECTION, session.id,
+                session.model_dump(by_alias=True, mode="json"))
+        except Exception:
+            # Another request may have refreshed it first (a 409), or the
+            # provider or database is down: use the session as it was.
+            logger.warning("session refresh for %s failed", session.user_uid, exc_info=True)
+        return session
 
     # --- Introspection ---------------------------------------------------
 

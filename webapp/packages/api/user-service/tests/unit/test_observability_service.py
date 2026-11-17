@@ -151,6 +151,9 @@ def test_observability_middleware_resolves_session_cookie(monkeypatch):
             assert sid == "sid-123"
             return session
 
+        async def refresh_if_stale(self, s):
+            return s
+
     monkeypatch.setattr(
         "services.database_service.get_database_service",
         lambda _settings: object(),

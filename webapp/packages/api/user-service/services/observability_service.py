@@ -354,7 +354,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             from services.session_service import get_session_service
 
             db = get_database_service(settings)
-            session = await get_session_service(db).get_by_id(sid)
+            sessions = get_session_service(db)
+            session = await sessions.get_by_id(sid)
+            # Memberships and the site-admin flag were read at login;
+            # re-read them once stale (FINDING-018). None if banned since.
+            if session:
+                session = await sessions.refresh_if_stale(session)
         except Exception as exc:
             # Observability middleware must NEVER fail a request. A broken
             # session service or DB outage downgrades us to "anonymous"

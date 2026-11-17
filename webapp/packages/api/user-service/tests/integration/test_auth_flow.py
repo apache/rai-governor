@@ -28,6 +28,10 @@ def client(monkeypatch):
     app = create_app()
     db = MemoryDBService()
     app.dependency_overrides[get_db] = lambda: db
+    # The middleware and get_current_user find sessions through the
+    # process-wide database, not get_db: make it the same one.
+    import services.database_service as database_service
+    monkeypatch.setattr(database_service, "_db_instance", db)
     c = TestClient(app, follow_redirects=False)
     c.db = db
     return c
@@ -110,3 +114,78 @@ def test_a_refused_login_is_recorded(client, events):
     [bad] = events.of("auth_failure")
     assert bad["metadata"] == {"provider": "dev_stub", "reason": "state mismatch"}
     assert bad["level"] == "WARNING"
+
+
+# --- Memberships are re-read during a session (FINDING-018) ---------------
+
+from datetime import timedelta  # noqa: E402
+
+from auth.base import Membership, MembershipRefresh  # noqa: E402
+from time_utils import naive_utc_now  # noqa: E402
+
+
+def _age_session(client, sid, minutes=60):
+    doc = client.db.get("user_sessions", sid)
+    doc["lastRefreshAt"] = (naive_utc_now() - timedelta(minutes=minutes)).isoformat()
+    client.db.save("user_sessions", sid, doc)
+
+
+def _me(client, sid):
+    return client.get("/auth/me", cookies={"gofannon_sid": sid})
+
+
+def _workspaces(client, sid):
+    client.get("/users/me", cookies={"gofannon_sid": sid})  # any authenticated request
+    return [w["workspaceId"] for w in _me(client, sid).json()["workspaces"]]
+
+
+@pytest.fixture
+def session(client):
+    _, done = login(client)
+    sid = done.cookies.get("gofannon_sid")
+    client.cookies.clear()
+    return sid
+
+
+def _provider_returns(monkeypatch, result):
+    from auth import get_registry
+    provider = get_registry().get("dev_stub")
+
+    async def refresh(user_info):
+        return result
+
+    monkeypatch.setattr(provider, "refresh_memberships", refresh)
+
+
+def test_stale_memberships_are_re_read(client, session, monkeypatch):
+    assert "project:demo" in _workspaces(client, session)
+    _provider_returns(monkeypatch, MembershipRefresh(memberships=[
+        Membership(workspace_id="project:other", role="member", display_name="Other", source="dev_stub")]))
+    assert "project:demo" in _workspaces(client, session)  # still fresh: not re-read
+    _age_session(client, session)
+    ws = _workspaces(client, session)
+    assert "project:other" in ws and "project:demo" not in ws
+
+
+def test_a_failed_lookup_keeps_the_memberships(client, session, monkeypatch):
+    _provider_returns(monkeypatch, None)
+    _age_session(client, session)
+    assert "project:demo" in _workspaces(client, session)
+    doc = client.db.get("user_sessions", session)
+    assert naive_utc_now() - timedelta(minutes=1) < \
+        __import__("datetime").datetime.fromisoformat(doc["lastRefreshAt"])  # next try is an interval later
+
+
+def test_a_user_banned_since_login_is_logged_out(client, session, monkeypatch):
+    _provider_returns(monkeypatch, MembershipRefresh(memberships=[], banned=True))
+    _age_session(client, session)
+    assert client.get("/users/me", cookies={"gofannon_sid": session}).status_code == 401
+    assert _me(client, session).status_code == 401
+
+
+def test_a_provider_that_cannot_refresh_leaves_the_session_alone(client, session):
+    from auth.base import AuthProvider
+    from auth import get_registry
+    provider = get_registry().get("dev_stub")
+    # The base class's answer: no background lookup (GitHub, Google, Microsoft).
+    assert __import__("asyncio").run(AuthProvider.refresh_memberships(provider, None)) is None

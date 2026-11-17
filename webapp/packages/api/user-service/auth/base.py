@@ -67,6 +67,13 @@ class LoginDeny:
     reason: str
 
 
+@dataclass
+class MembershipRefresh:
+    """Current memberships, looked up without the user present."""
+    memberships: List[Membership]
+    banned: bool = False
+
+
 # Type alias for provider login decisions.
 LoginDecision = Union[LoginAllow, LoginDeny]
 
@@ -125,6 +132,13 @@ class AuthProvider(ABC):
         """
 
     # --- Default implementations -----------------------------------------
+
+    async def refresh_memberships(self, user_info: UserInfo) -> Optional[MembershipRefresh]:
+        """Current memberships for a live session, or None when they can't
+        be had: the provider needs the user's own token (GitHub, Google,
+        Microsoft keep none), or the lookup failed. None keeps the
+        session's memberships as they are."""
+        return None
 
     @property
     def display_name(self) -> str:

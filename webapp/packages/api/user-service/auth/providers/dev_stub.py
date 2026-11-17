@@ -31,7 +31,7 @@ session service logs a warning if it sees ``dev_stub`` enabled while
 from typing import List, Optional
 from urllib.parse import urlencode
 
-from ..base import AuthProvider, UserInfo, Membership
+from ..base import AuthProvider, UserInfo, Membership, MembershipRefresh
 
 
 class DevStubProvider(AuthProvider):
@@ -87,6 +87,11 @@ class DevStubProvider(AuthProvider):
             display_name=user.get("display_name", user["uid"]),
             email=user.get("email"),
         )
+
+    async def refresh_memberships(self, user_info: UserInfo) -> Optional[MembershipRefresh]:
+        if user_info.external_id not in self._users_by_uid:
+            return None
+        return MembershipRefresh(memberships=await self.get_workspace_memberships(user_info))
 
     async def get_workspace_memberships(self, user_info: UserInfo) -> List[Membership]:
         user = self._users_by_uid.get(user_info.external_id)
