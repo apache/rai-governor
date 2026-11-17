@@ -37,6 +37,7 @@ Full documentation lives in [`docs/`](docs/) and is published at <https://apache
 - [API reference](docs/api.md)
 - [LLM provider configuration](docs/llm-provider-configuration.md)
 - [Testing](docs/testing/README.md)
+- [Security](docs/security/README.md)
 
 ## About the name
 

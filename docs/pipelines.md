@@ -44,6 +44,8 @@ Open the entry agent and click **Export pipeline**. You get `<pipeline>.zip` wit
 - **GitHub:** repository (`owner/name`), branch, tag or commit, and the folder holding `pipeline.yaml`. A token is needed for private repos and avoids GitHub's limit of 60 requests an hour without one. It is used for that import only and never stored.
 - **Folder:** pick the folder holding `pipeline.yaml` (or one above it, if it holds only one). This works in Chrome and Firefox.
 
+Names, labels, paths and sizes are checked as listed in [Limits](security/limits.md).
+
 **Preview** shows what each agent would become (create, update or unchanged, and what changed) and any problem that would stop the import, such as a call to an agent that doesn't exist. **Import** writes it.
 
 **Deploy every agent** is ticked by default: the import also deploys each agent it wrote, at `/rest/<friendly name>` (with `-<label>` for a labelled copy), so the pipeline can be run, published as a workload, or called from outside right away. An agent whose deployment name is already taken by another agent is listed after the import as not deployed; the import itself still stands. Untick it to import without deploying.
