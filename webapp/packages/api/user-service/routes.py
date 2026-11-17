@@ -58,7 +58,7 @@ from models.data_store import (
     NamespaceStats,
     SetRecordRequest,
 )
-from models.user import User, ApiKeys
+from models.user import User, ApiKeys, PublicApiKeys, PublicUser
 from services.database_service import DatabaseService
 from services.data_store_service import (
     DataStoreService,
@@ -342,12 +342,12 @@ def get_model_config(provider: str, model: str, user: dict = Depends(get_current
     return available_providers[provider]["models"][model]
 
 
-@router.get("/users/me", response_model=User)
+@router.get("/users/me", response_model=PublicUser)
 def get_current_user_profile(user: dict = Depends(get_current_user), user_service: UserService = Depends(get_user_service_dep)):
     return user_service.get_user(user.get("uid", "anonymous"), user)
 
 
-@router.get("/admin/users", response_model=List[User])
+@router.get("/admin/users", response_model=List[PublicUser])
 def list_all_users(
     user_service: UserService = Depends(get_user_service_dep),
     _: None = Depends(require_admin_access),
@@ -355,7 +355,7 @@ def list_all_users(
     return user_service.list_users()
 
 
-@router.put("/admin/users/{user_id}", response_model=User)
+@router.put("/admin/users/{user_id}", response_model=PublicUser)
 def update_user_allowances(
     user_id: str,
     request: AdminUpdateUserRequest,
@@ -370,7 +370,7 @@ def update_user_allowances(
     )
 
 
-@router.put("/users/me/monthly-allowance", response_model=User)
+@router.put("/users/me/monthly-allowance", response_model=PublicUser)
 def set_monthly_allowance(
     request: UpdateMonthlyAllowanceRequest,
     user: dict = Depends(get_current_user),
@@ -379,7 +379,7 @@ def set_monthly_allowance(
     return user_service.set_monthly_allowance(user.get("uid", "anonymous"), request.monthly_allowance, user)
 
 
-@router.put("/users/me/allowance-reset-date", response_model=User)
+@router.put("/users/me/allowance-reset-date", response_model=PublicUser)
 def set_allowance_reset_date(
     request: UpdateResetDateRequest,
     user: dict = Depends(get_current_user),
@@ -388,12 +388,12 @@ def set_allowance_reset_date(
     return user_service.set_reset_date(user.get("uid", "anonymous"), request.allowance_reset_date, user)
 
 
-@router.post("/users/me/reset-allowance", response_model=User)
+@router.post("/users/me/reset-allowance", response_model=PublicUser)
 def reset_allowance(user: dict = Depends(get_current_user), user_service: UserService = Depends(get_user_service_dep)):
     return user_service.reset_allowance(user.get("uid", "anonymous"), user)
 
 
-@router.put("/users/me/spend-remaining", response_model=User)
+@router.put("/users/me/spend-remaining", response_model=PublicUser)
 def update_spend_remaining(
     request: UpdateSpendRemainingRequest,
     user: dict = Depends(get_current_user),
@@ -402,7 +402,7 @@ def update_spend_remaining(
     return user_service.update_spend_remaining(user.get("uid", "anonymous"), request.spend_remaining, user)
 
 
-@router.post("/users/me/usage", response_model=User)
+@router.post("/users/me/usage", response_model=PublicUser)
 def add_usage_entry(
     request: AddUsageRequest,
     user: dict = Depends(get_current_user),
@@ -413,12 +413,13 @@ def add_usage_entry(
 
 # --- API Key Management Routes ---
 
-@router.get("/users/me/api-keys", response_model=ApiKeys)
+@router.get("/users/me/api-keys", response_model=PublicApiKeys)
 def get_user_api_keys(
     user: dict = Depends(get_current_user),
     user_service: UserService = Depends(get_user_service_dep),
 ):
-    """Get the current user's API keys (keys are masked for security)"""
+    """The current user's API keys, masked: each set key shows only its
+    last four characters."""
     return user_service.get_api_keys(user.get("uid", "anonymous"), user)
 
 
@@ -429,7 +430,7 @@ class UpdateApiKeyRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-@router.put("/users/me/api-keys", response_model=User)
+@router.put("/users/me/api-keys", response_model=PublicUser)
 def update_user_api_key(
     request: UpdateApiKeyRequest,
     user: dict = Depends(get_current_user),
@@ -444,7 +445,7 @@ def update_user_api_key(
     )
 
 
-@router.delete("/users/me/api-keys/{provider}", response_model=User)
+@router.delete("/users/me/api-keys/{provider}", response_model=PublicUser)
 def delete_user_api_key(
     provider: str,
     user: dict = Depends(get_current_user),

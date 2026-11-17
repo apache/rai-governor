@@ -57,8 +57,10 @@ class TestApiKeyEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["openaiApiKey"] == "sk-openai-test"
-        assert data["anthropicApiKey"] == "sk-ant-test"
+        # Masked (see test_api_keys_masked): a key of 12 or fewer
+        # characters shows nothing of itself.
+        assert data["openaiApiKey"] == "****test"
+        assert data["anthropicApiKey"] == "****"
         assert data["geminiApiKey"] is None
         assert data["perplexityApiKey"] is None
 
@@ -92,7 +94,7 @@ class TestApiKeyEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["apiKeys"]["openaiApiKey"] == "sk-new-openai-key"
+        assert data["apiKeys"]["openaiApiKey"] == "****-key"
 
         app.dependency_overrides.clear()
 
