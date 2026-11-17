@@ -1,5 +1,5 @@
 // The agent list marks which copy of a pipeline each agent belongs to.
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithRouter } from '../test/testUtils';
 import SavedAgentsPage from './SavedAgentsPage';
@@ -19,6 +19,15 @@ vi.mock('../services/agentService', () => {
 });
 
 describe('SavedAgentsPage', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('nests nothing React warns about', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderWithRouter(<SavedAgentsPage />);
+    await screen.findByText('stable');
+    expect(errors.mock.calls.map((c) => String(c[0])).filter((m) => /cannot be a descendant|cannot contain/.test(m))).toEqual([]);
+  });
+
   it('marks the stable copy and labelled copies, and nothing on other agents', async () => {
     renderWithRouter(<SavedAgentsPage />);
     expect(await screen.findByText('stable')).toBeInTheDocument();

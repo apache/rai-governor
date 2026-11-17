@@ -163,7 +163,7 @@ const SavedAgentsPage = () => {
                     onClick={() => navigate(`/agent/${agent._id}`)}
                   >
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      <Typography component="div" variant="body2" sx={{ fontWeight: 500 }}>
                         {agent.baseName || agent.name}
                         {agent.pipeline && !agent.pipelineLabel && (
                           <Tooltip title={`${agent.pipeline}, stable copy · ${sourceText(agent.pipelineSource)}`} arrow>
