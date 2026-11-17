@@ -249,7 +249,7 @@ async def login_callback(
         return HTMLResponse(content=html, status_code=403)
 
     assert isinstance(decision, LoginAllow)
-    session = await session_svc.create_from_login(
+    session, sid = await session_svc.create_from_login(
         user_info=user_info,
         provider_memberships=memberships,
         is_site_admin=decision.site_admin,
@@ -266,7 +266,7 @@ async def login_callback(
     resp = RedirectResponse(url=redirect_url, status_code=302)
     resp.set_cookie(
         key=SessionService.cookie_name(),
-        value=session.id,
+        value=sid,
         max_age=int((session.expires_at - session.created_at).total_seconds()),
         httponly=True,
         samesite="lax",

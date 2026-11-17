@@ -14,6 +14,7 @@ from app_factory import create_app
 from config import settings
 from dependencies import get_db
 from models.session import Session
+from services.session_service import session_doc_id
 from routes import get_author_user, get_current_user
 from services.database_service.memory import MemoryDBService
 from time_utils import naive_utc_now
@@ -76,9 +77,9 @@ async def test_listing_deployments_reads_the_agents_once(db):
 
 async def test_session_lookups_overlap(db, monkeypatch):
     for i in range(4):
-        s = Session(id=f"s{i}", user_uid=f"asf:u{i}", provider_type="asf", display_name="u", email=None,
+        s = Session(id=session_doc_id(f"s{i}"), user_uid=f"asf:u{i}", provider_type="asf", display_name="u", email=None,
                     workspaces=[], is_site_admin=False, expires_at=naive_utc_now() + timedelta(hours=1))
-        MemoryDBService.save(db, "user_sessions", f"s{i}", s.model_dump(by_alias=True, mode="json"))
+        MemoryDBService.save(db, "user_sessions", session_doc_id(f"s{i}"), s.model_dump(by_alias=True, mode="json"))
     app = create_app()
     from routes_auth import router as auth_router
     app.include_router(auth_router)

@@ -12,6 +12,7 @@ from app_factory import create_app
 from config import settings
 from dependencies import get_db
 from models.session import Session
+from services.session_service import session_doc_id
 from services.database_service.memory import MemoryDBService
 from services.memory import access
 from services.memory.agent_proxy import AgentMemory
@@ -20,12 +21,12 @@ from time_utils import naive_utc_now
 
 def _session(db, sid, uid, site_admin, projects=()):
     s = Session(
-        id=sid, user_uid=uid, provider_type="asf", display_name=uid, email=None,
+        id=session_doc_id(sid), user_uid=uid, provider_type="asf", display_name=uid, email=None,
         workspaces=[{"workspaceId": f"project:{p}", "role": r, "displayName": p, "source": "ldap_committer"}
                     for p, r in projects],
         is_site_admin=site_admin, expires_at=naive_utc_now() + timedelta(hours=1),
     )
-    db.save("user_sessions", sid, s.model_dump(by_alias=True, mode="json"))
+    db.save("user_sessions", session_doc_id(sid), s.model_dump(by_alias=True, mode="json"))
 
 
 @pytest.fixture

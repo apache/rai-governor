@@ -121,13 +121,14 @@ def test_a_refused_login_is_recorded(client, events):
 from datetime import timedelta  # noqa: E402
 
 from auth.base import Membership, MembershipRefresh  # noqa: E402
+from services.session_service import session_doc_id  # noqa: E402
 from time_utils import naive_utc_now  # noqa: E402
 
 
 def _age_session(client, sid, minutes=60):
-    doc = client.db.get("user_sessions", sid)
+    doc = client.db.get("user_sessions", session_doc_id(sid))
     doc["lastRefreshAt"] = (naive_utc_now() - timedelta(minutes=minutes)).isoformat()
-    client.db.save("user_sessions", sid, doc)
+    client.db.save("user_sessions", session_doc_id(sid), doc)
 
 
 def _me(client, sid):
@@ -171,7 +172,7 @@ def test_a_failed_lookup_keeps_the_memberships(client, session, monkeypatch):
     _provider_returns(monkeypatch, None)
     _age_session(client, session)
     assert "project:demo" in _workspaces(client, session)
-    doc = client.db.get("user_sessions", session)
+    doc = client.db.get("user_sessions", session_doc_id(session))
     assert naive_utc_now() - timedelta(minutes=1) < \
         __import__("datetime").datetime.fromisoformat(doc["lastRefreshAt"])  # next try is an interval later
 
@@ -189,3 +190,19 @@ def test_a_provider_that_cannot_refresh_leaves_the_session_alone(client, session
     provider = get_registry().get("dev_stub")
     # The base class's answer: no background lookup (GitHub, Google, Microsoft).
     assert __import__("asyncio").run(AuthProvider.refresh_memberships(provider, None)) is None
+
+
+# --- Sessions are stored under a hash of the cookie ------------------------
+
+def test_the_cookie_value_is_not_stored_and_the_stored_id_is_not_a_cookie(client, session):
+    stored = client.db.dbs["user_sessions"]
+    assert session not in stored and session not in repr(stored)
+    assert list(stored) == [session_doc_id(session)]
+    assert _me(client, session).status_code == 200
+    # What someone reading the database sees doesn't log them in.
+    assert _me(client, session_doc_id(session)).status_code == 401
+
+
+def test_logout_deletes_the_stored_session(client, session):
+    assert client.post("/auth/logout", cookies={"gofannon_sid": session}).status_code == 204
+    assert client.db.dbs["user_sessions"] == {}

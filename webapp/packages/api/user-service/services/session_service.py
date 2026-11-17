@@ -10,8 +10,9 @@ document carries:
   - workspace memberships (refreshed every ~15 minutes)
   - is_site_admin flag (recomputed from allowlist on every refresh)
 
-Sessions live in the ``user_sessions`` collection. The cookie value is
-the CouchDB _id — no extra lookup layer. Sessions are never revoked
+Sessions live in the ``user_sessions`` collection under the SHA-256 of
+the cookie value (``session_doc_id``), never the value itself: whoever can
+read the collection can't use what they read as a cookie. Sessions are never revoked
 server-side at login time of another browser; concurrent sessions are
 allowed.
 
@@ -20,6 +21,7 @@ access, and expired sessions are returned as "not authenticated" even
 if the cookie hasn't been cleared on the client.
 """
 import asyncio
+import hashlib
 import logging
 import secrets
 from datetime import timedelta
@@ -68,14 +70,17 @@ class SessionService:
         user_info: UserInfo,
         provider_memberships: List[Membership],
         is_site_admin: bool,
-    ) -> Session:
+    ) -> Tuple[Session, str]:
         """Create and persist a new session after a successful login.
+        Returns the session and the value for the cookie, which is not
+        stored anywhere.
 
         Auto-prepends the personal workspace to the provider's
         memberships. The caller should already have run
         ``AuthProvider.evaluate_login`` and only invoke this on allow.
         """
         sid = _new_session_id()
+        doc_id = session_doc_id(sid)
         now = naive_utc_now()
         expires = now + timedelta(hours=self._ttl_hours)
 
@@ -84,7 +89,7 @@ class SessionService:
         )
 
         session = Session(
-            id=sid,
+            id=doc_id,
             user_uid=user_info.uid,
             provider_type=user_info.provider_type,
             display_name=user_info.display_name,
@@ -98,10 +103,10 @@ class SessionService:
         )
         self.db.save(
             _SESSIONS_COLLECTION,
-            sid,
+            doc_id,
             session.model_dump(by_alias=True, mode="json"),
         )
-        return session
+        return session, sid
 
     async def get_by_id(self, sid: Optional[str]) -> Optional[Session]:
         """Look up a session by cookie value. Returns None for missing,
@@ -118,8 +123,9 @@ class SessionService:
     def get_by_id_sync(self, sid: Optional[str]) -> Optional[Session]:
         if not sid:
             return None
+        doc_id = session_doc_id(sid)
         try:
-            doc = self.db.get(_SESSIONS_COLLECTION, sid)
+            doc = self.db.get(_SESSIONS_COLLECTION, doc_id)
         except HTTPException as e:
             if e.status_code == 404:
                 return None
@@ -130,7 +136,7 @@ class SessionService:
         except Exception:
             # Corrupt doc — treat as missing and evict.
             try:
-                self.db.delete(_SESSIONS_COLLECTION, sid)
+                self.db.delete(_SESSIONS_COLLECTION, doc_id)
             except Exception:
                 pass
             return None
@@ -138,7 +144,7 @@ class SessionService:
         if session.expires_at <= naive_utc_now():
             # Best-effort eviction; ignore errors.
             try:
-                self.db.delete(_SESSIONS_COLLECTION, sid)
+                self.db.delete(_SESSIONS_COLLECTION, doc_id)
             except Exception:
                 pass
             return None
@@ -156,11 +162,14 @@ class SessionService:
         return session
 
     async def delete(self, sid: Optional[str]) -> None:
-        """Log out / delete a session. Safe on missing sessions."""
+        """Log out / delete a session, by its cookie value. Safe on missing sessions."""
         if not sid:
             return
+        await self._delete_doc(session_doc_id(sid))
+
+    async def _delete_doc(self, doc_id: str) -> None:
         try:
-            self.db.delete(_SESSIONS_COLLECTION, sid)
+            self.db.delete(_SESSIONS_COLLECTION, doc_id)
         except HTTPException as e:
             if e.status_code == 404:
                 return
@@ -247,7 +256,7 @@ class SessionService:
                 refreshed = await provider.refresh_memberships(user_info)
             if refreshed is not None and refreshed.banned:
                 logger.warning("session for %s ended: banned since login", session.user_uid)
-                await self.delete(session.id)
+                await self._delete_doc(session.id)
                 return None
             now = naive_utc_now()
             if refreshed is not None:
@@ -275,6 +284,11 @@ class SessionService:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def session_doc_id(sid: str) -> str:
+    """Where the session for cookie value ``sid`` is stored."""
+    return hashlib.sha256(sid.encode("utf-8")).hexdigest()
 
 
 def _new_session_id() -> str:
