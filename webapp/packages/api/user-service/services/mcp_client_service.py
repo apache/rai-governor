@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 from fastmcp import Client
 from fastmcp.tools.tool import Tool
 from fastmcp.client.auth import BearerAuth
+
+from services.mcp_transport import REFUSAL as MCP_TLS_REFUSAL, token_over_plain_http
 from httpx import Auth, HTTPStatusError
 from fastapi import HTTPException
 
@@ -37,6 +39,9 @@ class McpClientService:
 
         if auth_token and len(auth_token) > 4096:
             raise HTTPException(status_code=400, detail="Authentication token is too long (max 4096 characters)")
+
+        if token_over_plain_http(remote_url, auth_token):
+            raise HTTPException(status_code=400, detail=MCP_TLS_REFUSAL)
 
         auth: Optional[Auth] = BearerAuth(token=auth_token) if auth_token else None
         mcp_client = Client(remote_url, auth=auth)

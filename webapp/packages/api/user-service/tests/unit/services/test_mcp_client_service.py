@@ -158,3 +158,33 @@ def test_get_mcp_client_service():
 
     assert service1 is service2  # Should return the same instance
     assert isinstance(service1, McpClientService)
+
+
+@pytest.mark.asyncio
+async def test_a_token_is_not_sent_over_plain_http(mcp_service):
+    with patch("services.mcp_client_service.Client") as client:
+        with pytest.raises(HTTPException) as e:
+            await mcp_service.list_tools_for_server("http://mcp.example.org/mcp", auth_token="secret")
+    assert e.value.status_code == 400
+    assert "https" in e.value.detail
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize("url,token,refused", [
+    ("http://mcp.example.org/mcp", "t", True),
+    ("HTTP://mcp.example.org/mcp", "t", True),
+    ("https://mcp.example.org/mcp", "t", False),
+    ("http://mcp.example.org/mcp", None, False),
+    ("http://localhost:8000/mcp", "t", False),
+    ("http://127.0.0.1:8000/mcp", "t", False),
+])
+def test_token_over_plain_http(url, token, refused):
+    from services.mcp_transport import token_over_plain_http
+    assert token_over_plain_http(url, token) is refused
+
+
+def test_the_agent_side_client_refuses_too():
+    from agent_factory.remote_mcp_client import RemoteMCPClient
+    with pytest.raises(ValueError, match="https"):
+        RemoteMCPClient("http://mcp.example.org/mcp", auth_token="secret")
+    RemoteMCPClient("https://mcp.example.org/mcp", auth_token="secret")

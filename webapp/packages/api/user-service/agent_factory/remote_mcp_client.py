@@ -4,6 +4,8 @@ from fastmcp import Client
 from fastmcp.tools.tool import Tool
 from fastmcp.client.auth import BearerAuth
 
+from services.mcp_transport import REFUSAL as MCP_TLS_REFUSAL, token_over_plain_http
+
 class RemoteMCPClient:
     """
     A Colab/Jupyter-friendly client for a remote Model Context Protocol (MCP) server.
@@ -15,6 +17,8 @@ class RemoteMCPClient:
         """
         Initializes the client.
         """
+        if token_over_plain_http(remote_url, auth_token):
+            raise ValueError(MCP_TLS_REFUSAL)
         self.remote_url = remote_url
         self.auth: Optional[BearerAuth] = BearerAuth(token=auth_token) if auth_token else None
         self.mcp_client = Client(self.remote_url, auth=self.auth)
