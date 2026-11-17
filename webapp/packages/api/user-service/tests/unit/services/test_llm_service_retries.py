@@ -701,3 +701,110 @@ def test_digits_that_merely_contain_529_do_not_open_the_retry_budget(label, err)
     err_str = err.lower()
     assert not llm_service._is_overloaded_error(err_str), f"{label} is not an overload"
     assert not llm_service._is_transient_5xx_error(err_str), f"{label} is not transient"
+
+
+# --- llmao gateway with no route for a model it serves ----------------------
+#
+# Run f6c9b9a0, 2026-11-17 03:19 UTC: two of 757 llmao/gemma4-26b calls got
+# 400 "Invalid model name passed in model=gemma4-26b" while the gateway had
+# no route for the model for a moment. They failed on first contact, and
+# bundle 14.2.2 lost its file selection (72 files, 8 heavy batches).
+
+_UNROUTED = ("litellm.BadRequestError: OpenAIException - /chat/completions: Invalid model "
+             "name passed in model=gemma4-26b. Call /v1/models to view available models "
+             "for your key.")
+
+
+def _make_bad_request(message=_UNROUTED, provider="openai"):
+    return litellm.BadRequestError(message=message, model="gemma4-26b", llm_provider=provider)
+
+
+def _unrouted(exc, provider, api_base=None):
+    return llm_service._is_unrouted_model_error(exc, str(exc).lower(), provider, api_base)
+
+
+def test_an_unrouted_model_on_llmao_is_temporary():
+    assert _unrouted(_make_bad_request(), "llmao")
+    # The provider name may differ; llm.apache.org as the api_base is enough.
+    assert _unrouted(_make_bad_request(), "openai", "https://llm.apache.org/v1")
+
+
+def test_the_same_words_from_another_provider_are_a_typo():
+    assert not _unrouted(_make_bad_request(), "openai")
+    assert not _unrouted(_make_bad_request(), "bedrock", "https://bedrock-runtime.us-east-1.amazonaws.com")
+
+
+def test_any_other_bad_request_is_not_unrouted():
+    assert not _unrouted(_make_bad_request("Invalid parameter: temperature"), "llmao")
+
+
+def test_a_context_window_error_is_not_unrouted():
+    exc = litellm.ContextWindowExceededError(message=_UNROUTED, model="gemma4-26b", llm_provider="openai")
+    assert not _unrouted(exc, "llmao")
+
+
+def _llmao_call(monkeypatch, outcomes):
+    """call_llm against provider llmao, with its gateway at llm.apache.org."""
+    monkeypatch.setenv("LLMAO_API_BASE", "https://llm.apache.org/v1")
+    monkeypatch.setenv("LLMAO_API_KEY", "test-key")
+    acompletion = _scripted_acompletion(*outcomes)
+    sleeps = []
+
+    async def fake_sleep(d):
+        sleeps.append(d)
+
+    monkeypatch.setattr(llm_service.litellm, "acompletion", acompletion)
+    monkeypatch.setattr(llm_service.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(llm_service, "get_observability_service", lambda: Mock())
+    return acompletion, sleeps
+
+
+async def _call_gemma():
+    return await llm_service.call_llm(
+        provider="llmao", model="gemma4-26b", messages=[{"role": "user", "content": "hi"}],
+        parameters={}, user_service=Mock(), user_id="u")
+
+
+@pytest.mark.asyncio
+async def test_an_unrouted_model_is_retried_then_succeeds(monkeypatch):
+    acompletion, sleeps = _llmao_call(monkeypatch, [
+        _make_bad_request(), _make_bad_request(), _DummyResponse("routed again", total_cost=0.0)])
+    content, _ = await _call_gemma()
+    assert content == "routed again"
+    assert acompletion.state["n"] == 3
+    assert len(sleeps) == 2
+    assert 15 <= sleeps[0] < 19 and 30 <= sleeps[1] < 34, sleeps
+
+
+@pytest.mark.asyncio
+async def test_an_unrouted_model_that_stays_unrouted_fails_with_the_gateways_error(monkeypatch):
+    monkeypatch.setattr(llm_service, "MAX_UNROUTED_MODEL_RETRIES", 4)
+    final = _make_bad_request()
+    acompletion, sleeps = _llmao_call(monkeypatch, [_make_bad_request() for _ in range(4)] + [final])
+    with pytest.raises(litellm.BadRequestError) as info:
+        await _call_gemma()
+    assert info.value is final
+    assert acompletion.state["n"] == llm_service.MAX_UNROUTED_MODEL_RETRIES + 1
+    assert len(sleeps) == 4
+
+
+@pytest.mark.asyncio
+async def test_unrouted_retries_have_their_own_budget(monkeypatch):
+    """A 502 spends the overload budget, not this one."""
+    monkeypatch.setattr(llm_service, "MAX_OVERLOADED_RETRIES", 1)
+    acompletion, sleeps = _llmao_call(monkeypatch, [
+        _make_bad_gateway_error(), _make_bad_request(), _DummyResponse("ok", total_cost=0.0)])
+    content, _ = await _call_gemma()
+    assert content == "ok" and len(sleeps) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_same_error_from_openai_fails_at_once(monkeypatch):
+    acompletion = _scripted_acompletion(_make_bad_request())
+    monkeypatch.setattr(llm_service.litellm, "acompletion", acompletion)
+    monkeypatch.setattr(llm_service, "get_observability_service", lambda: Mock())
+    with pytest.raises(Exception):
+        await llm_service.call_llm(
+            provider="openai", model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+            parameters={}, user_service=Mock(), user_id="u")
+    assert acompletion.state["n"] == 1

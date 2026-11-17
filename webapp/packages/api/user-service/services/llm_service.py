@@ -168,6 +168,17 @@ MAX_OVERLOADED_RETRIES = int(os.getenv("LLM_OVERLOADED_RETRIES", "5"))
 # Cap on individual backoff sleep, regardless of attempt number.
 RATE_LIMIT_BACKOFF_CAP_SECONDS = int(os.getenv("LLM_RATE_LIMIT_BACKOFF_CAP", "60"))
 
+# llmao's gateway briefly answers "Invalid model name passed in model=..."
+# (400) for a model it serves, while it reloads its config or a health check
+# takes the route out: on run f6c9b9a0, 2 of 757 gemma4-26b calls in the
+# same minute. That is a 503 in all but name. Its own budget, with waits long
+# enough to cover a reload (about 15, 30, 60, 60s), and apart from the
+# overload budget, so a run of 502s can't use it up. After it, the original
+# error is raised, so a model that really doesn't exist still fails, with
+# the gateway's own message, after about three minutes.
+MAX_UNROUTED_MODEL_RETRIES = int(os.getenv("LLM_UNROUTED_MODEL_RETRIES", "4"))
+_LLMAO_HOST = "llm.apache.org"
+
 
 # --- Transient-failure classification ------------------------------------
 #
@@ -317,6 +328,23 @@ def _is_transient_exception(exc: BaseException) -> bool:
     if names & _TERMINAL_EXC_NAMES:
         return False
     return bool(names & _TRANSIENT_EXC_NAMES)
+
+
+def _is_unrouted_model_error(exc: BaseException, err_str: str, provider: str,
+                             api_base: Optional[str]) -> bool:
+    """llmao's gateway with no route for a model it serves (see
+    MAX_UNROUTED_MODEL_RETRIES). Only for llmao: from OpenAI or Bedrock the
+    same words mean a typo, which retrying won't fix. Never a
+    ContextWindowExceededError, which subclasses BadRequestError."""
+    try:
+        names = {cls.__name__ for cls in type(exc).__mro__}
+    except Exception:  # pragma: no cover - defensive
+        names = {type(exc).__name__}
+    if "BadRequestError" not in names or names & _TERMINAL_EXC_NAMES:
+        return False
+    if "invalid model name passed in model=" not in err_str:
+        return False
+    return provider == "llmao" or _LLMAO_HOST in (api_base or "")
 
 
 def _extract_response_cost(response_obj: Any) -> Optional[float]:
@@ -907,8 +935,10 @@ async def _completion_with_retries(req: _LLMRequest, make_attempt, context: str)
         + MAX_RATE_LIMIT_RETRIES
         + MAX_OVERLOADED_RETRIES
         + MAX_AUTH_REMINT_RETRIES
+        + MAX_UNROUTED_MODEL_RETRIES
     )
     timeout_attempts_used = 0
+    unrouted_attempts_used = 0
     rate_limit_attempts_used = 0
     overloaded_attempts_used = 0
     auth_remint_attempts_used = 0
@@ -1062,6 +1092,25 @@ async def _completion_with_retries(req: _LLMRequest, make_attempt, context: str)
                 )
                 await asyncio.sleep(backoff)
                 continue
+            if _is_unrouted_model_error(e, _err_str, provider, kwargs.get("api_base")):
+                if unrouted_attempts_used < MAX_UNROUTED_MODEL_RETRIES:
+                    last_exception = e
+                    backoff = min(
+                        RATE_LIMIT_BACKOFF_CAP_SECONDS,
+                        15 * (2 ** unrouted_attempts_used),
+                    ) + random.uniform(0, 3)
+                    unrouted_attempts_used += 1
+                    print(
+                        f"  unrouted model (gateway has no route for {model}) on attempt "
+                        f"{attempt + 1} for {model_string}; sleeping {backoff:.1f}s "
+                        f"(retry {unrouted_attempts_used}/{MAX_UNROUTED_MODEL_RETRIES})",
+                        flush=True,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                # Budget spent: the model really isn't there. The gateway's
+                # own error, unchanged.
+                raise
             observability = get_observability_service()
 
             # Check for authentication errors and provide user-friendly message
