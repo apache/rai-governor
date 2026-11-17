@@ -46,6 +46,8 @@ Open the entry agent and click **Export pipeline**. You get `<pipeline>.zip` wit
 
 **Preview** shows what each agent would become (create, update or unchanged, and what changed) and any problem that would stop the import, such as a call to an agent that doesn't exist. **Import** writes it.
 
+**Deploy every agent** is ticked by default: the import also deploys each agent it wrote, at `/rest/<friendly name>-<label>`, so the pipeline can be run, published as a workload, or called from outside right away. An agent whose deployment name is already taken by another agent is listed after the import as not deployed; the import itself still stands. Untick it to import without deploying.
+
 ## Copies and labels
 
 Every import lands in a copy of the pipeline under a **label**: the short commit hash for GitHub, a UTC timestamp for a folder, or one you type. Agents in the copy are stored as `<name>@<label>`, for example `asvs_audit@3194087`, and shown with an `@label` chip.

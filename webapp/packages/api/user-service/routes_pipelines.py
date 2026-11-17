@@ -1,12 +1,16 @@
 """Pipeline import and export (ISSUE-011). See services/pipeline_io.py.
 
-  POST /pipelines/import/github   {repo, ref, path, token?, label?, dryRun}
-  POST /pipelines/import/upload   multipart: files (a picked folder), label?, dryRun
+  POST /pipelines/import/github   {repo, ref, path, token?, label?, dryRun, deploy}
+  POST /pipelines/import/upload   multipart: files (a picked folder), label?, dryRun, deploy
   GET  /agents/{agent_id}/export  zip of the agent and every agent it calls
 
 Imports run as a dry run first: the response is the plan (create, update or
 unchanged per agent, with what changed) and any problem that would stop it.
 A GitHub token is used for that request only and never stored.
+
+An import also deploys every agent it wrote (deploy, default true), each at
+/rest/{its friendly name}, which carries the label. A deployment that can't
+be made is reported in deployProblems; the import itself still stands.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from dependencies import get_db, get_logger
+from dependencies import deploy_agent, get_db, get_logger
 from routes import get_author_user
 from services import pipeline_io as pio
 from services.database_service import DatabaseService
@@ -34,12 +38,28 @@ class GithubImport(BaseModel):
     token: Optional[str] = None
     label: Optional[str] = None
     dry_run: bool = Field(True, alias="dryRun")
+    deploy: bool = True
 
     model_config = {"populate_by_name": True}
 
 
 def _all_agents(db: DatabaseService) -> List[dict]:
     return db.list_all("agents")
+
+
+async def _deploy_all(result, db):
+    """Deploy every agent the import wrote. One that can't be deployed (its
+    friendly name taken by another agent, say) is reported, not raised."""
+    deployed, problems = [], []
+    for name, w in result["written"].items():
+        try:
+            out = await deploy_agent(w["id"], db)
+            deployed.append({"agent": name, "endpoint": out.get("endpoint")})
+        except HTTPException as e:
+            problems.append({"agent": name, "reason": str(e.detail)})
+    result["deployed"] = deployed
+    result["deployProblems"] = problems
+    return result
 
 
 def _run_import(files, label, source, dry_run, db, user, logger):
@@ -83,6 +103,8 @@ async def import_from_github(
               "path": body.path, "commit": sha}
     label = body.label or pio.default_label(commit_sha=sha)
     result = _run_import(files, label, source, body.dry_run, db, user, logger)
+    if not body.dry_run and body.deploy:
+        result = await _deploy_all(result, db)
     result["source"] = source
     return result
 
@@ -92,6 +114,7 @@ async def import_from_upload(
     files: List[UploadFile] = File(...),
     label: Optional[str] = Form(None),
     dry_run: bool = Form(True, alias="dryRun"),
+    deploy: bool = Form(True),
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger),
@@ -106,6 +129,8 @@ async def import_from_upload(
     label = label or pio.default_label()
     source = {"kind": "upload", "files": len(file_map)}
     result = _run_import(file_map, label, source, dry_run, db, user, logger)
+    if not dry_run and deploy:
+        result = await _deploy_all(result, db)
     result["source"] = source
     return result
 

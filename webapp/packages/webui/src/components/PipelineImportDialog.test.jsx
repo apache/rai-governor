@@ -39,8 +39,44 @@ describe('PipelineImportDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     await waitFor(() => expect(onImported).toHaveBeenCalledWith({ entryId: 'e1' }));
     expect(pipelineService.importFromGithub.mock.calls[1][0]).toMatchObject({
-      repo: 'apache/tooling-agents', path: 'ASVS', dryRun: false, label: '3194087',
+      repo: 'apache/tooling-agents', path: 'ASVS', dryRun: false, label: '3194087', deploy: true,
     });
+  });
+
+  it('deploys every agent unless unticked', async () => {
+    pipelineService.importFromGithub.mockResolvedValueOnce(plan());
+    pipelineService.importFromGithub.mockResolvedValueOnce({ entryId: 'e1', deployed: [], deployProblems: [] });
+    render(<PipelineImportDialog open onClose={() => {}} onImported={() => {}} />);
+    const box = screen.getByRole('checkbox', { name: /Deploy every agent/ });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    fireEvent.change(screen.getByLabelText(/Repository/), { target: { value: 'a/b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await screen.findByText('code, env');
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(pipelineService.importFromGithub).toHaveBeenCalledTimes(2));
+    expect(pipelineService.importFromGithub.mock.calls[1][0].deploy).toBe(false);
+  });
+
+  it('says which agents were not deployed before closing', async () => {
+    pipelineService.importFromGithub.mockResolvedValueOnce(plan());
+    const result = {
+      entryId: 'e1', written: { asvs_orchestrate: { id: 'e1' }, asvs_audit: { id: 'a1' } },
+      deployed: [{ agent: 'asvs_orchestrate', endpoint: '/rest/asvs_orchestrate-x' }],
+      deployProblems: [{ agent: 'asvs_audit', reason: "A deployment with the name 'asvs_audit-x' already exists for a different agent." }],
+    };
+    pipelineService.importFromGithub.mockResolvedValueOnce(result);
+    const onImported = vi.fn();
+    render(<PipelineImportDialog open onClose={() => {}} onImported={onImported} />);
+    fireEvent.change(screen.getByLabelText(/Repository/), { target: { value: 'a/b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await screen.findByText('code, env');
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(await screen.findByText(/deployed 1 of 2 agents/)).toBeInTheDocument();
+    expect(screen.getByText(/already exists for a different agent/)).toBeInTheDocument();
+    expect(onImported).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onImported).toHaveBeenCalledWith(result);
   });
 
   it('imports a folder into the copy it previewed, not a new timestamp', async () => {

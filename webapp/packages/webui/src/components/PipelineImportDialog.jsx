@@ -3,18 +3,21 @@
 // Two steps: Preview (a dry run that shows what each agent would become),
 // then Import. Every import lands in a labelled copy: the commit hash for
 // GitHub, a timestamp for a folder, or a label you type. The same label
-// again updates that copy; a new one makes another alongside.
+// again updates that copy; a new one makes another alongside. Every agent
+// imported is also deployed, at /rest/{its friendly name}, unless unticked.
 import React, { useRef, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   Stack,
   Tab,
   Table,
@@ -78,6 +81,9 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
   const [files, setFiles] = useState(null);
   const [label, setLabel] = useState('');
   const [plan, setPlan] = useState(null);
+  const [deploy, setDeploy] = useState(true);
+  // After an import whose deployments didn't all go through: what failed.
+  const [imported, setImported] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const folderInput = useRef(null);
@@ -85,6 +91,7 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
   const reset = () => {
     setPlan(null);
     setError(null);
+    setImported(null);
   };
 
   const close = () => {
@@ -102,10 +109,13 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
       // in a different copy from the one previewed.
       const useLabel = label || (dryRun ? undefined : plan?.label);
       const result = tab === 'github'
-        ? await pipelineService.importFromGithub({ ...github, label: useLabel, dryRun })
-        : await pipelineService.importFromFolder({ files, label: useLabel, dryRun });
+        ? await pipelineService.importFromGithub({ ...github, label: useLabel, dryRun, deploy })
+        : await pipelineService.importFromFolder({ files, label: useLabel, dryRun, deploy });
       if (dryRun) {
         setPlan(result);
+      } else if (result.deployProblems?.length) {
+        // Imported, but some agents weren't deployed: say which before closing.
+        setImported(result);
       } else {
         onImported(result);
         close();
@@ -179,7 +189,19 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
           value={label} onChange={(e) => { setLabel(e.target.value); reset(); }}
         />
 
+        <FormControlLabel
+          sx={{ mt: 1, display: 'flex' }}
+          control={<Checkbox checked={deploy} onChange={(e) => setDeploy(e.target.checked)} />}
+          label={<Typography variant="body2">Deploy every agent (each at /rest/ its name and label)</Typography>}
+        />
+
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        {imported && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            Imported, and deployed {imported.deployed.length} of {Object.keys(imported.written).length} agents. Not deployed:
+            {imported.deployProblems.map((p) => <div key={p.agent}><code>{p.agent}</code>: {p.reason}</div>)}
+          </Alert>
+        )}
 
         {plan && (
           <Box sx={{ mt: 2 }}>
@@ -197,6 +219,9 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
         )}
       </DialogContent>
       <DialogActions>
+        {imported ? (
+          <Button variant="contained" onClick={() => { onImported(imported); close(); }}>Done</Button>
+        ) : (<>
         <Button onClick={close}>Cancel</Button>
         <Button onClick={() => send(true)} disabled={!canPreview || busy}>
           {busy && !plan ? <CircularProgress size={18} /> : 'Preview'}
@@ -208,6 +233,7 @@ export default function PipelineImportDialog({ open, onClose, onImported }) {
         >
           {busy && plan ? <CircularProgress size={18} color="inherit" /> : 'Import'}
         </Button>
+        </>)}
       </DialogActions>
     </Dialog>
   );

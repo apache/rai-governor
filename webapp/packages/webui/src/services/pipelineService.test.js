@@ -15,7 +15,7 @@ describe('pipelineService', () => {
     await pipelineService.importFromGithub({ repo: 'apache/tooling-agents', ref: '', path: 'ASVS', dryRun: true });
     const [url, init] = globalThis.fetch.mock.calls[0];
     expect(url).toMatch(/\/pipelines\/import\/github$/);
-    expect(JSON.parse(init.body)).toEqual({ repo: 'apache/tooling-agents', ref: 'main', path: 'ASVS', dryRun: true });
+    expect(JSON.parse(init.body)).toEqual({ repo: 'apache/tooling-agents', ref: 'main', path: 'ASVS', dryRun: true, deploy: true });
   });
 
   it('uploads each file under its path inside the picked folder', async () => {
@@ -29,6 +29,13 @@ describe('pipelineService', () => {
     expect(form.getAll('files').map((f) => f.name)).toEqual(['ASVS/pipeline.yaml', 'ASVS/agents/a.py']);
     expect(form.get('label')).toBe('v1');
     expect(form.get('dryRun')).toBe('false');
+    expect(form.get('deploy')).toBe('true');
+  });
+
+  it('sends deploy false when asked not to deploy', async () => {
+    globalThis.fetch.mockResolvedValue(ok({ agents: [] }));
+    await pipelineService.importFromGithub({ repo: 'a/b', dryRun: false, deploy: false });
+    expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body).deploy).toBe(false);
   });
 
   it('surfaces the API reason on failure', async () => {
