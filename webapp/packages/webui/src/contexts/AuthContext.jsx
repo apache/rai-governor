@@ -33,23 +33,18 @@ export const AuthProvider = ({ children }) => {
       setUser(loggedInUser);
       observabilityService.log({ 
         eventType: 'user-action', 
-        message: 'User logged in successfully.', 
-        metadata: { email: loggedInUser?.email } 
+        message: 'User logged in successfully.'
       });
       return loggedInUser;
     } catch (e) {
       console.error("Login failed:", e);
       setError(e.message || 'Login failed. Please check your credentials.');
       
-      // Attempt to extract email from args safely
-      const loginArgs = args[0] || {};
-      const emailAttempt = loginArgs.email || (typeof loginArgs === 'string' ? loginArgs : 'unknown');
-
       observabilityService.log({ 
         eventType: 'user-action', 
         message: 'User login failed.', 
         level: 'WARN', 
-        metadata: { email: emailAttempt, error: e.message } 
+        metadata: { error: e.message }
       });
       setUser(null);
     } finally {
