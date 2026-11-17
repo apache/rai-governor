@@ -348,8 +348,8 @@ class Trace:
             "agent_name": self._current_agent(),
             "depth": self._depth,
             "exception_type": type(exception).__name__,
-            "message": _truncate(str(exception)),
-            "traceback": _truncate(tb_str),
+            "message": _truncate(redact(str(exception))),
+            "traceback": _truncate(redact(tb_str)),
             "source": "system",
         })
 
