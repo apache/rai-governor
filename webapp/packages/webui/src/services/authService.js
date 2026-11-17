@@ -353,8 +353,13 @@ switch (appConfig.auth.provider) {
     authService = cognitoAuth;
     break;
   case 'mock':
-  default:
     authService = mockAuth;
+    break;
+  default:
+    throw new Error(
+      `[authService] Unrecognized auth provider: ${JSON.stringify(appConfig.auth.provider)}. ` +
+      `Expected one of: 'session', 'firebase', 'cognito', 'mock'.`
+    );
 }
 
 export default authService;
