@@ -115,10 +115,22 @@ export default function RunPage() {
   const [stopMsg, setStopMsg] = useState(null);
   const { events, status, final, reconnect } = useRun(runId);
 
+  // A different run: clear the page and load it.
   useEffect(() => {
     let live = true;
     setRun(null);
+    setError(null);
     workloadService.getRun(runId).then((r) => { if (live) setRun(r); }, (e) => { if (live) setError(e.status === 404 ? 'not-found' : e.message); });
+    return () => { live = false; };
+  }, [runId]);
+
+  // The run finished (or the stream replayed a finished run's end): load it
+  // again for its final status, keeping the page as it is meanwhile. Clearing
+  // it here made every run page show, go blank, and show again.
+  useEffect(() => {
+    if (!final) return undefined;
+    let live = true;
+    workloadService.getRun(runId).then((r) => { if (live) setRun(r); }, () => {});
     return () => { live = false; };
   }, [runId, final]);
 
