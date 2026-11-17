@@ -127,8 +127,15 @@ async def import_from_upload(
     user: dict = Depends(get_author_user),
     logger: ObservabilityService = Depends(get_logger),
 ):
+    if len(files) > pio.MAX_FILES:
+        raise HTTPException(status_code=400,
+                            detail=f"too many files ({len(files)}); pick the pipeline's own folder")
     entries = []
     for f in files:
+        # A file over the size limit is skipped, as files_from_upload skips
+        # it, but without reading it into memory first.
+        if f.size is not None and f.size > pio.MAX_FILE_BYTES:
+            continue
         entries.append((f.filename or "", await f.read()))
     try:
         file_map = pio.files_from_upload(entries)
