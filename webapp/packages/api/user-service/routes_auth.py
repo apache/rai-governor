@@ -58,6 +58,26 @@ def _default_redirect_uri(request: Request, provider_type: str) -> str:
     return f"{base}/auth/callback/{provider_type}"
 
 
+MAX_RETURN_TO = 2048
+
+
+def _safe_return_path(value: Optional[str]) -> Optional[str]:
+    """``value`` if it is a path on this site, else None.
+
+    A path starts with one "/" and is prefixed with FRONTEND_URL before
+    the redirect. "//host" and "/\\host" are refused because browsers read
+    them as another host; so are control characters and anything over
+    MAX_RETURN_TO characters, which would also overflow the cookie.
+    """
+    if not value or len(value) > MAX_RETURN_TO:
+        return None
+    if not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return None
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        return None
+    return value
+
+
 def _is_secure_cookie(request: Request) -> bool:
     """Secure flag is True only when the request is over HTTPS.
 
@@ -126,6 +146,8 @@ async def login_redirect(
         samesite="lax",
         secure=_is_secure_cookie(request),
     )
+    # Only a path on this site is kept; anything else lands on "/".
+    return_to = _safe_return_path(return_to)
     if return_to:
         resp.set_cookie(
             key="gofannon_return_to",
@@ -210,17 +232,13 @@ async def login_callback(
         is_site_admin=decision.site_admin,
     )
 
-    # Resolve return_to against FRONTEND_URL when relative. The cookie
-    # stores a frontend path (e.g. "/login"); without prefixing, the
-    # browser would resolve it against the API host (port 8000) and 404.
-    raw_target = return_to or "/"
-    if raw_target.startswith(("http://", "https://")):
-        redirect_url = raw_target
-    else:
-        frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-        if not raw_target.startswith("/"):
-            raw_target = "/" + raw_target
-        redirect_url = frontend_base + raw_target
+    # Resolve return_to against FRONTEND_URL. The cookie stores a frontend
+    # path (e.g. "/login"); without prefixing, the browser would resolve it
+    # against the API host (port 8000) and 404. It is checked again here,
+    # since the cookie can be set by hand.
+    raw_target = _safe_return_path(return_to) or "/"
+    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    redirect_url = frontend_base + raw_target
     resp = RedirectResponse(url=redirect_url, status_code=302)
     resp.set_cookie(
         key=SessionService.cookie_name(),
