@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from typing import Literal
 
@@ -64,14 +64,14 @@ def _writable(domain: str, user: dict) -> str:
 
 class WriteBody(BaseModel):
     type: EntryType = EntryType.FACT
-    body: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1, max_length=MAX_GUIDANCE_CHARS)
     summary: str = Field(..., min_length=1, max_length=300)
-    title: Optional[str] = None
-    source: List[str] = Field(default_factory=list)
+    title: Optional[str] = Field(None, max_length=200)
+    source: List[Annotated[str, Field(max_length=500)]] = Field(default_factory=list, max_length=50)
     confidence: Optional[Confidence] = None
     review_by: Optional[date] = None
     supersedes: Optional[str] = None
-    origin: Optional[str] = None
+    origin: Optional[str] = Field(None, max_length=500)
 
 
 class RecallBody(BaseModel):
