@@ -32,6 +32,12 @@ class McpClientService:
         if not remote_url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail=f"Invalid MCP server URL scheme: {remote_url}. Must be http:// or https://")
 
+        if len(remote_url) > 2048:
+            raise HTTPException(status_code=400, detail="MCP server URL is too long (max 2048 characters)")
+
+        if auth_token and len(auth_token) > 4096:
+            raise HTTPException(status_code=400, detail="Authentication token is too long (max 4096 characters)")
+
         auth: Optional[Auth] = BearerAuth(token=auth_token) if auth_token else None
         mcp_client = Client(remote_url, auth=auth)
 
