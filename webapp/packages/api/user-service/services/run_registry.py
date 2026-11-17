@@ -677,9 +677,12 @@ class RunRegistry:
                                   owning worker to pick up via polling
             'not_found'         - no record in CouchDB or local cache
             'forbidden'         - record exists but is for another user
+            'persist_failed'    - could not write stop_requested to CouchDB;
+                                  the stop was not recorded (caller should
+                                  return 503 and ask the user to retry)
 
-        The endpoint should treat anything other than 'not_found' /
-        'forbidden' as success (HTTP 202).
+        The endpoint should treat 'not_found' as 404, 'forbidden' as 403,
+        'persist_failed' as 503, and anything else as success (HTTP 202).
         """
         # Try local cache first (fast path).
         from auth.project_access import is_admin
@@ -697,18 +700,23 @@ class RunRegistry:
 
         db = self._get_db()
         doc = None
+        db_read_failed = False
         if db is not None:
             try:
                 doc = db.get(RUN_REGISTRY_DB, run_id)
-            except Exception:
-                doc = None
-        if doc is None and local is None:
+            except Exception as e:
+                if getattr(e, "status_code", None) == 404:
+                    doc = None
+                else:
+                    db_read_failed = True
+        if doc is None and local is None and not db_read_failed:
             return "not_found"
         if doc is not None and not allowed(doc.get("user_id"), doc.get("project")):
             return "forbidden"
 
         # Update CouchDB unconditionally so the polling task on the
         # owning worker sees the flag. Skip if we have no DB (tests).
+        persist_ok = True
         if db is not None and doc is not None:
             def flag(stored):
                 if stored is None:
@@ -716,10 +724,13 @@ class RunRegistry:
                 stored["stop_requested"] = True
                 return stored
             try:
-                self._update_run_doc(run_id, flag)
+                persist_ok = self._update_run_doc(run_id, flag)
             except Exception as e:
                 print(f"[run_registry] request_stop persist failed: {e}",
                       flush=True)
+                persist_ok = False
+        elif db_read_failed:
+            persist_ok = False
 
         # Local fast-path: if this worker owns the live cancel token,
         # flip it immediately so stop latency on the owning-worker
@@ -732,6 +743,8 @@ class RunRegistry:
                 local.stop_requested = True
             self._stop_flipped.add(run_id)
             return "flipped_local"
+        if not persist_ok:
+            return "persist_failed"
         return "persisted_remote"
 
     def poll_owned_stops(self) -> int:

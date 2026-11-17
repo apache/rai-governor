@@ -142,3 +142,31 @@ def test_a_stored_copy_of_a_running_run_is_read_again(setup):
     _other_writer(db, record.run_id, status="success")()
     assert reader.get(record.run_id).status == "success"
     assert not reader.is_live_here(reader.get(record.run_id))
+
+
+def _fail(status):
+    def boom():
+        raise HTTPException(status_code=status, detail="down")
+    return boom
+
+
+def test_a_stop_that_cannot_be_saved_is_reported_not_claimed(setup):
+    db, _, record = setup
+    other = rr.RunRegistry(db=db)  # another worker: no local record
+    db.between.append(_fail(500))
+    assert other.request_stop(record.run_id, "u") == "persist_failed"
+    assert not db.stored(record.run_id).get("stop_requested")
+
+
+def test_a_failed_read_is_not_reported_as_not_found(setup, monkeypatch):
+    db, _, record = setup
+    other = rr.RunRegistry(db=db)
+    monkeypatch.setattr(db, "get", lambda *a: _fail(500)())
+    assert other.request_stop(record.run_id, "u") == "persist_failed"
+
+
+def test_a_stop_from_another_worker_is_still_persisted(setup):
+    db, _, record = setup
+    other = rr.RunRegistry(db=db)
+    assert other.request_stop(record.run_id, "u") == "persisted_remote"
+    assert db.stored(record.run_id)["stop_requested"] is True

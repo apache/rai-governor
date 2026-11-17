@@ -1405,6 +1405,8 @@ def stop_run(
             raise HTTPException(status_code=403,
                                 detail="Only whoever started this run, or the project's PMC, can stop it")
         raise HTTPException(status_code=404, detail="Run not found")
+    if outcome == "persist_failed":
+        raise HTTPException(status_code=503, detail="The stop couldn't be recorded; try again")
     # outcome is one of 'flipped_local' or 'persisted_remote'. Both
     # are success cases. The status text gives clients a hint about
     # whether the stop will be immediate (local) or has a small
