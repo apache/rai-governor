@@ -66,3 +66,47 @@ def test_anything_else_is_not_kept_and_login_lands_on_the_home_page(client, bad)
 def test_a_return_to_cookie_set_by_hand_is_checked_again(client, cookie):
     _, done = login(client, cookies={"gofannon_return_to": cookie})
     assert done.headers["location"] == "https://governor.example.org/"
+
+
+class _Events:
+    def __init__(self):
+        self.logged = []
+
+    def log(self, **kw):
+        self.logged.append(kw)
+
+    def of(self, event_type):
+        return [e for e in self.logged if e["event_type"] == event_type]
+
+
+@pytest.fixture
+def events(monkeypatch):
+    import routes_auth
+    rec = _Events()
+    monkeypatch.setattr(routes_auth, "get_observability_service", lambda: rec)
+    return rec
+
+
+def test_login_and_logout_are_recorded_without_code_state_or_return_to(client, events):
+    start, done = login(client, "/secret-path")
+    state = start.cookies.get("gofannon_auth_state")
+    [ok] = events.of("auth_success")
+    assert ok["user_id"] == "dev_stub:alice"
+    assert ok["metadata"] == {"provider": "dev_stub"}
+    sid = done.cookies.get("gofannon_sid")
+    assert client.post("/auth/logout", cookies={"gofannon_sid": sid}).status_code == 204
+    [out] = events.of("auth_logout")
+    assert out["user_id"] == "dev_stub:alice"
+    text = repr(events.logged)
+    for secret in (state, "alice&", "/secret-path", sid):
+        assert secret not in text
+
+
+def test_a_refused_login_is_recorded(client, events):
+    start = client.get("/auth/login/dev_stub")
+    r = client.get("/auth/callback/dev_stub", params={"code": "alice", "state": "wrong"},
+                   cookies={"gofannon_auth_state": start.cookies.get("gofannon_auth_state")})
+    assert r.status_code == 400
+    [bad] = events.of("auth_failure")
+    assert bad["metadata"] == {"provider": "dev_stub", "reason": "state mismatch"}
+    assert bad["level"] == "WARNING"

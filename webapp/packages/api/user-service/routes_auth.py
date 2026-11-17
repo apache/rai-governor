@@ -32,6 +32,7 @@ from models.auth import (
 )
 from models.session import SessionUser
 from services.database_service import DatabaseService
+from services.observability_service import get_observability_service
 from services.session_service import SessionService, get_session_service, user_from_session
 
 
@@ -56,6 +57,22 @@ def _default_redirect_uri(request: Request, provider_type: str) -> str:
     """
     base = str(request.base_url).rstrip("/")
     return f"{base}/auth/callback/{provider_type}"
+
+
+def _auth_event(event_type: str, provider_type: str, *, level: str = "INFO",
+                user_id: Optional[str] = None, reason: Optional[str] = None) -> None:
+    """Record a login, a refused login or a logout. Never the code, the
+    state or return_to: only who, which provider and why."""
+    metadata = {"provider": provider_type}
+    if reason:
+        metadata["reason"] = reason
+    message = {"auth_success": "Login", "auth_failure": "Login refused",
+               "auth_logout": "Logout"}[event_type]
+    get_observability_service().log(
+        event_type=event_type, level=level, user_id=user_id,
+        message=f"{message} ({provider_type}{': ' + reason if reason else ''})",
+        metadata=metadata,
+    )
 
 
 MAX_RETURN_TO = 2048
@@ -184,6 +201,7 @@ async def login_callback(
     # The state cookie must be present — its existence proves this browser
     # started the flow from this app.
     if not expected_state:
+        _auth_event("auth_failure", provider_type, level="WARNING", reason="missing state cookie")
         raise HTTPException(
             status_code=400,
             detail="Missing state cookie; possible CSRF",
@@ -195,6 +213,7 @@ async def login_callback(
     # acceptable for ASF since the code itself is single-use and bound
     # server-side to the originating session.
     if state and not secrets.compare_digest(state, expected_state):
+        _auth_event("auth_failure", provider_type, level="WARNING", reason="state mismatch")
         raise HTTPException(
             status_code=400,
             detail="State mismatch; possible CSRF",
@@ -210,6 +229,8 @@ async def login_callback(
             "OAuth callback exchange failed for provider %s: %s",
             provider_type, e, exc_info=True,
         )
+        _auth_event("auth_failure", provider_type, level="ERROR",
+                    reason=f"provider exchange failed ({type(e).__name__})")
         raise HTTPException(
             status_code=502,
             detail="Authentication provider error. Please try again.",
@@ -220,6 +241,8 @@ async def login_callback(
     decision = await provider.evaluate_login(user_info, memberships, site_admins)
 
     if isinstance(decision, LoginDeny):
+        _auth_event("auth_failure", provider_type, level="WARNING",
+                    user_id=user_info.uid, reason=f"denied: {decision.reason}")
         # Render a minimal HTML error page. (A fancier login-denied
         # page comes with the B-2 frontend work.)
         html = _render_deny_page(decision.reason)
@@ -231,6 +254,7 @@ async def login_callback(
         provider_memberships=memberships,
         is_site_admin=decision.site_admin,
     )
+    _auth_event("auth_success", provider_type, user_id=user_info.uid)
 
     # Resolve return_to against FRONTEND_URL. The cookie stores a frontend
     # path (e.g. "/login"); without prefixing, the browser would resolve it
@@ -262,7 +286,10 @@ async def logout(
     session_svc: SessionService = Depends(_get_session_svc),
 ):
     """Delete the server-side session and clear the cookie."""
+    session = await session_svc.get_by_id(sid) if sid else None
     await session_svc.delete(sid)
+    if session:
+        _auth_event("auth_logout", session.provider_type, user_id=session.user_uid)
     resp = Response(status_code=204)
     resp.delete_cookie(SessionService.cookie_name(), path="/")
     resp.headers["Clear-Site-Data"] = '"cookies", "storage", "cache"'
