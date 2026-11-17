@@ -26,10 +26,21 @@ and bridges the result back via a Future on the parent loop.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from typing import Any, Awaitable, Callable
 
 from services.cancel_token import CancelToken, bind_token, AgentStopped
+
+# At most this many agent threads per process. Each has its own event loop
+# and its own connections; past the limit a run is refused at once rather
+# than queued, so nothing waits holding a thread.
+MAX_AGENT_THREADS = int(os.environ.get("AGENT_MAX_THREADS", "20"))
+_agent_threads = threading.BoundedSemaphore(MAX_AGENT_THREADS)
+
+
+class TooManyAgentThreads(RuntimeError):
+    pass
 
 
 async def execute_in_thread(
@@ -66,6 +77,10 @@ async def execute_in_thread(
     the calling task. Exceptions propagate naturally through the
     Future\'s ``set_exception``.
     """
+    slots = _agent_threads  # released by the thread: the same object
+    if not slots.acquire(blocking=False):
+        raise TooManyAgentThreads(
+            f"{MAX_AGENT_THREADS} agent runs are already going on this worker; try again shortly")
     parent_loop = asyncio.get_running_loop()
     result_future: asyncio.Future = parent_loop.create_future()
 
@@ -160,8 +175,15 @@ async def execute_in_thread(
                 thread_loop.close()
             except Exception:
                 pass
+            # The slot is the thread's, so it is freed when the thread
+            # ends, not when the caller stops waiting.
+            slots.release()
 
-    threading.Thread(target=thread_entry, daemon=True, name=thread_name).start()
+    try:
+        threading.Thread(target=thread_entry, daemon=True, name=thread_name).start()
+    except BaseException:
+        slots.release()
+        raise
     return await result_future
 
 

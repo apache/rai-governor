@@ -170,3 +170,48 @@ async def test_agent_stopped_escapes_except_exception():
     cancel.request_stop()
     with pytest.raises(AgentStopped):
         await agent_with_broad_except()
+
+
+@pytest.mark.asyncio
+async def test_runs_past_the_thread_limit_are_refused_and_slots_come_back(monkeypatch):
+    import threading
+    from services import agent_executor as ex
+    monkeypatch.setattr(ex, "MAX_AGENT_THREADS", 2)
+    monkeypatch.setattr(ex, "_agent_threads", threading.BoundedSemaphore(2))
+    release = threading.Event()
+
+    async def held():
+        release.wait(5)
+        return "done"
+
+    running = [asyncio.create_task(execute_in_thread(held, CancelToken())) for _ in range(2)]
+    await asyncio.sleep(0.1)
+    with pytest.raises(ex.TooManyAgentThreads):
+        await execute_in_thread(held, CancelToken())
+    release.set()
+    assert await asyncio.gather(*running) == ["done", "done"]
+    await asyncio.sleep(0.05)  # the threads free their slots as they end
+
+    async def quick():
+        return "ok"
+
+    assert await execute_in_thread(quick, CancelToken()) == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_slot_is_kept_until_the_thread_ends_even_if_the_caller_gives_up(monkeypatch):
+    import threading
+    from services import agent_executor as ex
+    monkeypatch.setattr(ex, "_agent_threads", threading.BoundedSemaphore(1))
+    release = threading.Event()
+
+    async def held():
+        release.wait(5)
+
+    waiter = asyncio.create_task(execute_in_thread(held, CancelToken()))
+    await asyncio.sleep(0.1)
+    waiter.cancel()
+    await asyncio.sleep(0.05)
+    with pytest.raises(ex.TooManyAgentThreads):
+        await execute_in_thread(held, CancelToken())
+    release.set()
