@@ -234,7 +234,11 @@ def create_app() -> FastAPI:
     except Exception as e:
         # Don't fail app startup over an auth config error; Phase B
         # just stays disabled and the legacy Firebase path keeps working.
-        print(f"Warning: auth registry init failed: {e}")
+        get_observability_service().log(
+            level="WARNING",
+            event_type="security_control_failure",
+            message=f"Auth registry init failed: {e}",
+        )
         registry = None
 
     from routes import router
