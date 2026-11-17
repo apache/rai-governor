@@ -29,7 +29,7 @@ class DynamoDBService(DatabaseService):
             return [DynamoDBService._convert_floats_to_decimal(item) for item in obj]
         return obj
 
-    def __init__(self, region_name: str = None, endpoint_url: str = None, aws_access_key_id: str = None, aws_secret_access_key: str = None):
+    def __init__(self, region_name: str = None, endpoint_url: str = None, aws_access_key_id: str = None, aws_secret_access_key: str = None, auto_create_table: bool = True):
         """
         Initialize DynamoDB service.
 
@@ -38,6 +38,9 @@ class DynamoDBService(DatabaseService):
             endpoint_url: Optional endpoint URL for local DynamoDB
             aws_access_key_id: Optional AWS access key ID
             aws_secret_access_key: Optional AWS secret access key
+            auto_create_table: If False, raise an error when a table is missing
+                instead of creating it. Set to False in production where tables
+                are provisioned via infrastructure-as-code.
         """
         try:
             # Create DynamoDB client
@@ -53,6 +56,7 @@ class DynamoDBService(DatabaseService):
 
             self.dynamodb = boto3.resource('dynamodb', **client_kwargs)
             self.client = boto3.client('dynamodb', **client_kwargs)
+            self._auto_create_table = auto_create_table
             print(f"Successfully connected to DynamoDB{' (local)' if endpoint_url else ''}.")
         except Exception as e:
             print(f"Failed to connect to DynamoDB: {e}")
@@ -67,6 +71,11 @@ class DynamoDBService(DatabaseService):
             return table
         except ClientError as e:
             if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                if not self._auto_create_table:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Table '{table_name}' does not exist and auto-creation is disabled. Provision the table via infrastructure-as-code.",
+                    )
                 print(f"Table '{table_name}' not found. Creating it.")
                 # Create table with simple schema: id as partition key
                 table = self.dynamodb.create_table(
