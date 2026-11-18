@@ -44,7 +44,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from fastapi import HTTPException
 
 from .entry import Entry, EntryError, EntryType, Status, TrustTier
-from .index import INDEX_DB
+from .index import INDEX_DB, MAX_SEEN_RUNS
 from .service import (
     REVIEW_INTERVAL_DAYS,
     REVIEWS_DB,
@@ -54,6 +54,7 @@ from .service import (
     Refused,
     ReviewAction,
     WriteRequest,
+    _CURRENT_RUN,
     _TIER_RANK,
 )
 
@@ -519,7 +520,14 @@ class Triage:
         if len(json.dumps(evidence, default=str)) > MAX_EVIDENCE_CHARS:
             raise ValueError(f"evidence is at most {MAX_EVIDENCE_CHARS} characters of JSON")
         entry = await self.s.get(entry_id)
-        await asyncio.to_thread(self.s.index.upsert, entry, {"evidence": evidence})
+        extra: Dict[str, Any] = {"evidence": evidence}
+        # A later run that found this finding again: its triage shows it.
+        run = _CURRENT_RUN.get()
+        if run and run != entry.front.run:
+            row = await asyncio.to_thread(self.s.index.get, entry_id) or {}
+            runs = [r for r in (row.get("seen_in_runs") or []) if r != run] + [run]
+            extra["seen_in_runs"] = runs[-MAX_SEEN_RUNS:]
+        await asyncio.to_thread(self.s.index.upsert, entry, extra)
 
     async def used(self, entry_ids: List[str], run: Optional[str], how: str, agent: str) -> int:
         """Record that a run loaded or cited guidance. One record per entry,

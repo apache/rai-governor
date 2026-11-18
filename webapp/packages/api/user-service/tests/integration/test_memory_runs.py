@@ -114,6 +114,41 @@ async def test_runs_per_domain_and_entries_per_run(env):
         "run": {"runId": first.run_id, "visible": False}, "domains": []}
 
 
+SEER = '''
+async def run(input_dict, tools):
+    await memory.annotate(input_dict["id"], {"seen_again": [{"finding": "FINDING-003"}]})
+    return {}
+'''
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_finds_an_entry_again_shows_it(env):
+    # A later scan matched its finding to an earlier one and annotated that
+    # instead of writing a new entry: the later run's triage shows it.
+    db, reg, c = env
+    first, ids = await _run(db, reg)
+    for _ in range(2):          # two later runs, each annotating twice: each recorded once
+        later = reg.new_record(user_id="asf:root", agent_name="asvs_compare", project="whimsy")
+        await dependencies._execute_agent_code(
+            code=SEER, input_dict={"id": ids[0]}, tools={}, gofannon_agents=[], db=db,
+            user_id="asf:root", user_basic_info={"is_site_admin": True},
+            agent_name="asvs_compare", trace=later.trace, project="whimsy",
+        )
+        await dependencies._execute_agent_code(
+            code=SEER, input_dict={"id": ids[0]}, tools={}, gofannon_agents=[], db=db,
+            user_id="asf:root", user_basic_info={"is_site_admin": True},
+            agent_name="asvs_compare", trace=later.trace, project="whimsy",
+        )
+    _Who.user = COMMITTER
+    hits = c.get("/memory/whimsy/search", params={"run": later.run_id}).json()["hits"]
+    assert [h["id"] for h in hits] == [ids[0]]
+    assert hits[0]["run"] == first.run_id and hits[0]["seen_in_runs"][-1] == later.run_id
+    assert len(hits[0]["seen_in_runs"]) == 2
+    assert len(c.get("/memory/whimsy/search", params={"run": first.run_id}).json()["hits"]) == 2
+    by_run = c.get(f"/memory/by-run/{later.run_id}").json()["domains"]
+    assert [(d["domain"], d["entries"], d["seen"]) for d in by_run] == [("whimsy", 0, 1)]
+
+
 FORGER = '''
 async def run(input_dict, tools):
     memory.run_id = "victim-run"

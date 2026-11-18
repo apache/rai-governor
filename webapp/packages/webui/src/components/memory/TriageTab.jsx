@@ -54,13 +54,16 @@ function matchesIn(hits, key) {
   });
 }
 
-function Badges({ hit }) {
+function Badges({ hit, run }) {
   const ev = hit.evidence || {};
   const patch = patchText(ev.patch);
   return (
     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.75 }}>
       {(ev.matches || []).map((m, i) => <Chip key={i} label={matchText(m)} size="small" sx={badgeSx} />)}
       {patch && <Chip label={`Patch: ${patch}`} size="small" sx={badgeSx} />}
+      {run && hit.run !== run && (hit.seen_in_runs || []).includes(run) && (
+        <Chip label="Found again: first recorded by an earlier scan" size="small" sx={badgeSx} />
+      )}
       {ev.seen_again?.length > 0 && (
         <Chip label={`Found again by ${ev.seen_again.length} later ${ev.seen_again.length === 1 ? 'scan' : 'scans'}`} size="small" sx={badgeSx} />
       )}
@@ -73,7 +76,7 @@ function Badges({ hit }) {
   );
 }
 
-function FindingRow({ hit, selected, onClick, checked, onCheck }) {
+function FindingRow({ hit, run, selected, onClick, checked, onCheck }) {
   const f = hit.evidence?.finding || {};
   return (
     <Paper
@@ -98,7 +101,7 @@ function FindingRow({ hit, selected, onClick, checked, onCheck }) {
           {f.global_id}{f.file && <> · <code>{f.file}</code></>}
         </Typography>
         <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.25 }}>{hit.title || hit.id}</Typography>
-        <Badges hit={hit} />
+        <Badges hit={hit} run={run} />
       </Box>
     </Paper>
   );
@@ -547,6 +550,7 @@ export default function TriageTab({ domain, run, canReview, onReviewed }) {
             )}
             {shown.map((h) => (
               <FindingRow
+                run={run}
                 key={h.id} hit={h} selected={h.id === selected}
                 onClick={() => { setSelected(h.id); listRef.current?.focus(); }}
                 checked={checked.has(h.id)}

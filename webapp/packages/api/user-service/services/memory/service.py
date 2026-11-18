@@ -113,6 +113,7 @@ def _summary(row: Dict[str, Any]) -> Dict[str, Any]:
         "decided_at": (row.get("decision") or {}).get("at"),
         "decision": row.get("decision"),
         "evidence": row.get("evidence"),
+        "seen_in_runs": row.get("seen_in_runs") or [],
     }
 
 

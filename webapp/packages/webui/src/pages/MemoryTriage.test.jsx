@@ -146,6 +146,22 @@ describe('Triage', () => {
       expect.objectContaining({ kind: 'valid', why: '', guidance: undefined })));
   });
 
+  it('shows an earlier finding this run found again, and says so', async () => {
+    const OLD = finding('mem-t-020', 'Session not rotated', { finding: { global_id: 'FINDING-020', severity: 'Low' } },
+      { run: 'earlier-run', seen_in_runs: [RUN], status: 'demoted', disposition: 'fp_wrong',
+        decision: { kind: 'fp_wrong', why: '', by: 'human:asf:akm' } });
+    memoryService.search.mockResolvedValue({ hits: [F35, OLD] });
+    memoryService.forRun.mockResolvedValue({
+      run: { runId: RUN, visible: true, agentName: 'asvs_orchestrate', status: 'success' },
+      domains: [{ domain: 'tooling', entries: 1, seen: 1 }],
+    });
+    page(`/memories/tooling?run=${RUN}&tab=triage`);
+    expect(await screen.findByText(/wrote 1 entry here · found 1 earlier one again/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Decided · 1' }));
+    const list = screen.getByRole('generic', { name: 'Findings' });
+    expect(await within(list).findByText('Found again: first recorded by an earlier scan')).toBeInTheDocument();
+  });
+
   it('a decided finding shows the decision, with no form', async () => {
     page(`/memories/tooling?run=${RUN}&tab=triage`);
     fireEvent.click(await screen.findByRole('tab', { name: 'Decided · 1' }));

@@ -37,6 +37,7 @@ function RunBand({ runId, domain, onClear }) {
       <Typography variant="body2" sx={{ flex: '1 1 360px', color: '#3f3f46' }}>
         {run?.visible ? `${run.agentName}${run.project ? ` for ${run.project}` : ''} · ${status}` : 'A run you can\'t open'}
         {here && ` · wrote ${here.entries} ${here.entries === 1 ? 'entry' : 'entries'} here`}
+        {here?.seen > 0 && ` · found ${here.seen} earlier ${here.seen === 1 ? 'one' : 'ones'} again`}
       </Typography>
       {run?.visible && (
         <Link component={RouterLink} to={`/run/${encodeURIComponent(runId)}`} variant="body2" sx={{ color: '#18181b', fontWeight: 500 }}>

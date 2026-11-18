@@ -33,7 +33,17 @@ FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "or
 # is shared with tooling-memory and stays as it is, so these live on the row
 # only, and a rewrite of the row from the entry (a review, a supersede) keeps
 # them.
-ROW_ONLY = ("disposition", "decision", "evidence")
+ROW_ONLY = ("disposition", "decision", "evidence", "seen_in_runs")
+
+# Most later runs one row remembers having seen it (seen_in_runs).
+MAX_SEEN_RUNS = 50
+
+
+def in_run(row: Dict[str, Any], run_id: str) -> bool:
+    """The run wrote the entry, or found it again and said so (a later
+    scan's finding matched to this one): either way, that run's triage
+    shows it."""
+    return row.get("run") == run_id or run_id in (row.get("seen_in_runs") or ())
 
 # CouchDB uses an index only when the selector names every one of its
 # fields, so a domain's plain {"domain": d} needs ["domain"] alone.
@@ -152,9 +162,14 @@ class MemoryIndex:
             if key not in FILTER_FIELDS:
                 raise ValueError(f"cannot filter on {key!r}")
             selector[key] = value
+        # A run's entries include the earlier ones it found again, which
+        # an equality selector on run can't reach.
+        run = selector.pop("run", None)
         rows = []
         for d in domains:
             rows += self.db.find(INDEX_DB, {"domain": d, **selector}, limit=None)
+        if run is not None:
+            rows = [r for r in rows if in_run(r, run)]
 
         terms = query_terms(query)
         want_origins = set(origins or ())
@@ -232,11 +247,20 @@ class MemoryIndex:
         return out
 
     def for_run(self, run_id: str) -> Dict[str, Dict[str, Any]]:
-        """One run's entries, tallied per domain."""
-        by_domain: Dict[str, List[Dict[str, Any]]] = {}
-        for row in self.db.find(INDEX_DB, {"run": run_id}, limit=None):
-            by_domain.setdefault(row.get("domain") or "?", []).append(row)
-        return {d: self._tally(rows) for d, rows in by_domain.items()}
+        """One run's entries, tallied per domain, with ``seen``: earlier
+        entries it found again. list_all, as counts_by_domain: the run's
+        id is in a list on those rows, which find() can't select on every
+        backend."""
+        wrote: Dict[str, List[Dict[str, Any]]] = {}
+        seen: Dict[str, int] = {}
+        for row in self.db.list_all(INDEX_DB):
+            d = row.get("domain") or "?"
+            if row.get("run") == run_id:
+                wrote.setdefault(d, []).append(row)
+            elif in_run(row, run_id):
+                seen[d] = seen.get(d, 0) + 1
+        return {d: {**self._tally(wrote.get(d, [])), "seen": seen.get(d, 0)}
+                for d in set(wrote) | set(seen)}
 
     def counts(self, domain: str, today: date) -> Dict[str, int]:
         """Live entries in a domain: how many, how many raw, due, and either (the review queue)."""
