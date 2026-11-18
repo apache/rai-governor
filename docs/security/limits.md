@@ -55,6 +55,7 @@ A well-formed value isn't enough when it names something:
 | gunicorn worker | 1,800 s without a heartbeat | `GUNICORN_TIMEOUT` |
 | LLM call | 600 s; connect 10 s; stream idle 300 s | `LLM_TIMEOUT_SECONDS`, `LLM_CONNECT_TIMEOUT_SECONDS`, `LLM_STREAM_IDLE_TIMEOUT_SECONDS` |
 | LLM retries | Each kind has its own budget: timeouts 2, rate limits 5, overloaded 5, auth re-mint 1, unrouted model 4. Backoff is capped at 60 s | `LLM_*_RETRIES`, `LLM_RATE_LIMIT_BACKOFF_CAP` |
+| LLM connections | litellm sends over aiohttp: at most 1,000 connections per worker process, 500 to one host. A call that finds the pool full waits for a connection inside its own timeout, then fails as a timeout and takes the timeout retries. Pipelines' own concurrency settings keep real use far below the limit | `AIOHTTP_CONNECTOR_LIMIT`, `AIOHTTP_CONNECTOR_LIMIT_PER_HOST` |
 | `/specs/fetch` | 5 s | No |
 
 ## The operations that cost the most
