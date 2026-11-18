@@ -125,13 +125,25 @@ describe('Triage', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select: OIDC nonce missing' }));
     const form = await screen.findByRole('form', { name: 'Decide on 2 findings' });
     fireEvent.click(within(form).getByRole('radio', { name: /By design/ }));
-    expect(within(form).getByRole('button', { name: 'Record for 2 + guidance' })).toBeDisabled();
+    // Guidance is optional: the button says whether it writes any.
+    expect(within(form).getByRole('button', { name: 'Record for 2' })).toBeEnabled();
     fireEvent.change(within(form).getByLabelText(/one entry citing all 2/), { target: { value: 'Declined.' } });
     fireEvent.change(within(form).getByLabelText(/^Why/), { target: { value: 'the project declined these' } });
     memoryService.disposeBatch.mockResolvedValue({ batch: 'd-2', kind: 'by_design', applied: ['mem-t-035', 'mem-t-001'], skipped: [], guidance: ['g'] });
     fireEvent.click(within(form).getByRole('button', { name: 'Record for 2 + guidance' }));
     await waitFor(() => expect(memoryService.disposeBatch).toHaveBeenCalledWith(['mem-t-035', 'mem-t-001'],
       expect.objectContaining({ kind: 'by_design', why: 'the project declined these', guidance: { text: 'Declined.', scope: 'all', always: false } })));
+  });
+
+  it('records a disposition with no reason and no guidance', async () => {
+    page(`/memories/tooling?run=${RUN}&tab=triage`);
+    const form = await screen.findByRole('form', { name: 'Decide on this finding' });
+    fireEvent.click(within(form).getByRole('radio', { name: /^Valid/ }));
+    fireEvent.change(within(form).getByLabelText(/^Why/), { target: { value: '' } });
+    memoryService.dispose.mockResolvedValue({ batch: 'd-3', kind: 'valid', applied: ['mem-t-035'], skipped: [], guidance: [] });
+    fireEvent.click(within(form).getByRole('button', { name: 'Record' }));
+    await waitFor(() => expect(memoryService.dispose).toHaveBeenCalledWith('mem-t-035',
+      expect.objectContaining({ kind: 'valid', why: '', guidance: undefined })));
   });
 
   it('a decided finding shows the decision, with no form', async () => {

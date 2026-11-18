@@ -110,9 +110,9 @@ function GuidanceFields({ g, setG, count }) {
   return (
     <Box sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 1 }}>
       <TextField
-        multiline minRows={3} size="small" label={`Guidance for later scans${count > 1 ? `, one entry citing all ${count}` : ''}`}
+        multiline minRows={3} size="small" label={`Guidance for later scans (optional)${count > 1 ? `, one entry citing all ${count}` : ''}`}
         value={g.text} onChange={(e) => setG({ ...g, text: e.target.value })}
-        helperText="A draft is offered where the pipeline has one; edit freely."
+        helperText="Later scans are told of the decision either way; guidance says more. A draft is offered where the pipeline has one; edit freely."
       />
       <RadioGroup row value={g.scope} onChange={(e) => setG({ ...g, scope: e.target.value })} aria-label="Guidance scope">
         <FormControlLabel value="all" control={<Radio size="small" />} label={<Typography variant="body2">This repo, all scanners</Typography>} />
@@ -136,15 +136,16 @@ function DispositionForm({ hits, suggestion, onDone, batch }) {
   const [g, setG] = useState({ text: suggestion?.guidance || '', scope: suggestion?.scope || 'all', always: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const needsGuidance = WRITES_GUIDANCE.includes(kind);
-  const ready = kind && why.trim() && (!needsGuidance || g.text.trim()) && (kind !== 'duplicate' || dup.trim());
+  // The reason and the guidance are optional; a duplicate names what it duplicates.
+  const withGuidance = WRITES_GUIDANCE.includes(kind) && Boolean(g.text.trim());
+  const ready = kind && (kind !== 'duplicate' || dup.trim());
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     const d = { kind, why, duplicateOf: kind === 'duplicate' ? dup : undefined, filedAs: kind === 'valid' ? filed : undefined,
-      guidance: needsGuidance ? { text: g.text, scope: g.scope, always: g.always } : undefined };
+      guidance: withGuidance ? { text: g.text, scope: g.scope, always: g.always } : undefined };
     try {
       const out = batch ? await memoryService.disposeBatch(hits.map((h) => h.id), d) : await memoryService.dispose(one.id, d);
       onDone(out);
@@ -180,7 +181,7 @@ function DispositionForm({ hits, suggestion, onDone, batch }) {
           </Box>
         ))}
       </RadioGroup>
-      <TextField size="small" label="Why (recorded with the decision)" value={why} onChange={(e) => setWhy(e.target.value)} />
+      <TextField size="small" label="Why (optional, recorded with the decision)" value={why} onChange={(e) => setWhy(e.target.value)} />
       {suggestion?.kind && (
         <Typography variant="caption" color="text.secondary">
           A suggestion is only a starting point: nothing is decided until you record it.
@@ -189,7 +190,7 @@ function DispositionForm({ hits, suggestion, onDone, batch }) {
       <Box>
         <Button type="submit" variant="contained" disabled={busy || !ready} sx={darkBtn}>
           {busy ? <CircularProgress size={16} color="inherit" />
-            : `Record${batch ? ` for ${hits.length}` : ''}${needsGuidance ? ' + guidance' : ''}`}
+            : `Record${batch ? ` for ${hits.length}` : ''}${withGuidance ? ' + guidance' : ''}`}
         </Button>
       </Box>
       {error && <Alert severity="error">{error}</Alert>}
@@ -275,7 +276,7 @@ function FindingDetail({ hit, canReview, onDone }) {
       )}
       {d ? (
         <Alert severity="success" icon={false}>
-          <b>Decided: {kindLabel(d.kind)}</b> by <code>{d.by}</code> · {d.why}
+          <b>Decided: {kindLabel(d.kind)}</b> by <code>{d.by}</code>{d.why && <> · {d.why}</>}
           {d.duplicate_of && <> · duplicate of {d.duplicate_of}</>}
           {d.filed_as && <> · filed as {d.filed_as}</>}
           {d.guidance_id && <> · guidance <RouterLink to={`/memories/entries/${encodeURIComponent(d.guidance_id)}`}>{d.guidance_id}</RouterLink></>}

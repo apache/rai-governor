@@ -8,7 +8,7 @@ the reason in the review ledger, and copies them to the finding's index row
 (index.ROW_ONLY), so a search can filter on them. The entry's frontmatter is
 shared with tooling-memory and is not changed beyond the review itself.
 
-"Needs context" and "by design" also write a guidance entry, as the person:
+"Needs context" and "by design" may also write a guidance entry, as the person:
 ordinary memory entries with an agreed origin.
 
     guidance:<owner/repo>              every scanner
@@ -81,6 +81,16 @@ ACTION = {
 }
 
 WRITES_GUIDANCE = (Kind.FP_CONTEXT, Kind.BY_DESIGN)
+
+# The review record's reason when the person gives none: a review that
+# changes the tier needs one, and the disposition is the reason.
+_DEFAULT_WHY = {
+    Kind.VALID: "Triaged as valid",
+    Kind.DUPLICATE: "Triaged as a duplicate",
+    Kind.FP_WRONG: "Triaged as a false positive: wrong",
+    Kind.FP_CONTEXT: "Triaged as a false positive: needs context",
+    Kind.BY_DESIGN: "Triaged as by design",
+}
 
 _FINDING_ORIGIN = re.compile(r"^(?:asvs|glasswing):finding:(.+)$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -179,20 +189,18 @@ class Triage:
         """One disposition over one finding or many, under one batch id.
 
         Findings that can't take it are skipped and listed. Context and
-        by-design guidance becomes one entry per repo, citing every finding
-        it covers.
+        by-design guidance, when given, becomes one entry per repo, citing
+        every finding it covers. The reason and the guidance are optional:
+        the disposition itself is what a later scan is told.
         """
         why = (why or "").strip()
-        if not why:
-            raise Refused("say why: it is recorded with the decision")
         if kind is Kind.DUPLICATE and not (duplicate_of or "").strip():
             raise Refused("a duplicate says what it duplicates")
         g = None
-        if kind in WRITES_GUIDANCE:
+        text = ((guidance or {}).get("text") or "").strip()
+        if kind in WRITES_GUIDANCE and text:
             g = dict(guidance or {})
-            g["text"] = (g.get("text") or "").strip()
-            if not g["text"]:
-                raise Refused("write the guidance later scans should be given")
+            g["text"] = text
             if len(g["text"]) > MAX_GUIDANCE_CHARS:
                 raise Refused(f"guidance is at most {MAX_GUIDANCE_CHARS} characters")
             guidance_origin("x/y", g.get("scope") or "all")   # check the scope early
@@ -245,7 +253,7 @@ class Triage:
                 action = ReviewAction.KEEP           # verified already: the review date moves on
             try:
                 await self.s.review(
-                    e.front.id, action, reviewer, why, batch=batch,
+                    e.front.id, action, reviewer, why or _DEFAULT_WHY[kind], batch=batch,
                     extra={"disposition": {k: v for k, v in decision.items()
                                            if k not in ("by", "at", "batch", "why")}},
                     row={"disposition": kind.value, "decision": decision},

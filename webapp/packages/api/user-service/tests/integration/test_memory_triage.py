@@ -132,25 +132,41 @@ async def test_a_batch_writes_one_guidance_entry_and_undo_takes_it_all_back(c):
 
 @pytest.mark.asyncio
 async def test_kinds_and_their_rules(c):
-    a, b, d = await _finding(c, "a"), await _finding(c, "b"), await _finding(c, "d")
+    a, b = await _finding(c, "a"), await _finding(c, "b")
     _as(PMC)
     r = c.post(f"/memory/entries/{a}/disposition", json={"kind": "valid", "why": "real",
                                                           "filed_as": "https://x/advisory"})
     assert r.status_code == 200
     assert _fm(c, a)["trust_tier"] == "verified" and _row(c, a)["decision"]["filed_as"] == "https://x/advisory"
-    # No guidance for valid; and a reason is required whatever the kind.
+    # No guidance for valid; a duplicate says what it duplicates.
     assert r.json()["guidance"] == []
-    assert c.post(f"/memory/entries/{b}/disposition", json={"kind": "fp_wrong"}).status_code == 400
     assert c.post(f"/memory/entries/{b}/disposition",
                   json={"kind": "duplicate", "why": "same"}).status_code == 400
     r = c.post(f"/memory/entries/{b}/disposition",
                json={"kind": "duplicate", "why": "same flag", "duplicate_of": a})
     assert r.status_code == 200 and _fm(c, b)["status"] == "demoted"
-    assert c.post(f"/memory/entries/{d}/disposition",
-                  json={"kind": "by_design", "why": "declined"}).status_code == 400   # no guidance text
     # A decided finding is decided: undo first.
     r = c.post(f"/memory/entries/{b}/disposition", json={"kind": "fp_wrong", "why": "x"})
     assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_the_reason_and_the_guidance_are_optional(c):
+    a, b, d = await _finding(c, "a"), await _finding(c, "b"), await _finding(c, "d")
+    _as(PMC)
+    for eid, kind in ((a, "valid"), (b, "fp_wrong"), (d, "by_design")):
+        r = c.post(f"/memory/entries/{eid}/disposition", json={"kind": kind})
+        assert r.status_code == 200 and r.json()["applied"] == [eid] and r.json()["guidance"] == []
+        assert _row(c, eid)["disposition"] == kind and _row(c, eid)["decision"]["why"] == ""
+    assert _fm(c, a)["trust_tier"] == "verified" and _fm(c, b)["status"] == "demoted"
+    assert _fm(c, d)["trust_tier"] == "verified"
+    # The review record still says what was decided.
+    reviews = c.get(f"/memory/entries/{b}/history").json()["reviews"]
+    assert reviews[-1]["why"] == "Triaged as a false positive: wrong"
+    # Blank guidance text writes no guidance.
+    e = await _finding(c, "e")
+    r = c.post(f"/memory/entries/{e}/disposition", json={"kind": "fp_context", "guidance": {"text": "  "}})
+    assert r.status_code == 200 and r.json()["guidance"] == []
 
 
 @pytest.mark.asyncio
