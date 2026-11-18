@@ -103,6 +103,11 @@ const memoryService = {
 
   // One run's entries tallied per readable domain, and what the caller may
   // know about the run.
+  // Runs with entries in the caller's domains, with counts for triage.
+  allRuns(limit = 200) {
+    return request(`/memory/runs?limit=${limit}`);
+  },
+
   forRun(runId) {
     return request(`/memory/by-run/${enc(runId)}`);
   },

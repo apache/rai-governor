@@ -252,10 +252,11 @@ async def search(
     return {"domain": domain, "query": q, "offset": offset, **page}
 
 
-def run_summary(run_id: str, user: dict) -> Dict[str, Any]:
+def run_summary(run_id: str, user: dict, admin_sees_all: bool = False) -> Dict[str, Any]:
     """What the caller may know about the run that wrote some entries: the
     run's summary if they can see the run, else its id alone. Reading a
-    domain doesn't grant the run: its inputs are the launcher's."""
+    domain doesn't grant the run: its inputs are the launcher's.
+    ``admin_sees_all``: a site admin sees every run, not only project ones."""
     from auth.project_access import can_see_run
     from services.run_registry import get_run_registry
 
@@ -263,7 +264,8 @@ def run_summary(run_id: str, user: dict) -> Dict[str, Any]:
         rec = get_run_registry().get(run_id)
     except Exception:
         rec = None
-    if rec is None or not can_see_run(user, rec.user_id, rec.project):
+    if rec is None or not (can_see_run(user, rec.user_id, rec.project)
+                           or (admin_sees_all and user.get("is_site_admin"))):
         return {"runId": run_id, "visible": False}
     s = rec.to_summary()
     s.pop("inputDict", None)
@@ -306,6 +308,27 @@ async def undo_batch(
         )
     except NotFound:
         raise HTTPException(status_code=404, detail="No such batch")
+
+
+@router.get("/runs")
+async def all_runs(
+    limit: int = Query(200, ge=1, le=1000),
+    user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+) -> Dict[str, Any]:
+    """Runs with entries in the domains the caller reads, newest first,
+    with each domain's counts for triage. A site admin sees every run; anyone
+    else the runs they started and their projects' runs."""
+    service = get_memory_service(db)
+    admin = bool(user.get("is_site_admin"))
+    out = []
+    for r in await service.run_overview(await _readable_domains(user, service)):
+        info = run_summary(r["run"], user, admin_sees_all=True)
+        if info["visible"] or admin:
+            out.append({**r, "info": info})
+        if len(out) >= limit:
+            break
+    return {"runs": out}
 
 
 @router.get("/by-run/{run_id}")

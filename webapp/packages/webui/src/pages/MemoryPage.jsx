@@ -11,8 +11,9 @@ import BrowseTab from '../components/memory/BrowseTab';
 import AskTab from '../components/memory/AskTab';
 import ReviewTab from '../components/memory/ReviewTab';
 import TriageTab from '../components/memory/TriageTab';
+import RunsTab from '../components/memory/RunsTab';
 
-const TABS = ['browse', 'ask', 'review', 'triage'];
+const TABS = ['browse', 'ask', 'review', 'triage', 'runs'];
 // Browse across every domain the caller can read. Read only: ask, review
 // and triage work on one domain.
 const ALL_DOMAINS = '*';
@@ -125,7 +126,7 @@ export default function MemoryPage() {
 
       {current && (
         <>
-          <Tabs value={all ? 'browse' : tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: '1px solid #e4e4e7' }}>
+          <Tabs value={all && tab !== 'runs' ? 'browse' : tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: '1px solid #e4e4e7' }}>
             <Tab value="browse" label="Browse" />
             {!all && <Tab value="ask" label="Ask" />}
             {!all && (
@@ -140,6 +141,7 @@ export default function MemoryPage() {
             />
             )}
             {run && !all && <Tab value="triage" label="Triage" />}
+            <Tab value="runs" label="Runs" />
           </Tabs>
           {run && (tab === 'browse' || tab === 'triage') && (
             <RunBand runId={run} domain={domain} onClear={() => {
@@ -149,7 +151,7 @@ export default function MemoryPage() {
               setParams(p);
             }} />
           )}
-          {(tab === 'browse' || all) && (
+          {(tab === 'browse' || (all && tab !== 'runs')) && (
             <BrowseTab
               key={`${domain}:${run || ''}`} domain={domain} run={run} select={select}
               canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
@@ -161,6 +163,7 @@ export default function MemoryPage() {
               canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
             />
           )}
+          {tab === 'runs' && <RunsTab />}
           {tab === 'ask' && !all && <AskTab key={domain} domain={domain} />}
           {tab === 'review' && !all && (
             <ReviewTab

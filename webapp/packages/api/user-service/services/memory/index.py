@@ -35,6 +35,9 @@ FILTER_FIELDS = ("type", "trust_tier", "author", "status", "classification", "or
 # them.
 ROW_ONLY = ("disposition", "decision", "evidence", "seen_in_runs")
 
+# A scan's finding, as triage counts it (triageFormat.isFinding).
+_FINDING = re.compile(r"^(asvs|glasswing):finding:")
+
 # Most later runs one row remembers having seen it (seen_in_runs).
 MAX_SEEN_RUNS = 50
 
@@ -261,6 +264,46 @@ class MemoryIndex:
                 seen[d] = seen.get(d, 0) + 1
         return {d: {**self._tally(wrote.get(d, [])), "seen": seen.get(d, 0)}
                 for d in set(wrote) | set(seen)}
+
+    def run_overview(self, domains: List[str]) -> List[Dict[str, Any]]:
+        """Every run with entries in these domains, newest first: per
+        domain, the entries it wrote, the earlier ones it found again
+        (seen), and for triage its findings, how many are decided and how
+        many still need a decision, and its open guidance proposals."""
+        runs: Dict[str, Dict[str, Any]] = {}
+        for d in domains:
+            for row in self.db.find(INDEX_DB, {"domain": d}, limit=None):
+                mine = [row["run"]] if row.get("run") else []
+                for r in mine + [s for s in (row.get("seen_in_runs") or []) if s not in mine]:
+                    run = runs.setdefault(r, {"run": r, "last": None, "domains": {}})
+                    t = run["domains"].setdefault(d, {"domain": d, "entries": 0, "seen": 0, "findings": 0,
+                                                      "decided": 0, "needs": 0, "proposals": 0,
+                                                      "repos": set()})
+                    if r in mine:
+                        t["entries"] += 1
+                        c = row.get("created")
+                        if c and (run["last"] is None or c > run["last"]):
+                            run["last"] = c
+                    else:
+                        t["seen"] += 1
+                    origin = row.get("origin") or ""
+                    live = row.get("status") not in _INACTIVE
+                    if _FINDING.match(origin):
+                        t["findings"] += 1
+                        parts = origin.split(":", 2)[2].split("/")
+                        if len(parts) >= 2:
+                            t["repos"].add("/".join(parts[:2]))
+                        if row.get("disposition"):
+                            t["decided"] += 1
+                        elif live:
+                            t["needs"] += 1
+                    elif origin.startswith("proposal:guidance:") and live:
+                        t["proposals"] += 1
+        out = [{**r, "domains": [{**t, "repos": sorted(t["repos"])}
+                                 for t in sorted(r["domains"].values(), key=lambda t: t["domain"])]}
+               for r in runs.values()]
+        out.sort(key=lambda r: r["last"] or "", reverse=True)
+        return out
 
     def counts(self, domain: str, today: date) -> Dict[str, int]:
         """Live entries in a domain: how many, how many raw, due, and either (the review queue)."""

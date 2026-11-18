@@ -212,6 +212,9 @@ class MemoryService:
     async def runs(self, domain: str) -> List[Dict[str, Any]]:
         return await asyncio.to_thread(self.index.runs, domain)
 
+    async def run_overview(self, domains: List[str]) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self.index.run_overview, domains)
+
     async def for_run(self, run_id: str) -> Dict[str, Dict[str, Any]]:
         return await asyncio.to_thread(self.index.for_run, run_id)
 

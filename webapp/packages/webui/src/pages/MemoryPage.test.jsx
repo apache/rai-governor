@@ -13,6 +13,7 @@ vi.mock('../services/memoryService', () => ({
     search: vi.fn(() => Promise.resolve({ hits: [] })),
     get: vi.fn(),
     history: vi.fn(),
+    allRuns: vi.fn(),
   },
 }));
 
@@ -116,6 +117,33 @@ describe('MemoryPage', () => {
     expect(memoryService.search).toHaveBeenLastCalledWith('dom-scan', expect.objectContaining({ offset: 50, limit: 50 }));
     fireEvent.click(screen.getByRole('button', { name: 'Select all 120 matches' }));
     expect(await screen.findByText('120 selected')).toBeInTheDocument();
+  });
+
+  it('lists runs with what their triage needs, linking to it', async () => {
+    memoryService.domains.mockResolvedValue(DOMAINS);
+    const t = (domain, o) => ({ domain, entries: 0, seen: 0, findings: 0, decided: 0, needs: 0, proposals: 0, repos: [], ...o });
+    memoryService.allRuns.mockResolvedValue({ runs: [
+      { run: 'run-new-0001', last: '2026-11-17T10:00:00Z',
+        info: { visible: true, agentName: 'asvs_orchestrate', project: 'tooling', status: 'success', userId: 'asf:akm', startedAt: '2026-11-17T09:00:00Z' },
+        domains: [t('tooling', { entries: 40, findings: 30, needs: 12, decided: 18, seen: 5, proposals: 2, repos: ['apache/rai-governor'] })] },
+      { run: 'run-old-0002', last: '2026-11-01T10:00:00Z', info: { runId: 'run-old-0002', visible: false },
+        domains: [t('dom-scan', { entries: 3 })] },
+    ] });
+    page('/memories/dom-scan?tab=runs');
+    const run = await screen.findByRole('region', { name: 'Run run-new-0001' });
+    expect(run).toHaveTextContent('asvs_orchestrate');
+    expect(run).toHaveTextContent('tooling · finished · asf:akm');
+    expect(run).toHaveTextContent('apache/rai-governor');
+    expect(screen.getByText('12 need a decision')).toBeInTheDocument();
+    expect(screen.getByText('found 5 again')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Triage' })[0]).toHaveAttribute('href', '/memories/tooling?run=run-new-0001&tab=triage');
+    // A run you can't open shows its id, and nothing to triage.
+    const old = screen.getByRole('region', { name: 'Run run-old-0002' });
+    expect(old).toHaveTextContent('Run run-old-');
+    expect(screen.getAllByRole('link', { name: 'Triage' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Needs a decision' }));
+    expect(screen.queryByRole('region', { name: 'Run run-old-0002' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 run · newest first')).toBeInTheDocument();
   });
 
   it('says there is nothing to read when no domain is readable', async () => {

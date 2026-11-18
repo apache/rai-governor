@@ -149,6 +149,46 @@ async def test_a_run_that_finds_an_entry_again_shows_it(env):
     assert [(d["domain"], d["entries"], d["seen"]) for d in by_run] == [("whimsy", 0, 1)]
 
 
+FINDER = '''
+async def run(input_dict, tools):
+    a = await memory.write(summary="Open redirect", body="# x\\n", origin="asvs:finding:apache/" + input_dict["repo"])
+    b = await memory.write(summary="Weak session id", body="# y\\n", origin="asvs:finding:apache/" + input_dict["repo"])
+    p = await memory.write(summary="Redirects are checked", body="# z\\n", origin="proposal:guidance:apache/" + input_dict["repo"])
+    return {"ids": [a, b, p]}
+'''
+
+
+async def _find(db, reg, project, user):
+    rec = reg.new_record(user_id=user["uid"], agent_name="asvs_consolidate", project=project)
+    out, _ = await dependencies._execute_agent_code(
+        code=FINDER, input_dict={"repo": project}, tools={}, gofannon_agents=[], db=db,
+        user_id=user["uid"], user_basic_info={"is_site_admin": bool(user.get("is_site_admin"))},
+        agent_name="asvs_consolidate", trace=rec.trace, project=project,
+    )
+    return rec, out["ids"]
+
+
+@pytest.mark.asyncio
+async def test_runs_across_domains_for_whoever_may_see_them(env):
+    db, reg, c = env
+    mine, ids = await _find(db, reg, "whimsy", ADMIN)
+    theirs, _ = await _find(db, reg, "tomcat", OTHER)
+    _Who.user = ADMIN
+    c.post(f"/memory/entries/{ids[0]}/disposition", json={"kind": "valid"})
+
+    runs = c.get("/memory/runs").json()["runs"]
+    assert [r["run"] for r in runs] == [theirs.run_id, mine.run_id]     # newest first, every run
+    assert runs[1]["info"]["visible"] and runs[1]["info"]["agentName"] == "asvs_consolidate"
+    assert runs[1]["domains"] == [{"domain": "whimsy", "entries": 3, "seen": 0, "findings": 2,
+                                   "decided": 1, "needs": 1, "proposals": 1,
+                                   "repos": ["apache/whimsy"]}]
+    # A committer: their project's runs. Another project's member: theirs.
+    _Who.user = COMMITTER
+    assert [r["run"] for r in c.get("/memory/runs").json()["runs"]] == [mine.run_id]
+    _Who.user = OTHER
+    assert [r["run"] for r in c.get("/memory/runs").json()["runs"]] == [theirs.run_id]
+
+
 FORGER = '''
 async def run(input_dict, tools):
     memory.run_id = "victim-run"
