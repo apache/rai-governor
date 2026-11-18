@@ -20,8 +20,8 @@ from time_utils import naive_utc_now
 class Session(BaseModel):
     """A server-side session."""
 
-    # The opaque session id, matching the gofannon_sid cookie value.
-    # This is also the CouchDB _id.
+    # The CouchDB _id: the SHA-256 of the gofannon_sid cookie value
+    # (services.session_service.session_doc_id), not the value itself.
     id: str = Field(..., alias="_id")
     rev: Optional[str] = Field(None, alias="_rev")
 

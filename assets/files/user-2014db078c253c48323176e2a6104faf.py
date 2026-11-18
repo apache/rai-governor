@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from pydantic.alias_generators import to_camel
 from pydantic.config import ConfigDict
 from time_utils import naive_utc_now
@@ -60,3 +60,24 @@ class User(BaseModel):
     api_keys: ApiKeys = Field(default_factory=ApiKeys, alias="apiKeys")
 
     model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+
+# --- What the API sends ------------------------------------------------------
+# A saved key goes back to the browser only as its last four characters: the
+# UI needs to know a key is set, never the key. User and ApiKeys stay as they
+# are for storage; routes answer with these.
+
+def mask_key(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    return "****" + value[-4:] if len(value) > 12 else "****"
+
+
+class PublicApiKeys(ApiKeys):
+    @field_serializer("*")
+    def _masked(self, value):
+        return mask_key(value)
+
+
+class PublicUser(User):
+    api_keys: PublicApiKeys = Field(default_factory=PublicApiKeys, alias="apiKeys")
