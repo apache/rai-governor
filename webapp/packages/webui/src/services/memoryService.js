@@ -59,7 +59,7 @@ const memoryService = {
     enabledOnce = null;
   },
 
-  search(domain, { q, type, trustTier, dueBy, includeInactive, order, limit, run, queue, origins, disposition } = {}) {
+  search(domain, { q, type, trustTier, dueBy, includeInactive, order, limit, offset, run, queue, origins, disposition } = {}) {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     (origins || []).forEach((o) => params.append('origin', o));
@@ -72,6 +72,7 @@ const memoryService = {
     if (order) params.set('order', order);
     if (queue) params.set('queue', 'true');
     params.set('limit', String(limit || 50));
+    if (offset) params.set('offset', String(offset));
     return request(`/memory/${enc(domain)}/search?${params}`);
   },
 

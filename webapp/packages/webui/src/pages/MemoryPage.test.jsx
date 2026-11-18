@@ -1,6 +1,6 @@
 // Memory page (ISSUE-026): domain, tabs, and the off state.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { renderWithRouter } from '../test/testUtils';
 import MemoryPage from './MemoryPage';
@@ -96,6 +96,26 @@ describe('MemoryPage', () => {
     memoryService.domains.mockResolvedValue(DOMAINS);
     page('/memories/*');
     expect(await screen.findByText(/No memory domain \*/)).toBeInTheDocument();
+  });
+
+  it('pages through more entries than one page holds, and selects every match', async () => {
+    memoryService.domains.mockResolvedValue(DOMAINS);
+    const hit = (i) => ({ id: `mem-${i}`, domain: 'dom-scan', title: `Finding ${i}`, trust_tier: 'raw', type: 'fact', created: '2026-11-01' });
+    const range = (from, n) => Array.from({ length: n }, (_, i) => hit(from + i));
+    memoryService.search.mockImplementation((d, o) => Promise.resolve({
+      hits: range(o.offset || 0, Math.min(o.limit, 120 - (o.offset || 0))), total: 120,
+    }));
+    memoryService.get.mockResolvedValue({ frontmatter: { id: 'mem-0', trust_tier: 'raw' }, body: '' });
+    memoryService.history.mockResolvedValue({ id: 'mem-0', versions: [], reviews: [] });
+    page('/memories/dom-scan');
+    expect(await screen.findByText('Finding 49')).toBeInTheDocument();
+    expect(screen.queryByText('Finding 50')).not.toBeInTheDocument();
+    expect(screen.getByText('Select all 50 shown of 120')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 50 more · 50 of 120 shown' }));
+    expect(await screen.findByText('Finding 99')).toBeInTheDocument();
+    expect(memoryService.search).toHaveBeenLastCalledWith('dom-scan', expect.objectContaining({ offset: 50, limit: 50 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all 120 matches' }));
+    expect(await screen.findByText('120 selected')).toBeInTheDocument();
   });
 
   it('says there is nothing to read when no domain is readable', async () => {

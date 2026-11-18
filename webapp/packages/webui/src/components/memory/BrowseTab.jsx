@@ -36,6 +36,10 @@ const TIERS = ['raw', 'curated', 'verified'];
 // domain map and false-positive guidance. "Demote its findings" leaves them.
 const REUSABLE = ['convention', 'method'];
 const KEY_ACTIONS = { c: 'curate', v: 'verify', r: 'keep', d: 'demote' };
+// Entries per page; "Show more" fetches the next. A batch takes at most
+// MAX_BATCH entries, as the API does.
+const PAGE = 50;
+const MAX_BATCH = 1000;
 
 export function HitCard({ hit, selected, onClick, extra, checked, onCheck }) {
   const inactive = Boolean(hit.status);
@@ -92,6 +96,8 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
   const [due, setDue] = useState(false);
   const [inactive, setInactive] = useState(Boolean(run));
   const [hits, setHits] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null);
   // Guidance for a repo (scans that remember): a view of its own.
@@ -108,14 +114,16 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
     return () => { live = false; };
   }, [domain, all]);
 
+  const opts = useCallback((limit, offset) => ({
+    q: query, type, trustTier, dueBy: due ? today() : undefined, includeInactive: inactive, run, limit, offset,
+  }), [query, type, trustTier, due, inactive, run]);
+
   const load = useCallback(async () => {
     setError(null);
     try {
-      const out = await memoryService.search(domain, {
-        q: query, type, trustTier, dueBy: due ? today() : undefined, includeInactive: inactive,
-        run, limit: run ? 1000 : undefined,
-      });
+      const out = await memoryService.search(domain, opts(run ? MAX_BATCH : PAGE));
       setHits(out.hits);
+      setTotal(out.total ?? out.hits.length);
       setSelected((cur) => (out.hits.some((h) => h.id === cur) ? cur : out.hits[0]?.id || null));
       setChecked((cur) => new Set([...cur].filter((id) => out.hits.some((h) => h.id === id && !h.status))));
       // "Demote its findings" from a run: tick the findings, leave what
@@ -130,12 +138,44 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
       setError(e.message);
       setHits([]);
     }
-  }, [domain, query, type, trustTier, due, inactive, run, select]);
+  }, [domain, opts, run, select]);
 
   useEffect(() => { load(); }, [load]);
 
+  const showMore = async () => {
+    setBusy(true);
+    try {
+      const out = await memoryService.search(domain, opts(PAGE, hits.length));
+      setHits((cur) => [...cur, ...out.hits.filter((h) => !cur.some((c) => c.id === h.id))]);
+      setTotal(out.total ?? total);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Tick every match, not only the ones shown: fetch their ids a page at a time.
+  const selectAllMatches = async () => {
+    setBusy(true);
+    try {
+      const ids = [];
+      for (let offset = 0; offset < total && ids.length < MAX_BATCH; offset += MAX_BATCH) {
+        const out = await memoryService.search(domain, opts(MAX_BATCH, offset));
+        out.hits.filter((h) => !h.status).forEach((h) => ids.push(h.id));
+        if (out.hits.length < MAX_BATCH) break;
+      }
+      setChecked(new Set(ids.slice(0, MAX_BATCH)));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const live = (hits || []).filter((h) => !h.status);
   const allChecked = live.length > 0 && live.every((h) => checked.has(h.id));
+  const more = hits ? total - hits.length : 0;
   const toggle = (id, on) => setChecked((cur) => {
     const next = new Set(cur);
     if (on) next.add(id); else next.delete(id);
@@ -253,13 +293,18 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
                     <Checkbox size="small" checked={allChecked} indeterminate={!allChecked && checked.size > 0}
                       onChange={(e) => setChecked(e.target.checked ? new Set(live.map((h) => h.id)) : new Set())} />
                   )}
-                  label={<Typography variant="caption">Select all {live.length}</Typography>}
+                  label={<Typography variant="caption">Select all {live.length}{more > 0 ? ` shown of ${total}` : ''}</Typography>}
                   sx={{ m: 0 }}
                 />
               ) : (
                 <Typography variant="caption" color="text.secondary">
-                  {hits.length} {hits.length === 1 ? 'entry' : 'entries'} · summaries only; open one to read it
+                  {more > 0 ? `${hits.length} of ${total}` : hits.length} {total === 1 ? 'entry' : 'entries'} · summaries only; open one to read it
                 </Typography>
+              )}
+              {canReview && more > 0 && (
+                <Button size="small" disabled={busy} onClick={selectAllMatches} sx={{ textTransform: 'none' }}>
+                  Select all {Math.min(total, MAX_BATCH)} matches{total > MAX_BATCH ? ` (of ${total})` : ''}
+                </Button>
               )}
               {canReview && (
                 <Typography variant="caption" sx={{ color: '#71717a' }}>j / k move · x select · c v r d decide</Typography>
@@ -284,6 +329,11 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
                 ) : null}
               />
             ))}
+            {more > 0 && (
+              <Button variant="outlined" size="small" disabled={busy} onClick={showMore} sx={{ alignSelf: 'center', textTransform: 'none' }}>
+                {busy ? <CircularProgress size={16} /> : `Show ${Math.min(more, PAGE)} more · ${hits.length} of ${total} shown`}
+              </Button>
+            )}
           </Stack>
           {selected && (
             <EntryPanel
