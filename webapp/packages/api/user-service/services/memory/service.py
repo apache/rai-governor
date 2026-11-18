@@ -306,8 +306,18 @@ class MemoryService:
         await asyncio.to_thread(self.index.upsert, entry, row)
         return {"frontmatter": front.to_dict(), "review": record}
 
+    async def curate_written(self, entry: Entry, by: str, why: str) -> Dict[str, Any]:
+        """Curate an entry as its writer writes it. Only for a writer who
+        reviews the entry's domain, writing in a review step (triage
+        guidance): a second review would only repeat the first. The record
+        says so, and has no batch: undoing the triage withdraws the entry."""
+        before_front, before_text = entry.front.to_dict(), entry.render()
+        entry.front.trust_tier = TrustTier.CURATED
+        return await self._record(entry, ReviewAction.CURATE.value, by, why,
+                                  before_front, before_text, None)
+
     async def _record(self, entry: Entry, action: str, by: str, why: str,
-                      before_front: Dict[str, Any], before_text: str, batch: str,
+                      before_front: Dict[str, Any], before_text: str, batch: Optional[str],
                       extra: Optional[Dict[str, Any]] = None,
                       row: Optional[Dict[str, Any]] = None, clear: tuple = ()) -> Dict[str, Any]:
         """Write a review record for a change made outside review(): a

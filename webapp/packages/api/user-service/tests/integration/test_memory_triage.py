@@ -87,7 +87,12 @@ async def test_needs_context_demotes_and_writes_guidance_scans_load(c):
     assert _row(c, f)["decision"]["guidance_id"] == gid
     g = _fm(c, gid)
     assert g["origin"] == f"guidance:{REPO}" and g["type"] == "convention"
-    assert g["author"] == "human:asf:pmc" and g["trust_tier"] == "raw"
+    # Curated as written: the PMC member reviews this domain, so it waits
+    # for no second person, and its history says why.
+    assert g["author"] == "human:asf:pmc" and g["trust_tier"] == "curated"
+    rec = c.get(f"/memory/entries/{gid}/history").json()["reviews"]
+    assert [(r["action"], r["by"]) for r in rec] == [("curate", "human:asf:pmc")]
+    assert rec[0]["why"].startswith("Curated on writing")
     assert g["source"] == [f] and g["review_by"]
     assert g["summary"] == "PubSub transport is enforced in atr/pubsub.py."
 
@@ -210,6 +215,7 @@ async def test_proposals_become_the_persons_guidance_or_are_rejected(c):
     gid = out["accepted"][0]["guidance"]
     g = _fm(c, gid)
     assert g["author"] == "human:asf:pmc" and g["type"] == "decision" and g["supersedes"] == p1
+    assert g["trust_tier"] == "curated"
     assert g["source"][0] == p1 and "issues/1657" in g["source"][1]
     assert _fm(c, p1)["status"] == "superseded"
     assert [e["id"] for e in (await c.mem.guidance(REPO))["entries"]] == [gid]

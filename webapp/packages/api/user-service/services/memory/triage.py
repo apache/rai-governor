@@ -23,6 +23,10 @@ ordinary memory entries with an agreed origin.
 Every disposition, one or many, gets a batch id, so the existing undo puts
 the finding back and withdraws the guidance it wrote.
 
+Guidance written in triage by someone who reviews the domain is curated
+as it is written, with a review record saying so; it needs no second
+person.
+
 Which guidance a scan loads (guidance_for): a person's at any tier, an
 agent's once someone has curated it. A digest is an agent's, so it loads
 once a person has accepted it, which curates it.
@@ -81,6 +85,7 @@ ACTION = {
 }
 
 WRITES_GUIDANCE = (Kind.FP_CONTEXT, Kind.BY_DESIGN)
+CURATED_IN_TRIAGE = "Curated on writing: written in triage by a reviewer of this domain"
 
 # The review record's reason when the person gives none: a review that
 # changes the tier needs one, and the disposition is the reason.
@@ -233,7 +238,8 @@ class Triage:
             ok = [e for grp in groups.values() for e in grp]
             for (domain, repo), grp in groups.items():
                 gid = await self._write_guidance(domain, repo, kind, g, reviewer,
-                                                 source=[e.front.id for e in grp])
+                                                 source=[e.front.id for e in grp],
+                                                 may_review=may_review)
                 guidance_by[(domain, repo)] = gid
 
         applied, guidance_ids = [], sorted(set(guidance_by.values()))
@@ -270,8 +276,15 @@ class Triage:
         return {"batch": batch, "kind": kind.value, "applied": applied, "skipped": skipped,
                 "guidance": guidance_ids}
 
+    async def _curate_if_reviewer(self, entry: Entry, author: str, may_review) -> None:
+        """Guidance written in triage by someone who reviews its domain (a
+        site admin, or anyone with review rights there) is curated as it is
+        written; anyone else's waits for review at raw."""
+        if may_review is not None and may_review(entry.front.domain):
+            await self.s.curate_written(entry, author, CURATED_IN_TRIAGE)
+
     async def _write_guidance(self, domain: str, repo: str, kind: Kind, g: Dict[str, Any],
-                              author: str, source: List[str]) -> str:
+                              author: str, source: List[str], may_review=None) -> str:
         etype = EntryType.POLICY if g.get("always") else (
             EntryType.DECISION if kind is Kind.BY_DESIGN else EntryType.CONVENTION)
         text = g["text"]
@@ -284,6 +297,7 @@ class Triage:
             origin=guidance_origin(repo, g.get("scope") or "all"),
         )
         entry = await self.s.write(req, author=author)
+        await self._curate_if_reviewer(entry, author, may_review)
         return entry.front.id
 
     # ------------------------------------------------------------------
@@ -323,6 +337,7 @@ class Triage:
                     origin=guidance_origin(repo, ed.get("scope") or "all"),
                 )
                 new = await self.s.write(req, author=reviewer)
+                await self._curate_if_reviewer(new, reviewer, may_review)
                 await self._ledger(prop, "accept", reviewer, why or "accepted in triage", batch,
                                    {"guidance_id": new.front.id})
                 accepted.append({"proposal": pid, "guidance": new.front.id})
