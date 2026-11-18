@@ -157,6 +157,20 @@ def status(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     return {"enabled": True}
 
 
+async def _readable_domains(user: dict, service) -> List[str]:
+    """Every domain the caller may read: the shared ones, their projects',
+    and for a site admin every project domain that has entries."""
+    names = [d for d in access.shared_domains() if access.can_read(user, d)]
+    projects = set(member_projects(user))
+    if user.get("is_site_admin"):
+        projects |= {d for d in await service.domains() if access.project_of(d)}
+    names += sorted(p for p in projects if access.project_of(p))
+    return [n for n in names if access.exists(n) and access.can_read(user, n)]
+
+
+ALL_DOMAINS = "*"
+
+
 @router.get("/domains")
 async def domains(
     user: dict = Depends(get_current_user),
@@ -207,6 +221,7 @@ async def search(
     include_inactive: bool = False,
     order: str = Query("newest", pattern="^(newest|oldest)$"),
     limit: int = Query(20, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     run: Optional[str] = Query(None, max_length=64),
     queue: bool = False,
     origin: Optional[List[str]] = Query(None, max_length=50),
@@ -217,7 +232,9 @@ async def search(
     """include_inactive adds demoted and superseded entries; order=oldest is the review queue's;
     run limits it to the entries one run wrote; queue keeps only what's waiting for review
     (raw, or past its review date). origin (repeatable) keeps entries from any of those
-    origins; disposition is a kind, any (decided) or none (not decided)."""
+    origins; disposition is a kind, any (decided) or none (not decided).
+    domain "*" searches every domain the caller may read. total is how many
+    match; offset and limit pick the page."""
     filters: Dict[str, Any] = {}
     if run:
         filters["run"] = run
@@ -225,12 +242,14 @@ async def search(
         filters["type"] = type.value
     if trust_tier:
         filters["trust_tier"] = trust_tier
-    hits = await get_memory_service(db).search(
-        _domain(domain, user), q, filters, due_by, limit,
+    service = get_memory_service(db)
+    targets = await _readable_domains(user, service) if domain == ALL_DOMAINS else [_domain(domain, user)]
+    page = await service.search_page(
+        targets, q, filters, due_by, limit, offset,
         include_inactive=include_inactive, oldest_first=order == "oldest", review_queue=queue,
         origins=origin, disposition=disposition,
     )
-    return {"domain": domain, "query": q, "hits": hits}
+    return {"domain": domain, "query": q, "offset": offset, **page}
 
 
 def run_summary(run_id: str, user: dict) -> Dict[str, Any]:

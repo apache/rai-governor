@@ -13,6 +13,9 @@ import ReviewTab from '../components/memory/ReviewTab';
 import TriageTab from '../components/memory/TriageTab';
 
 const TABS = ['browse', 'ask', 'review', 'triage'];
+// Browse across every domain the caller can read. Read only: ask, review
+// and triage work on one domain.
+const ALL_DOMAINS = '*';
 
 // Which run the list is limited to, and a way back to it (B11).
 function RunBand({ runId, domain, onClear }) {
@@ -63,7 +66,8 @@ export default function MemoryPage() {
 
   const domains = info?.domains || [];
   const domain = routeDomain || domains[0]?.domain;
-  const current = domains.find((d) => d.domain === domain);
+  const all = domain === ALL_DOMAINS && domains.length > 1;
+  const current = all ? { domain, kind: 'all', canReview: false } : domains.find((d) => d.domain === domain);
 
   const setTab = (next) => {
     const p = new URLSearchParams(params);
@@ -92,9 +96,12 @@ export default function MemoryPage() {
         {domains.length > 0 && (
           <TextField
             select size="small" label="Domain" value={domain || ''}
-            onChange={(e) => navigate(`/memories/${encodeURIComponent(e.target.value)}?tab=${tab}`)}
+            onChange={(e) => navigate(`/memories/${encodeURIComponent(e.target.value)}?tab=${e.target.value === ALL_DOMAINS ? 'browse' : tab}`)}
             sx={{ minWidth: 260, bgcolor: '#fff' }}
           >
+            {domains.length > 1 && (
+              <MenuItem value={ALL_DOMAINS}>All my domains · {domains.reduce((n, d) => n + (d.entries || 0), 0)} entries</MenuItem>
+            )}
             {domains.map((d) => (
               <MenuItem key={d.domain} value={d.domain}>
                 {d.domain}{d.kind === 'project' ? ' (project)' : ''} · {d.entries} entries
@@ -117,9 +124,10 @@ export default function MemoryPage() {
 
       {current && (
         <>
-          <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: '1px solid #e4e4e7' }}>
+          <Tabs value={all ? 'browse' : tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: '1px solid #e4e4e7' }}>
             <Tab value="browse" label="Browse" />
-            <Tab value="ask" label="Ask" />
+            {!all && <Tab value="ask" label="Ask" />}
+            {!all && (
             <Tab
               value="review"
               label={(
@@ -129,7 +137,8 @@ export default function MemoryPage() {
                 </Box>
               )}
             />
-            {run && <Tab value="triage" label="Triage" />}
+            )}
+            {run && !all && <Tab value="triage" label="Triage" />}
           </Tabs>
           {run && (tab === 'browse' || tab === 'triage') && (
             <RunBand runId={run} domain={domain} onClear={() => {
@@ -139,20 +148,20 @@ export default function MemoryPage() {
               setParams(p);
             }} />
           )}
-          {tab === 'browse' && (
+          {(tab === 'browse' || all) && (
             <BrowseTab
               key={`${domain}:${run || ''}`} domain={domain} run={run} select={select}
               canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
             />
           )}
-          {tab === 'triage' && run && (
+          {tab === 'triage' && run && !all && (
             <TriageTab
               key={`${domain}:${run}`} domain={domain} run={run}
               canReview={current.canReview ?? info.you?.canReview} onReviewed={loadDomains}
             />
           )}
-          {tab === 'ask' && <AskTab key={domain} domain={domain} />}
-          {tab === 'review' && (
+          {tab === 'ask' && !all && <AskTab key={domain} domain={domain} />}
+          {tab === 'review' && !all && (
             <ReviewTab
               key={domain} domain={domain} kind={current.kind}
               you={{ ...info.you, canReview: current.canReview ?? info.you?.canReview }}

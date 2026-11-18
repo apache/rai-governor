@@ -98,11 +98,15 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
   const [repos, setRepos] = useState([]);
   const [guidanceRepo, setGuidanceRepo] = useState('');
 
+  // Every domain the caller can read (the Memory page's "All my domains").
+  const all = domain === '*';
+
   useEffect(() => {
+    if (all) return undefined;
     let live = true;
     memoryService.guidanceRepos(domain).then((o) => { if (live) setRepos(o.repos || []); }, () => {});
     return () => { live = false; };
-  }, [domain]);
+  }, [domain, all]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -186,7 +190,7 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
     <Box>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ mb: 2 }}>
         <TextField
-          size="small" fullWidth placeholder="Search titles and summaries"
+          size="small" fullWidth placeholder="Search titles, summaries, repositories, runs and finding ids"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') setQuery(q.trim()); }}
@@ -263,7 +267,7 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
             </Box>
             {hits.length === 0 && (
               <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                {query ? 'Nothing matches.' : 'Nothing recorded in this domain yet.'}
+                {query ? 'Nothing matches.' : `Nothing recorded in ${all ? 'your domains' : 'this domain'} yet.`}
               </Typography>
             )}
             {hits.map((hit) => (
@@ -272,7 +276,9 @@ export default function BrowseTab({ domain, run, select, canReview, onReviewed }
                 onClick={() => { setSelected(hit.id); listRef.current?.focus(); }}
                 checked={checked.has(hit.id)}
                 onCheck={canReview ? (on) => toggle(hit.id, on) : undefined}
-                extra={run && REUSABLE.includes(hit.type) && !hit.status ? (
+                extra={all ? (
+                  <Chip label={hit.domain} size="small" sx={{ height: 18, fontSize: '0.68rem', bgcolor: '#f4f4f5', border: '1px solid #e4e4e7' }} />
+                ) : run && REUSABLE.includes(hit.type) && !hit.status ? (
                   <Chip label={select === 'findings' ? 'Reusable: kept out of the batch' : 'Reusable'} size="small"
                     sx={{ height: 18, fontSize: '0.68rem', bgcolor: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe' }} />
                 ) : null}

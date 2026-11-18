@@ -70,6 +70,34 @@ describe('MemoryPage', () => {
     expect(await screen.findByText(/No memory domain dom-nope/)).toBeInTheDocument();
   });
 
+  it('browses every readable domain together, read only', async () => {
+    memoryService.domains.mockResolvedValue({
+      domains: [
+        { domain: 'whimsy', kind: 'project', canReview: true, entries: 2, raw: 1, due: 0, review: 1 },
+        { domain: 'tomcat', kind: 'project', canReview: true, entries: 3, raw: 0, due: 0, review: 0 },
+      ],
+      you: { author: 'human:asf:bob', canWrite: true, canReview: true },
+    });
+    memoryService.search.mockResolvedValue({ hits: [{ id: 'mem-tomcat-a1', domain: 'tomcat', title: 'Open redirect', trust_tier: 'raw', type: 'fact', created: '2026-11-01' }] });
+    memoryService.get.mockResolvedValue({ frontmatter: { id: 'mem-tomcat-a1', domain: 'tomcat', trust_tier: 'raw' }, body: '' });
+    memoryService.history.mockResolvedValue({ id: 'mem-tomcat-a1', versions: [], reviews: [] });
+    page('/memories/*?tab=review');
+    expect(await screen.findByText('Open redirect')).toBeInTheDocument();
+    expect(memoryService.search).toHaveBeenCalledWith('*', expect.any(Object));
+    expect(screen.getAllByRole('combobox')[0]).toHaveTextContent('All my domains · 5 entries');
+    expect(screen.getByText('tomcat')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Review/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Ask' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(memoryService.guidanceRepos).not.toHaveBeenCalled();
+  });
+
+  it('offers all domains only when there is more than one', async () => {
+    memoryService.domains.mockResolvedValue(DOMAINS);
+    page('/memories/*');
+    expect(await screen.findByText(/No memory domain \*/)).toBeInTheDocument();
+  });
+
   it('says there is nothing to read when no domain is readable', async () => {
     memoryService.domains.mockResolvedValue({ domains: [], you: { author: 'human:asf:eve' } });
     page('/memories');

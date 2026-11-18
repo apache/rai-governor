@@ -182,6 +182,29 @@ class MemoryService:
         )
         return [_summary(r) for r in rows]
 
+    async def search_page(
+        self,
+        domains: List[str],
+        query: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        due_by: Optional[date] = None,
+        limit: int = 20,
+        offset: int = 0,
+        include_inactive: bool = False,
+        oldest_first: bool = False,
+        review_queue: bool = False,
+        origins: Optional[List[str]] = None,
+        disposition: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """One page of summaries over one or more domains, each with its
+        domain, and how many match in all."""
+        rows, total = await asyncio.to_thread(
+            self.index.search_page,
+            domains, query, filters, due_by, include_inactive, limit, oldest_first, review_queue,
+            origins, disposition, offset,
+        )
+        return {"hits": [{**_summary(r), "domain": r.get("domain")} for r in rows], "total": total}
+
     async def domains(self) -> List[str]:
         return await asyncio.to_thread(self.index.domains)
 

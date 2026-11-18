@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException
 
@@ -117,9 +117,13 @@ class MemoryIndex:
         except Exception:
             return None
 
-    def search(
+    def search(self, *args, **kwargs) -> List[Dict[str, Any]]:
+        """``search_page``'s hits alone, from the first."""
+        return self.search_page(*args, **kwargs)[0]
+
+    def search_page(
         self,
-        domain: str,
+        domain: Union[str, List[str]],
         query: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         due_by: Optional[date] = None,
@@ -129,10 +133,17 @@ class MemoryIndex:
         review_queue: bool = False,
         origins: Optional[List[str]] = None,
         disposition: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """``origins``: any of these. ``disposition``: a kind, "any" for
-        decided, "none" for not decided."""
-        selector: Dict[str, Any] = {"domain": domain}
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """One page of matching rows, and how many match in all.
+
+        ``domain``: one, or a list searched together. ``origins``: any of
+        these. ``disposition``: a kind, "any" for decided, "none" for not
+        decided. A query word matches a word of the entry's title, summary,
+        origin, run or finding id, or a part of one ("governor" in
+        "rai-governor"), or the start of one ("gov")."""
+        domains = [domain] if isinstance(domain, str) else list(domain)
+        selector: Dict[str, Any] = {}
         # The review queue: raw entries, and others past their review date.
         # Chosen before the limit, or a domain's older reviewed entries fill
         # the window and newer raw ones never reach the Review tab.
@@ -141,7 +152,9 @@ class MemoryIndex:
             if key not in FILTER_FIELDS:
                 raise ValueError(f"cannot filter on {key!r}")
             selector[key] = value
-        rows = self.db.find(INDEX_DB, selector, limit=None)
+        rows = []
+        for d in domains:
+            rows += self.db.find(INDEX_DB, {"domain": d, **selector}, limit=None)
 
         terms = query_terms(query)
         want_origins = set(origins or ())
@@ -169,10 +182,8 @@ class MemoryIndex:
                 continue
             score = 0
             if terms:
-                words = set(_WORD_RE.findall(
-                    f"{row.get('title') or ''} {row.get('summary') or ''}".lower()
-                ))
-                score = sum(1 for t in terms if t in words)
+                words = _row_words(row)
+                score = sum(1 for t in terms if _matches(t, words))
                 if score == 0:
                     continue
             hits.append((score, row.get("created") or "", row))
@@ -180,7 +191,9 @@ class MemoryIndex:
         # first for a review queue. Two stable sorts: date, then score.
         hits.sort(key=lambda h: h[1], reverse=not oldest_first)
         hits.sort(key=lambda h: h[0], reverse=True)
-        return [row for _, _, row in hits[: max(1, min(limit, MAX_HITS))]]
+        start = max(0, offset)
+        page = hits[start:start + max(1, min(limit, MAX_HITS))]
+        return [row for _, _, row in page], len(hits)
 
     def domains(self) -> List[str]:
         """Every domain that has an entry. list_all, because find() takes
@@ -263,6 +276,29 @@ _STOPWORDS = frozenset(
     "of on or our that the their there these this to was we were what when where "
     "which who why will with you".split()
 )
+
+
+# Words split further at these, so a query finds "governor" in
+# "rai-governor" and "006" in "finding-006".
+_PART_SPLIT = re.compile(r"[-_./:]+")
+
+
+def _row_words(row: Dict[str, Any]) -> set:
+    """The words a query is matched against: the title, summary, origin
+    (which names the repository), run and finding id, whole and in parts."""
+    finding = ((row.get("evidence") or {}).get("finding") or {}).get("global_id")
+    text = " ".join(str(x) for x in (row.get("title"), row.get("summary"), row.get("origin"),
+                                     row.get("run"), finding) if x).lower()
+    words = set()
+    for w in _WORD_RE.findall(text):
+        words.add(w)
+        words.update(part for part in _PART_SPLIT.split(w) if part)
+    return words
+
+
+def _matches(term: str, words: set) -> bool:
+    """A word itself, or the start of one: typing "gov" finds governor."""
+    return term in words or (len(term) >= 2 and any(w.startswith(term) for w in words))
 
 
 def query_terms(query: Optional[str]) -> List[str]:
