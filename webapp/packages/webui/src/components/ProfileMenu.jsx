@@ -28,7 +28,7 @@ const isAdminPanelEnabled = () => {
 };
 
 const ProfileMenu = () => {
-  const { user, logout, isSessionAuth, refreshWorkspaces } = useAuth();
+  const { user, logout, logoutEverywhere, isSessionAuth, refreshWorkspaces } = useAuth();
   const [anchorEl, setAnchorEl] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [snack, setSnack] = useState(null);
@@ -45,6 +45,15 @@ const ProfileMenu = () => {
   const handleLogout = () => {
     logout();
     handleClose();
+  };
+
+  const handleLogoutEverywhere = async () => {
+    handleClose();
+    try {
+      await logoutEverywhere();
+    } catch (e) {
+      setSnack({ severity: 'error', message: e.message || 'Sign out everywhere failed.' });
+    }
   };
 
   const handleNavigate = (path) => {
@@ -209,6 +218,9 @@ const ProfileMenu = () => {
         )}
         <Divider />
         <MenuItem onClick={handleLogout}>Logout</MenuItem>
+        {isSessionAuth && logoutEverywhere && (
+          <MenuItem onClick={handleLogoutEverywhere}>Sign out everywhere</MenuItem>
+        )}
       </Menu>
 
       <Snackbar

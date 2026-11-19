@@ -1,6 +1,7 @@
 # webapp/packages/api/user-service/routes_auth.py
 """Phase B auth routes: /auth/providers, /auth/login/{type}, /auth/callback/{type},
-/auth/logout, /auth/refresh-workspaces.
+/auth/logout, /auth/logout-everywhere, /auth/admin/users/{uid}/end-sessions,
+/auth/refresh-workspaces.
 
 Why a separate module instead of adding to routes.py: keeps the auth
 surface self-contained so it's obvious what turns on when Phase B is
@@ -31,6 +32,7 @@ from models.auth import (
     RefreshWorkspacesDiff,
 )
 from models.session import SessionUser
+from routes import get_current_user
 from services.database_service import DatabaseService
 from services.observability_service import get_observability_service
 from services.session_service import SessionService, get_session_service, user_from_session
@@ -74,6 +76,26 @@ def _auth_event(event_type: str, provider_type: str, *, level: str = "INFO",
         message=f"{message} ({provider_type}{': ' + reason if reason else ''})",
         metadata=metadata,
     )
+
+
+def _sessions_ended_event(actor_uid: str, target_uid: str, count: int,
+                          provider_type: str, by: str) -> None:
+    """Record all of a user's sessions being ended: by the user (signing out
+    everywhere, ``by="self"``) or by a site admin (``by="site_admin"``)."""
+    get_observability_service().log(
+        event_type="auth_sessions_ended", level="INFO", user_id=actor_uid,
+        message=(f"Signed out everywhere ({count} sessions)" if by == "self"
+                 else f"Site admin ended {count} sessions of {target_uid}"),
+        metadata={"provider": provider_type, "target_uid": target_uid, "count": count, "by": by},
+    )
+
+
+def _signed_out_response() -> Response:
+    """204 that clears the session cookie and what the browser kept."""
+    resp = Response(status_code=204)
+    resp.delete_cookie(SessionService.cookie_name(), path="/")
+    resp.headers["Clear-Site-Data"] = '"cookies", "storage", "cache"'
+    return resp
 
 
 MAX_RETURN_TO = 2048
@@ -291,10 +313,37 @@ async def logout(
     await session_svc.delete(sid)
     if session:
         _auth_event("auth_logout", session.provider_type, user_id=session.user_uid)
-    resp = Response(status_code=204)
-    resp.delete_cookie(SessionService.cookie_name(), path="/")
-    resp.headers["Clear-Site-Data"] = '"cookies", "storage", "cache"'
-    return resp
+    return _signed_out_response()
+
+
+@router.post("/auth/logout-everywhere")
+async def logout_everywhere(
+    sid: Optional[str] = Cookie(default=None, alias="gofannon_sid"),
+    session_svc: SessionService = Depends(_get_session_svc),
+):
+    """Delete every session of the signed-in user, this one included, and
+    clear the cookie as logout does."""
+    session = await session_svc.get_by_id(sid)
+    if not session:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    count = await session_svc.delete_all_for_user(session.user_uid)
+    _sessions_ended_event(session.user_uid, session.user_uid, count, session.provider_type, "self")
+    return _signed_out_response()
+
+
+@router.post("/auth/admin/users/{uid}/end-sessions")
+async def admin_end_sessions(
+    uid: str,
+    user: dict = Depends(get_current_user),
+    session_svc: SessionService = Depends(_get_session_svc),
+) -> dict:
+    """Site admins: end every session of ``uid``. A site admin viewing as a
+    regular user is not one here."""
+    if not user.get("is_site_admin"):
+        raise HTTPException(status_code=403, detail="Only site admins can end another user's sessions")
+    count = await session_svc.delete_all_for_user(uid)
+    _sessions_ended_event(user.get("uid"), uid, count, user.get("provider_type") or "", "site_admin")
+    return {"uid": uid, "ended": count}
 
 
 @router.post("/auth/refresh-workspaces", response_model=RefreshWorkspacesDiff)

@@ -139,6 +139,24 @@ const sessionAuth = {
     } catch { /* firebase not initialized; fine */ }
   },
 
+  // Ends every session of this user, in every browser, this one included.
+  async logoutEverywhere() {
+    const base = appConfig.api.baseUrl;
+    const resp = await fetch(`${base}/auth/logout-everywhere`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    // On a 401 this session had already ended, so nothing else was ended either.
+    if (resp.status === 401) {
+      throw new Error('Your session has ended. Sign in again to sign out everywhere.');
+    }
+    if (!resp.ok) {
+      throw new Error(`Sign out everywhere failed: ${resp.status}`);
+    }
+    this._currentUser = null;
+    this._emit();
+  },
+
   getCurrentUser() {
     return this._currentUser;
   },

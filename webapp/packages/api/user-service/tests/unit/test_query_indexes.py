@@ -84,3 +84,14 @@ def test_memory_makes_its_indexes_and_every_query_has_one(monkeypatch):
     index.for_run("r1")
     assert rec.indexes.get(mi.INDEX_DB), "get_memory_service made no indexes"
     assert _unindexed(rec, mi.INDEX_DB) == []
+
+
+def test_every_session_query_has_an_index(monkeypatch):
+    from services import session_service as ss
+    monkeypatch.setattr(ss, "_indexes_ensured", False)
+    rec = Recorder()
+    rec.delete_many = lambda db_name, ids: []
+    svc = ss.SessionService(rec)
+    svc._delete_all_for_user_sync("asf:alice")
+    assert rec.queries, "no session query was made"
+    assert _unindexed(rec, ss._SESSIONS_COLLECTION) == []

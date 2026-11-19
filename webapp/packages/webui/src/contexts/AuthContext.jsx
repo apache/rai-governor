@@ -82,6 +82,14 @@ export const AuthProvider = ({ children }) => {
     loading, 
     error,
     logout,
+    // Session auth only: ends every session of this user. Undefined
+    // otherwise, so the menu leaves the item out.
+    logoutEverywhere: typeof authService.logoutEverywhere === 'function'
+      ? async () => {
+        await authService.logoutEverywhere();
+        setUser(null);
+      }
+      : undefined,
     loginWithEmail,
     loginWithProvider,
     loginAsMockUser,

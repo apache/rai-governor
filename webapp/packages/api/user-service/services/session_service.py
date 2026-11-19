@@ -14,7 +14,8 @@ Sessions live in the ``user_sessions`` collection under the SHA-256 of
 the cookie value (``session_doc_id``), never the value itself: whoever can
 read the collection can't use what they read as a cookie. Sessions are never revoked
 server-side at login time of another browser; concurrent sessions are
-allowed.
+allowed. The user can end all of their sessions at once, and a site admin
+can end all of anyone's (``delete_all_for_user``).
 
 Expiry is a hard wall: the ``expires_at`` field is checked on every
 access, and expired sessions are returned as "not authenticated" even
@@ -45,6 +46,22 @@ logger = logging.getLogger(__name__)
 
 _SESSIONS_COLLECTION = "user_sessions"
 _COOKIE_NAME = "gofannon_sid"
+
+# Most sessions one user's "end all sessions" reads; an int, because some
+# backends' find() takes no None.
+_USER_SESSIONS_CAP = 10000
+
+_indexes_ensured = False
+
+
+def _ensure_indexes(db) -> None:
+    """Create the indexes session queries need. Idempotent."""
+    global _indexes_ensured
+    if _indexes_ensured:
+        return
+    # Ending all of a user's sessions: {"userUid": uid}.
+    db.ensure_index(_SESSIONS_COLLECTION, ["userUid"], index_name="by_user_uid")
+    _indexes_ensured = True
 
 
 class SessionService:
@@ -166,6 +183,29 @@ class SessionService:
         if not sid:
             return
         await self._delete_doc(session_doc_id(sid))
+
+    async def delete_all_for_user(self, uid: str) -> int:
+        """End every session of ``uid``, wherever it was signed in. Returns
+        how many were deleted."""
+        return await asyncio.to_thread(self._delete_all_for_user_sync, uid)
+
+    def _delete_all_for_user_sync(self, uid: str) -> int:
+        _ensure_indexes(self.db)
+        docs = self.db.find(_SESSIONS_COLLECTION, {"userUid": uid},
+                            fields=["_id", "userUid"], limit=_USER_SESSIONS_CAP)
+        ids = [d["_id"] for d in docs if d.get("_id") and d.get("userUid") == uid]
+        deleted = 0
+        # A membership refresh saving one of them at the same moment makes
+        # its delete conflict; the retry deletes the new revision.
+        for _ in range(3):
+            if not ids:
+                break
+            results = self.db.delete_many(_SESSIONS_COLLECTION, ids)
+            deleted += sum(1 for r in results if r.get("ok"))
+            ids = [r["id"] for r in results if not r.get("ok") and r.get("id")]
+        if ids:
+            logger.warning("%d sessions of %s could not be deleted", len(ids), uid)
+        return deleted
 
     async def _delete_doc(self, doc_id: str) -> None:
         try:

@@ -15,7 +15,7 @@ Providers are configured in `auth.yaml` (`AUTH_CONFIG_PATH`). Only the enabled o
 
 Multi-factor authentication is the identity provider's: Governor does not add a factor of its own, and the providers don't tell it whether one was used.
 
-A login that every provider refuses never gets a session. Every login, refused login and logout is recorded as an observability event (`auth_success`, `auth_failure`, `auth_logout`) with the user, the provider and, for a refusal, why. The OAuth code, the state and the return path are never logged.
+A login that every provider refuses never gets a session. Every login, refused login and logout is recorded as an observability event (`auth_success`, `auth_failure`, `auth_logout`, and `auth_sessions_ended` when all of a user's sessions are ended) with the user, the provider and, for a refusal, why. The OAuth code, the state and the return path are never logged.
 
 ## The flow
 
@@ -34,6 +34,7 @@ The `redirect_uri` sent to the provider is `AUTH_CALLBACK_BASE_URL` + `/auth/cal
 | Stored as | A doc in `user_sessions` whose id is the SHA-256 of the cookie value. The value itself is not stored, so reading the database doesn't give anyone a session |
 | Lifetime | `session_ttl_hours` in `auth.yaml` (default 24), counted from login. There is no idle timeout |
 | Concurrent sessions | Unlimited. Signing in elsewhere doesn't end other sessions |
+| Ending all of a user's sessions | "Sign out everywhere" in the profile menu (`POST /auth/logout-everywhere`) deletes every session of the signed-in user, this one included, and clears the cookie as logout does. A site admin can end every session of any uid with `POST /auth/admin/users/{uid}/end-sessions` (API only; there is no page for it); anyone else gets 403, including a site admin viewing as a regular user. Both are recorded as `auth_sessions_ended` with who, whose sessions and how many. Sessions are found by an index on `userUid` |
 | Memberships | Read at login, then read again on the first request after `workspace_refresh_minutes` (default 15). This applies only to providers that can look them up without the user present: ASF (through LDAP) and `dev_stub`. GitHub, Google and Microsoft keep no token to do it with, so their sessions keep the memberships they logged in with. When LDAP fails, the session keeps what it had. A user banned since login has their session deleted |
 | Site-admin flag | Recomputed from `site_admins` at the same refresh |
 | Logout | Deletes this session and clears the cookie, with `Clear-Site-Data: "cookies", "storage", "cache"` |
@@ -41,12 +42,12 @@ The `redirect_uri` sent to the provider is `AUTH_CALLBACK_BASE_URL` + `/auth/cal
 
 ### With the identity provider
 
-Governor's session and the provider's session are independent. Signing out of Governor doesn't sign the user out of the provider, and signing out of the provider (or being removed there) doesn't end the Governor session. For ASF, removal from a group or a ban is picked up at the next membership refresh. For the other providers it applies only at the next sign-in, at most `session_ttl_hours` later.
+Governor's session and the provider's session are independent. Signing out of Governor doesn't sign the user out of the provider, and signing out of the provider (or being removed there) doesn't end the Governor session. For ASF, removal from a group or a ban is picked up at the next membership refresh. For the other providers it applies only at the next sign-in, at most `session_ttl_hours` later. A site admin who needs it sooner can end that user's sessions.
 
 ### Not decided yet
 
 - Whether to add an idle timeout, and its length.
-- A way for a user or an admin to see and end sessions, including all of a user's sessions at once.
+- A way for a user or an admin to list sessions and end one of them (ending all of a user's sessions at once is done).
 - Step-up authentication for site-admin actions.
 - A periodic sweep of expired sessions.
 
