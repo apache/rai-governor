@@ -17,7 +17,7 @@ Three levels:
 | Agent code, config and env vars | CouchDB `agents`, `deployments` | Restricted | Agent env vars are plaintext and documented as not for secrets |
 | Run inputs, outputs and traces | CouchDB `gofannon_runs` | Restricted | Inputs are stored with tokens redacted; trace lines (`print`, logging, errors) go through `redact()` |
 | Agent data store | CouchDB `agent_data_store` | Restricted | Per user (or project) and namespace |
-| Memory entries | S3 (SeaweedFS in production), `memory/` in the bucket; index in CouchDB `memory_index`, `memory_reviews`, `memory_usage` | Restricted | Per domain; written by site admins and agents |
+| Memory entries | S3 (SeaweedFS in production), `memory/` in the bucket; index in CouchDB `memory_index`, `memory_reviews`, `memory_usage` | Restricted | Per domain (see below); written by agents' runs and by reviewers |
 | Profile and usage | CouchDB `users` | Restricted | Name, email, spend |
 | Chat sessions | CouchDB `sessions` | Restricted | Owner only |
 | Workers, workload catalogue | CouchDB `gofannon_workers`, `project_workloads` | Internal | |
@@ -28,6 +28,7 @@ Three levels:
 - **A user's saved LLM keys:** the user, masked. Calls use the real key.
 - **Fixed inputs:** site admins. Members starting a workload see their own inputs and only the names of the fixed ones.
 - **Run inputs and results:** the run's owner and the members of its project (`can_see_run`). Only the owner, the project's PMC or a site admin can stop it.
+- **Memory:** a run for a project (every workload run) writes to the project's domain, named for it, and reads only that domain and any `MEMORY_OPEN_DOMAINS`, guidance and earlier decisions included. The project's committers and PMC and site admins read it; its PMC and site admins review it. A run for no project writes to the shared domains (`MEMORY_DOMAINS`, default `dom-scan`), which only site admins and `MEMORY_WRITERS` read unless listed in `MEMORY_OPEN_DOMAINS`. What earlier runs for no project wrote to `dom-scan`, triage included, isn't moved, and a project's runs don't see it unless `dom-scan` is open. Rules in [memory.md](../memory.md).
 - **Agents, pipelines, deployments, MCP and specs:** only those allowed to run agent code (`AGENT_EXEC_ALLOWED`), since agent config can hold secrets.
 
 ## Where data goes

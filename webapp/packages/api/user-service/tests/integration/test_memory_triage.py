@@ -273,3 +273,43 @@ async def test_evidence_survives_a_review_and_use_is_counted(c):
     assert listed["usage"][g] == {"loaded": 1, "cited": 1}
     with pytest.raises(ValueError):
         await c.mem.annotate(f, {"x": "y" * 20000})
+
+
+ADMIN = {"uid": "asf:root", "is_site_admin": True, "workspaces": []}
+
+
+@pytest.mark.asyncio
+async def test_a_projects_scans_remember_only_their_own_triage(c, monkeypatch):
+    # A scan of the same repo by an admin run for no project lands in
+    # dom-scan, with its own decision and guidance.
+    shared = AgentMemory(c.db, "asvs_consolidate", user_id="asf:root", is_site_admin=True)
+    assert shared.domains == ["dom-scan"]
+    sf = await shared.write(summary="Low: shared", body="# shared\n",
+                            origin=f"asvs:finding:{REPO}/atr", title="shared")
+    _as(ADMIN)
+    sg = c.post(f"/memory/entries/{sf}/disposition", json={
+        "kind": "by_design", "why": "shared", "guidance": {"text": "Shared guidance."}}).json()["guidance"][0]
+
+    # The project's run writes to the project's domain and reads only it.
+    pf = await _finding(c)
+    _as(PMC)
+    pg = c.post(f"/memory/entries/{pf}/disposition", json={
+        "kind": "by_design", "why": "ours", "guidance": {"text": "Our guidance."}}).json()["guidance"][0]
+    assert c.mem.domains == ["tooling"] and _fm(c, pf)["domain"] == "tooling"
+    assert [e["id"] for e in (await c.mem.guidance(REPO))["entries"]] == [pg]
+    seen = await c.mem.search(None, domain="*", include_inactive=True, disposition="any", limit=100)
+    assert {h["id"] for h in seen} == {pf} and {h["domain"] for h in seen} == {"tooling"}
+    assert await c.mem.get(sf) is None
+
+    # The run for no project keeps to dom-scan, as before.
+    assert [e["id"] for e in (await shared.guidance(REPO))["entries"]] == [sg]
+
+    # The project's findings are its members' and site admins', not
+    # everyone's who reads dom-scan.
+    monkeypatch.setenv("MEMORY_WRITERS", "asf:writer")
+    writer = {"uid": "asf:writer", "workspaces": []}
+    _as(writer)
+    assert c.get(f"/memory/entries/{sf}").status_code == 200
+    for who, code in ((COMMITTER, 200), (ADMIN, 200), (OTHER_PMC, 404), (writer, 404)):
+        _as(who)
+        assert c.get(f"/memory/entries/{pf}").status_code == code
