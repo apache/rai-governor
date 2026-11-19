@@ -57,6 +57,10 @@ _COOKIE_NAME = "gofannon_sid"
 # backends' find() takes no None.
 _USER_SESSIONS_CAP = 10000
 
+# Sessions one sweep query reads; a sweep repeats it until fewer come back.
+_SWEEP_BATCH = 500
+_SWEEP_MAX_BATCHES = 20
+
 _indexes_ensured = False
 
 
@@ -67,6 +71,9 @@ def _ensure_indexes(db) -> None:
         return
     # Ending all of a user's sessions: {"userUid": uid}.
     db.ensure_index(_SESSIONS_COLLECTION, ["userUid"], index_name="by_user_uid")
+    # The sweep: {"expiresAt": {"$lt": now}} and {"lastUsedAt": {"$lt": cutoff}}.
+    db.ensure_index(_SESSIONS_COLLECTION, ["expiresAt"], index_name="by_expires_at")
+    db.ensure_index(_SESSIONS_COLLECTION, ["lastUsedAt"], index_name="by_last_used_at")
     _indexes_ensured = True
 
 
@@ -220,6 +227,41 @@ class SessionService:
         if ids:
             logger.warning("%d sessions of %s could not be deleted", len(ids), uid)
         return deleted
+
+    def sweep_sync(self) -> int:
+        """Delete sessions past their lifetime or idle limit, which would be
+        refused if presented, so ones never presented again don't pile up.
+        Returns how many were deleted.
+
+        Every API worker runs this. It is safe to: each query reads only
+        what an index finds, a session is checked again before it is
+        deleted, and one already deleted by another worker counts as gone.
+        """
+        _ensure_indexes(self.db)
+        now = naive_utc_now()
+        # Stored timestamps are naive UTC ISO strings, which sort as times.
+        selectors = [{"expiresAt": {"$lt": now.isoformat()}}]
+        if self._idle is not None:
+            selectors.append({"lastUsedAt": {"$lt": (now - self._idle).isoformat()}})
+        deleted = 0
+        for selector in selectors:
+            for _ in range(_SWEEP_MAX_BATCHES):
+                docs = self.db.find(_SESSIONS_COLLECTION, selector, limit=_SWEEP_BATCH)
+                ids = [d["_id"] for d in docs if d.get("_id") and self._ended(d, now)]
+                if ids:
+                    deleted += sum(1 for r in self.db.delete_many(_SESSIONS_COLLECTION, ids)
+                                   if r.get("ok"))
+                if len(docs) < _SWEEP_BATCH or not ids:
+                    break
+        return deleted
+
+    def _ended(self, doc: dict, now) -> bool:
+        """Whether get_by_id would refuse this session doc."""
+        try:
+            session = Session(**doc)
+        except Exception:
+            return True
+        return session.expires_at <= now or self.is_idle(session)
 
     async def _delete_doc(self, doc_id: str) -> None:
         try:

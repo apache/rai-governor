@@ -26,6 +26,9 @@ async def lifespan(app: FastAPI):
     - The eviction task deletes completed run records older than the
       retention window (7 days by default).
 
+    - The session sweep deletes sessions past their lifetime or idle
+      limit, hourly, when sign-in providers are configured.
+
     Both are best-effort: failures log and the task continues. On
     shutdown they're cancelled cleanly.
     """
@@ -162,6 +165,36 @@ async def lifespan(app: FastAPI):
                     level="WARNING",
                 )
 
+    async def _session_sweeper():
+        # Every worker sweeps; that is harmless (see SessionService.sweep_sync).
+        # The random start and interval keep the workers from sweeping at
+        # the same moment after a deploy.
+        import random
+        from config import settings as app_settings
+        from services.database_service import get_database_service
+        from services.session_service import get_session_service
+        await asyncio.sleep(random.uniform(60.0, 600.0))
+        while True:
+            try:
+                svc = get_session_service(get_database_service(app_settings))
+                deleted = await asyncio.to_thread(svc.sweep_sync)
+                if deleted:
+                    logger.log(
+                        "session_sweep",
+                        f"Deleted {deleted} sessions past their lifetime or idle limit.",
+                        level="INFO",
+                        metadata={"count": deleted},
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.log(
+                    "session_sweep_error",
+                    f"Session sweep failed: {exc}",
+                    level="WARNING",
+                )
+            await asyncio.sleep(3600.0 + random.uniform(-300.0, 300.0))
+
     await asyncio.to_thread(get_run_registry().heartbeat)
     poller_task = asyncio.create_task(_stop_poller())
     evictor_task = asyncio.create_task(_evictor())
@@ -169,6 +202,9 @@ async def lifespan(app: FastAPI):
     sweeper_task = asyncio.create_task(_orphan_sweeper())
     checkpoint_task = asyncio.create_task(_event_checkpointer())
     background = (poller_task, evictor_task, heartbeat_task, sweeper_task, checkpoint_task)
+    from auth import get_registry
+    if get_registry().has_any():
+        background += (asyncio.create_task(_session_sweeper()),)
 
     try:
         yield

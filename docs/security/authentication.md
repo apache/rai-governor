@@ -39,7 +39,7 @@ The `redirect_uri` sent to the provider is `AUTH_CALLBACK_BASE_URL` + `/auth/cal
 | Memberships | Read at login, then read again on the first request after `workspace_refresh_minutes` (default 15). This applies only to providers that can look them up without the user present: ASF (through LDAP) and `dev_stub`. GitHub, Google and Microsoft keep no token to do it with, so their sessions keep the memberships they logged in with. When LDAP fails, the session keeps what it had. A user banned since login has their session deleted |
 | Site-admin flag | Recomputed from `site_admins` at the same refresh |
 | Logout | Deletes this session and clears the cookie, with `Clear-Site-Data: "cookies", "storage", "cache"` |
-| Expired sessions | Refused and deleted when next presented. Nothing sweeps the ones never presented again |
+| Expired sessions | Refused and deleted when next presented. Every API worker also sweeps hourly, starting at a random time and with a random spread of a few minutes, deleting sessions past their lifetime or idle limit (`session_sweep` event with the count). The sweep reads only what the indexes on `expiresAt` and `lastUsedAt` find and checks each session again before deleting it, so workers sweeping at once is harmless. It runs only when a sign-in provider is configured, and needs CouchDB: the other database backends answer only equality queries, so there it finds nothing |
 
 ### With the identity provider
 
@@ -49,7 +49,6 @@ Governor's session and the provider's session are independent. Signing out of Go
 
 - A way for a user or an admin to list sessions and end one of them (ending all of a user's sessions at once is done).
 - Step-up authentication for site-admin actions.
-- A periodic sweep of expired sessions.
 
 ## Site admins and viewing as a user
 

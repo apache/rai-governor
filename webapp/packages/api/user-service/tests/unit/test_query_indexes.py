@@ -9,6 +9,7 @@ from datetime import date
 
 import pytest
 
+from config import settings
 from services import run_registry as rr
 from services.memory import index as mi
 from services.memory import service as ms
@@ -91,7 +92,10 @@ def test_every_session_query_has_an_index(monkeypatch):
     monkeypatch.setattr(ss, "_indexes_ensured", False)
     rec = Recorder()
     rec.delete_many = lambda db_name, ids: []
+    monkeypatch.setattr(settings, "AUTH_CONFIG", {"session_idle_hours": 8})
     svc = ss.SessionService(rec)
     svc._delete_all_for_user_sync("asf:alice")
+    svc.sweep_sync()
+    assert any("lastUsedAt" in sel for db, sel, _ in rec.queries)
     assert rec.queries, "no session query was made"
     assert _unindexed(rec, ss._SESSIONS_COLLECTION) == []
