@@ -35,8 +35,12 @@ from services.memory.service import (
     human_author,
 )
 from services.memory.triage import MAX_GUIDANCE_CHARS, Kind, Triage
+from services.rate_limit import per_user
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+# Writes, reviews and triage decisions share one limit.
+_write_limit = [per_user("memory_write", get_current_user)]
 
 
 def _domain(domain: str, user: dict) -> str:
@@ -211,7 +215,7 @@ async def domains(
     }
 
 
-@router.get("/{domain}/search")
+@router.get("/{domain}/search", dependencies=[per_user("memory_search", get_current_user)])
 async def search(
     domain: str,
     q: Optional[str] = None,
@@ -272,7 +276,7 @@ def run_summary(run_id: str, user: dict, admin_sees_all: bool = False) -> Dict[s
     return {**s, "visible": True}
 
 
-@router.post("/reviews/batch")
+@router.post("/reviews/batch", dependencies=_write_limit)
 async def batch_review(
     body: BatchReviewBody,
     user: dict = Depends(get_current_user),
@@ -293,7 +297,7 @@ async def batch_review(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("/reviews/batch/{batch_id}/undo")
+@router.post("/reviews/batch/{batch_id}/undo", dependencies=_write_limit)
 async def undo_batch(
     batch_id: str,
     user: dict = Depends(get_current_user),
@@ -405,7 +409,7 @@ async def entry_version(
     return {"version": version, "frontmatter": entry.front.to_dict(), "body": entry.body}
 
 
-@router.post("/entries/{entry_id}/review")
+@router.post("/entries/{entry_id}/review", dependencies=_write_limit)
 async def review_entry(
     entry_id: str,
     body: ReviewBody,
@@ -427,7 +431,7 @@ async def review_entry(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/{domain}/entries", status_code=201)
+@router.post("/{domain}/entries", status_code=201, dependencies=_write_limit)
 async def write_entry(
     domain: str,
     body: WriteBody,
@@ -454,7 +458,7 @@ async def write_entry(
     return {"frontmatter": entry.front.to_dict()}
 
 
-@router.post("/{domain}/recall")
+@router.post("/{domain}/recall", dependencies=[per_user("memory_recall", get_current_user)])
 async def recall(
     domain: str,
     body: RecallBody,
@@ -488,7 +492,7 @@ async def _dispose(db, user, ids, body: DispositionBody) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("/entries/{entry_id}/disposition")
+@router.post("/entries/{entry_id}/disposition", dependencies=_write_limit)
 async def dispose_entry(
     entry_id: str,
     body: DispositionBody,
@@ -501,7 +505,7 @@ async def dispose_entry(
     return _single(await _dispose(db, user, [entry_id], body))
 
 
-@router.post("/dispositions/batch")
+@router.post("/dispositions/batch", dependencies=_write_limit)
 async def dispose_batch(
     body: BatchDispositionBody,
     user: dict = Depends(get_current_user),
@@ -512,7 +516,7 @@ async def dispose_batch(
     return await _dispose(db, user, body.ids, body)
 
 
-@router.post("/proposals/accept")
+@router.post("/proposals/accept", dependencies=_write_limit)
 async def accept_proposals(
     body: AcceptProposalsBody,
     user: dict = Depends(get_current_user),
@@ -527,7 +531,7 @@ async def accept_proposals(
         may_read=may_read, may_review=may_review)
 
 
-@router.post("/proposals/reject")
+@router.post("/proposals/reject", dependencies=_write_limit)
 async def reject_proposals(
     body: RejectProposalsBody,
     user: dict = Depends(get_current_user),
@@ -585,7 +589,7 @@ async def digest(
     return await _triage(db).digest_view(_domain(domain, user), repo)
 
 
-@router.post("/digests/{entry_id}/accept")
+@router.post("/digests/{entry_id}/accept", dependencies=_write_limit)
 async def accept_digest(
     entry_id: str,
     body: AcceptDigestBody,

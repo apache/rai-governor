@@ -22,6 +22,7 @@ from dependencies import get_db, get_logger
 from models.workload import RunWorkloadBody, WorkloadBody
 from routes import get_current_user, start_deployment_run
 from services import workload_service as ws
+from services.rate_limit import per_user
 
 router = APIRouter(prefix="/workloads", tags=["workloads"])
 
@@ -207,7 +208,8 @@ def get_one(
     return ws.public_view(w, project, entry.get("defaults"))
 
 
-@router.post("/{workload_id}/run", status_code=202)
+@router.post("/{workload_id}/run", status_code=202,
+             dependencies=[per_user("run_start", get_current_user)])
 async def run_workload(
     workload_id: str,
     body: RunWorkloadBody,

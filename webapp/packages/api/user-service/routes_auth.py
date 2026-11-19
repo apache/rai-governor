@@ -35,6 +35,7 @@ from models.session import SessionUser
 from routes import get_current_user
 from services.database_service import DatabaseService
 from services.observability_service import get_observability_service
+from services.rate_limit import per_ip
 from services.session_service import SessionService, get_session_service, user_from_session
 
 
@@ -154,7 +155,7 @@ async def list_providers() -> AuthProvidersResponse:
     )
 
 
-@router.get("/auth/login/{provider_type}")
+@router.get("/auth/login/{provider_type}", dependencies=[per_ip("login")])
 async def login_redirect(
     provider_type: str,
     request: Request,
@@ -200,7 +201,7 @@ async def login_redirect(
     return resp
 
 
-@router.get("/auth/callback/{provider_type}")
+@router.get("/auth/callback/{provider_type}", dependencies=[per_ip("login")])
 async def login_callback(
     provider_type: str,
     request: Request,

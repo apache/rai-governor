@@ -33,6 +33,7 @@ from routes import get_author_user
 from services import pipeline_io as pio
 from services.database_service import DatabaseService
 from services.observability_service import ObservabilityService
+from services.rate_limit import per_user
 
 router = APIRouter(tags=["pipelines"])
 
@@ -95,7 +96,7 @@ def _run_import(files, label, source, dry_run, db, user, logger):
     return result
 
 
-@router.post("/pipelines/import/github")
+@router.post("/pipelines/import/github", dependencies=[per_user("pipeline_import", get_author_user)])
 async def import_from_github(
     body: GithubImport,
     db: DatabaseService = Depends(get_db),
@@ -116,7 +117,7 @@ async def import_from_github(
     return result
 
 
-@router.post("/pipelines/import/upload")
+@router.post("/pipelines/import/upload", dependencies=[per_user("pipeline_import", get_author_user)])
 async def import_from_upload(
     files: List[UploadFile] = File(...),
     label: Optional[str] = Form(None),

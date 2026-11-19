@@ -26,6 +26,15 @@ os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 from app_factory import create_app
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Rate-limit counters are process-wide; each test starts with none."""
+    from services.rate_limit import limiter
+    limiter.clear()
+    yield
+    limiter.clear()
+
+
 @pytest.fixture
 def app():
     """Create a FastAPI test application instance."""

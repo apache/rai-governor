@@ -71,6 +71,7 @@ from services.observability_service import (
     get_request_user_id,
     get_sanitized_request_data,
 )
+from services.rate_limit import per_user, per_user_or_ip
 from services.user_service import UserService
 from time_utils import naive_utc_now
 
@@ -214,6 +215,11 @@ async def get_author_user(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+# Rate limits for the routes below (services/rate_limit.py).
+_run_start_limit = [per_user("run_start", get_agent_exec_user)]
+_data_store_write_limit = [per_user("data_store_write", get_current_user)]
+
+
 class ListMcpToolsRequest(BaseModel):
     mcp_url: str
     auth_token: Optional[str] = None
@@ -283,7 +289,7 @@ def read_root():
     return {"Hello": "World", "Service": "User-Service"}
 
 
-@router.post("/log/client", status_code=202)
+@router.post("/log/client", status_code=202, dependencies=[per_user_or_ip("client_log")])
 def log_client_event(
     payload: ClientLogPayload,
     request: Request,
@@ -746,7 +752,7 @@ def list_deployments_route(db: DatabaseService = Depends(get_db), user: dict = D
     return [DeployedApi(**dep) for dep in deployments]
 
 
-@router.post("/agents/run-code/stream")
+@router.post("/agents/run-code/stream", dependencies=_run_start_limit)
 async def run_agent_code_stream(
     request: RunCodeRequest,
     req: Request,
@@ -1100,7 +1106,7 @@ async def _await_stoppable(coro, token):
         token.set_on_stop(None)
 
 
-@router.post("/agents/run-code/start", status_code=202)
+@router.post("/agents/run-code/start", status_code=202, dependencies=_run_start_limit)
 async def start_agent_run(
     request: RunCodeRequest,
     req: Request,
@@ -1594,7 +1600,7 @@ async def force_complete_run(
     return {"runId": run_id, "status": "error", "changed": True}
 
 
-@router.post("/agents/run-code", response_model=RunCodeResponse)
+@router.post("/agents/run-code", response_model=RunCodeResponse, dependencies=_run_start_limit)
 async def run_agent_code(
     request: RunCodeRequest,
     req: Request,
@@ -1677,7 +1683,7 @@ async def run_agent_code(
         raise e
 
 
-@router.post("/rest/{friendly_name}")
+@router.post("/rest/{friendly_name}", dependencies=_run_start_limit)
 async def run_deployed_agent_route(
     friendly_name: str, 
     request: Request, 
@@ -1707,7 +1713,7 @@ async def run_deployed_agent_route(
     )
 
 
-@router.post("/rest/{friendly_name}/start", status_code=202)
+@router.post("/rest/{friendly_name}/start", status_code=202, dependencies=_run_start_limit)
 async def start_deployed_agent_run(
     friendly_name: str,
     request: Request,
@@ -2061,7 +2067,8 @@ def get_namespace_stats(
     return NamespaceStats(namespace=namespace, **stats[namespace])
 
 
-@router.put("/data-store/namespaces/{namespace:path}/records/{key:path}", response_model=DataStoreRecord)
+@router.put("/data-store/namespaces/{namespace:path}/records/{key:path}", response_model=DataStoreRecord,
+            dependencies=_data_store_write_limit)
 def set_record(
     namespace: str,
     key: str,
@@ -2085,7 +2092,8 @@ def set_record(
     return DataStoreRecord(**doc)
 
 
-@router.delete("/data-store/namespaces/{namespace:path}/records/{key:path}", status_code=204)
+@router.delete("/data-store/namespaces/{namespace:path}/records/{key:path}", status_code=204,
+               dependencies=_data_store_write_limit)
 def delete_record(
     namespace: str,
     key: str,
@@ -2101,7 +2109,8 @@ def delete_record(
     return
 
 
-@router.delete("/data-store/namespaces/{namespace:path}", response_model=ClearNamespaceResponse)
+@router.delete("/data-store/namespaces/{namespace:path}", response_model=ClearNamespaceResponse,
+               dependencies=_data_store_write_limit)
 def clear_namespace(
     namespace: str,
     store: DataStoreService = Depends(_get_data_store_dep),
