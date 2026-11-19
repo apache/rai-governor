@@ -7,7 +7,7 @@ import governorSymbolUrl from '../assets/governor-symbol.svg';
 export const GOVERNOR_ASPECT = 1013 / 1242;
 
 /**
- * Centrifugal-governor symbol for Apache Governor.
+ * Centrifugal-governor symbol for Governor.
  *
  * The artwork is a detailed engraving (~115 KB of path data), so rather than
  * inlining it into the JS bundle it is loaded once as a static asset and used

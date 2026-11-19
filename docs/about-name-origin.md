@@ -1,6 +1,6 @@
 # Origins of the name Governor
 
-Governor began as a fork of [Gofannon](https://github.com/apache/tooling-gofannon). The name Gofannon is the Welsh god of tooling, and there are alternate deities nearby, including Goibniu (pronounced *Gov-nyoo*), his Irish relative. For simplicity, the similar-sounding name Apache Governor sits well, in the sense of a governor in machinery, which automatically controls a machine's operation to keep it safe.
+Governor began as a fork of [Gofannon](https://github.com/apache/tooling-gofannon). The name Gofannon is the Welsh god of tooling, and there are alternate deities nearby, including Goibniu (pronounced *Gov-nyoo*), his Irish relative. For simplicity, the similar-sounding name Governor sits well, in the sense of a governor in machinery, which automatically controls a machine's operation to keep it safe.
 
 ## The governor in machinery
 

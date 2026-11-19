@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="website/static/img/governor-wordmark-dark.svg">
-    <img src="website/static/img/governor-wordmark.svg" alt="Apache Governor" width="420">
+    <img src="website/static/img/governor-wordmark.svg" alt="Governor" width="420">
   </picture>
 </p>
 
@@ -41,7 +41,7 @@ Full documentation lives in [`docs/`](docs/) and is published at <https://apache
 
 ## About the name
 
-Governor began as a fork of Gofannon, the Welsh god of tooling. His Irish relative Goibniu (pronounced Gov-nyoo) led to the similar-sounding Apache Governor: in machinery, a governor automatically controls a machine's operation to keep it safe. See [About the name](docs/about-name-origin.md) for more.
+Governor began as a fork of Gofannon, the Welsh god of tooling. His Irish relative Goibniu (pronounced Gov-nyoo) led to the similar-sounding Governor: in machinery, a governor automatically controls a machine's operation to keep it safe. See [About the name](docs/about-name-origin.md) for more.
 
 ## Roadmap
 
