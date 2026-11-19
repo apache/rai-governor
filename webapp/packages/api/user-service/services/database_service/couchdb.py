@@ -1,4 +1,5 @@
 import copy
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -20,8 +21,14 @@ from .base import DatabaseService
 # CouchDB indexes it again.
 STATS_DDOC_ID = "_design/gofannon_ns"
 STATS_DDOC_VERSION = 1
-# How long a namespace listing is kept before the views are read again.
+# How long one namespace's totals are kept in this process before the views
+# are read again.
 STATS_CACHE_SECONDS = 30
+# The namespace list is kept in one document per owner that every worker
+# reads (kept_namespace_stats). Older than this, and with the owner's
+# records changed since, the next request rebuilds it in the background.
+KEPT_TOTALS_DB = "data_store_totals"
+KEPT_TOTALS_REFRESH_SECONDS = float(os.environ.get("DATA_STORE_NAMESPACES_REFRESH_SECONDS", "60"))
 _IS_RECORD = "doc.userId && doc.key !== undefined"
 STATS_DDOC = {
     "_id": STATS_DDOC_ID,
@@ -70,6 +77,10 @@ STATS_DDOC = {
         },
     },
 }
+
+
+def _kept_id(user_id: str) -> str:
+    return f"namespaces:{user_id}"
 
 
 class CouchDBService(DatabaseService):
@@ -394,10 +405,10 @@ class CouchDBService(DatabaseService):
 
         The three views are read at once, not in turn, and the answer is
         kept for STATS_CACHE_SECONDS: each takes about 2 s on 400,000
-        records, and the home page asks on every load and every return to
-        its tab. A data-store write in this process forgets its owner's
-        totals (forget_namespace_stats); another worker's writes show when
-        the kept answer expires."""
+        records. (The namespace list reads kept_namespace_stats instead.) A
+        data-store write in this process forgets its owner's totals
+        (forget_namespace_stats); another worker's writes show when the kept
+        answer expires."""
         key = (user_id, namespace)
         now = time.monotonic()
         lock, cache = self._stats_cache_state()
@@ -411,6 +422,119 @@ class CouchDBService(DatabaseService):
         with lock:
             cache[key] = (now, out)
         return copy.deepcopy(out)
+
+    def kept_namespace_stats(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """Every namespace's totals for the namespace list, from one document
+        all workers share: reading the three views takes 6-7 s on 400,000
+        records and 2 CPUs, and a per-worker cache missed on most loads.
+
+        Only the very first load waits for the views. After that the kept
+        list is returned at once; once it is older than
+        KEPT_TOTALS_REFRESH_SECONDS, the request also starts a background
+        rebuild in this worker (one at a time), which does nothing unless the
+        owner's fingerprint (record count, total size, latest update) has
+        changed. Nothing runs between requests."""
+        try:
+            kept = self._get_or_create_db(KEPT_TOTALS_DB).get(_kept_id(user_id))
+        except Exception as e:
+            print(f"kept_namespace_stats: read failed ({type(e).__name__}: {e}); reading the views")
+            return self.namespace_stats(user_id)
+        if not kept:
+            totals = self._rebuild_kept_totals(user_id, None, fresh=False)
+            return totals if totals is not None else super().namespace_stats(user_id)
+        if time.time() - kept.get("builtAt", 0) > KEPT_TOTALS_REFRESH_SECONDS:
+            self._refresh_kept_totals_soon(user_id, kept)
+        return kept.get("namespaces") or {}
+
+    def drop_kept_namespace(self, user_id: str, namespace: str) -> None:
+        """Take a cleared namespace out of the kept list at once, rather than
+        after the next rebuild. A conflict is a rebuild or another drop
+        writing at the same moment: read again and retry once."""
+        try:
+            db = self._get_or_create_db(KEPT_TOTALS_DB)
+            for _ in range(2):
+                kept = db.get(_kept_id(user_id))
+                if not kept or namespace not in (kept.get("namespaces") or {}):
+                    return
+                kept = dict(kept)
+                kept["namespaces"] = {k: v for k, v in kept["namespaces"].items() if k != namespace}
+                try:
+                    db.save(kept)
+                    return
+                except couchdb.http.ResourceConflict:
+                    continue
+        except Exception as e:
+            print(f"drop_kept_namespace: failed ({type(e).__name__}: {e})")
+
+    def _refresh_kept_totals_soon(self, user_id: str, kept: Dict[str, Any]) -> None:
+        if not hasattr(self, "_kept_refresh_lock"):
+            self._kept_refresh_lock = threading.Lock()
+        if not self._kept_refresh_lock.acquire(blocking=False):
+            return  # this worker is already rebuilding one
+
+        def run():
+            try:
+                self._rebuild_kept_totals(user_id, kept, fresh=True)
+            except Exception as e:
+                print(f"kept_namespace_stats: rebuild failed ({type(e).__name__}: {e})")
+            finally:
+                self._kept_refresh_lock.release()
+
+        threading.Thread(target=run, name="kept-namespace-totals", daemon=True).start()
+
+    def _rebuild_kept_totals(self, user_id: str, kept: Optional[Dict[str, Any]], fresh: bool):
+        """Read the views and save the owner's kept list, unless the
+        fingerprint shows nothing changed since `kept`. Returns the new
+        totals, or None when unchanged or the views can't answer.
+
+        fresh: the fingerprint waits for the index to catch up first (the
+        background rebuild), so the lazy view reads after it don't bring back
+        a namespace that was just cleared. The first load doesn't wait.
+
+        If the document changed while the views were read (another worker's
+        rebuild, or a cleared namespace dropped from it), the save conflicts
+        and the other write stands; a later request rebuilds again if needed."""
+        fingerprint = self._store_fingerprint(user_id, fresh)
+        if fingerprint is None:
+            return None
+        if kept is not None and kept.get("fingerprint") == fingerprint:
+            return None
+        totals = self._namespace_stats_from_views(user_id, None)
+        if totals is None:
+            return None
+        doc = {"_id": _kept_id(user_id), "owner": user_id, "builtAt": time.time(),
+               "fingerprint": fingerprint, "namespaces": totals}
+        if kept is not None:
+            doc["_rev"] = kept["_rev"]
+        try:
+            self._get_or_create_db(KEPT_TOTALS_DB).save(doc)
+        except couchdb.http.ResourceConflict:
+            pass
+        except Exception as e:
+            print(f"kept_namespace_stats: save failed ({type(e).__name__}: {e})")
+        return totals
+
+    def _store_fingerprint(self, user_id: str, fresh: bool):
+        """[record count, total size, latest update] over the owner's
+        records: one reduced row from each of two views, about 0.03 s on
+        400,000 records. None when the views can't answer."""
+        from services.data_store_stats import DATA_STORE_DB
+        try:
+            db = self._get_or_create_db(DATA_STORE_DB)
+            self._ensure_stats_views(db)
+            ddoc = STATS_DDOC_ID.split("/", 1)[1]
+            opts = {"group_level": 1, "startkey": [user_id], "endkey": [user_id, {}]}
+            if not fresh:
+                opts["update"] = "lazy"
+            size = list(db.view(f"{ddoc}/size", **opts))
+            updated = list(db.view(f"{ddoc}/updated", **opts))
+            count = int(size[0].value["count"]) if size else 0
+            total = int(size[0].value["sum"]) if size else 0
+            latest = int(updated[0].value["max"]) if updated else 0
+            return [count, total, latest]
+        except Exception as e:
+            print(f"kept_namespace_stats: fingerprint failed ({type(e).__name__}: {e})")
+            return None
 
     def data_store_namespaces(self, user_id: str) -> List[str]:
         """From the size view, a row per namespace. {"userId": ...} alone

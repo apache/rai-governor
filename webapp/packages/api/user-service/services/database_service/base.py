@@ -67,6 +67,15 @@ class DatabaseService(abc.ABC):
         from services.data_store_stats import totals_by_find
         return totals_by_find(self, user_id, namespace)
 
+    def kept_namespace_stats(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """namespace_stats for every namespace, for the namespace list. A
+        backend may answer from totals it keeps across workers (CouchDB),
+        which trail recent writes."""
+        return self.namespace_stats(user_id)
+
+    def drop_kept_namespace(self, user_id: str, namespace: str) -> None:
+        """A namespace was cleared: take it out of the kept list, if any."""
+
     def data_store_namespaces(self, user_id: str) -> List[str]:
         """Every data-store namespace an owner has records in, sorted.
         Backends that keep a per-namespace index override this (CouchDB)."""

@@ -118,3 +118,30 @@ def test_a_rewrite_stores_the_new_size():
     store.set_many("asf:akm", [("n", "k", "x" * 10, None), ("n", "k2", "y", None)])  # existing and new
     docs = {d["key"]: d for d in db.list_all("agent_data_store")}
     assert docs["k"]["sizeBytes"] == len('"' + "x" * 10 + '"') and docs["k2"]["sizeBytes"] == 3
+
+
+def test_the_list_uses_kept_totals_and_clearing_drops_the_namespace():
+    """The namespace list may come from totals kept across workers; clearing
+    a namespace on the Data Stores page takes it out of them at once."""
+    class Keeping(MemoryDBService):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def kept_namespace_stats(self, user_id):
+            self.calls.append(("kept", user_id))
+            return super().kept_namespace_stats(user_id)
+
+        def drop_kept_namespace(self, user_id, namespace):
+            self.calls.append(("drop", user_id, namespace))
+
+    db = Keeping()
+    app = create_app()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_async_db] = lambda: AsyncDatabaseService(db)
+    app.dependency_overrides[get_current_user] = lambda: USER
+    get_data_store_service(db).set("asf:akm", NS, KEY, "x")
+    c = TestClient(app)
+    assert [n["namespace"] for n in c.get("/data-store/namespaces").json()["namespaces"]] == [NS]
+    assert c.delete(_url(NS)).json()["deletedCount"] == 1
+    assert db.calls == [("kept", "asf:akm"), ("drop", "asf:akm", NS)]

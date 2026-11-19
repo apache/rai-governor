@@ -74,6 +74,9 @@ class AsyncDatabaseService:
     async def namespace_stats(self, user_id: str, namespace: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
         return await asyncio.to_thread(self._sync.namespace_stats, user_id, namespace)
 
+    async def kept_namespace_stats(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        return await asyncio.to_thread(self._sync.kept_namespace_stats, user_id)
+
     async def ensure_index(self, db_name: str, fields: List[str], **kwargs):
         # Sync signature uses index_name (not name); pass-through avoids
         # the naming mismatch.

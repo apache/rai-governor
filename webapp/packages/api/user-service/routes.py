@@ -2030,9 +2030,10 @@ async def list_data_store_namespaces(
     user: dict = Depends(get_current_user),
     project: Optional[str] = None,
 ):
-    """List every namespace with aggregate stats for the current user."""
+    """List every namespace with aggregate stats for the current user.
+    Totals may trail recent writes by a minute or so (kept_namespace_stats)."""
     user_id = _store_owner(user, project, write=False)
-    stats_map = await db.namespace_stats(user_id)
+    stats_map = await db.kept_namespace_stats(user_id)
     namespaces = [
         NamespaceStats(namespace=ns, **data)
         for ns, data in sorted(stats_map.items())
@@ -2151,6 +2152,7 @@ def clear_namespace(
     """Delete every record in a namespace."""
     user_id = _store_owner(user, project, write=True)
     count = store.clear_namespace(user_id, namespace)
+    store.db.drop_kept_namespace(user_id, namespace)
     return ClearNamespaceResponse(namespace=namespace, deleted_count=count)
 
 

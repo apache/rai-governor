@@ -72,6 +72,7 @@ A well-formed value isn't enough when it names something:
 | Pipeline import | Author only; the file count and size limits above; a rate limit |
 | Uploads | Apache's 64 MB body limit |
 | Memory recall and search | The entry, character and hit caps above; rate limits |
+| Data-store namespace list (totals over every record) | Kept in one CouchDB document per owner (`data_store_totals`) that all workers read. Only the first load reads the views; after that a list older than 60 s whose owner's record count, total size or latest update changed is rebuilt in the background, one rebuild per worker at a time (`DATA_STORE_NAMESPACES_REFRESH_SECONDS`). The list can trail writes by that long; clearing a namespace from the Data Stores page drops it at once. Runs list namespaces fresh |
 
 ### Run queue
 
