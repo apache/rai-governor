@@ -1,7 +1,8 @@
 // webapp/packages/webui/src/components/RunningJobsModule.jsx
 //
 // cross-agent view of recent and current runs on the home page.
-// Polls GET /runs every 5s and renders each non-terminal run plus the
+// Polls GET /runs (every 5 s while a run is live, else every 60 s; not
+// while the tab is hidden: usePollRuns) and renders each non-terminal run plus the
 // most recent N completed runs. Status chip color encodes terminal
 // state.
 //
@@ -20,7 +21,7 @@
 // pipeline work) and Clear writes a terminal status the pipeline never
 // reported, so neither should be a single misclick.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Paper, Box, Typography, Chip, CircularProgress, Stack, Link, Button,
   IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogContentText,
@@ -33,8 +34,8 @@ import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import { listRuns, stopRun, forceCompleteRun } from '../services/runService';
 import { ageMs, formatTimeAgo } from '../utils/serverTime';
 import { LIVE_STATUSES, queuedText } from './workloads/runFormat';
+import usePollRuns from '../hooks/usePollRuns';
 
-const POLL_INTERVAL_MS = 5000;
 const MAX_COMPLETED_SHOWN = 5;
 
 // A run older than this with status still 'running' is *probably*
@@ -68,22 +69,19 @@ export default function RunningJobsModule() {
       // index.html when the api is briefly unreachable). Treat as empty
       // rather than surfacing a parse error -- this widget is
       // at-a-glance and empty is the right signal when nothing's there.
-      setRuns((data && data.runs) || []);
+      const list = (data && data.runs) || [];
+      setRuns(list);
+      return list;
     } catch (e) {
       console.warn('RunningJobsModule: unable to fetch /runs:', e.message || e);
       setRuns([]);
+      return null;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => { if (!cancelled) await fetchOnce(); };
-    tick();
-    const id = setInterval(tick, POLL_INTERVAL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [fetchOnce]);
+  usePollRuns(fetchOnce, [fetchOnce]);
 
   const handleConfirm = async () => {
     if (!confirm) return;

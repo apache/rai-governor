@@ -4,13 +4,13 @@
 // known to the in-memory RunRegistry. Linked from the
 // home page Running Jobs module's "View all" button.
 //
-// Polls GET /runs every 5s like the home page module does, but
+// Polls GET /runs like the home page module does (usePollRuns), but
 // renders a fuller table with status filter chips, started/completed
 // timestamps, and a runtime column. Layout, header bar, refresh
 // button, empty-state, and table styling follow the conventions
 // established in DataStoresPage / SavedAgentsPage / DemoAppsPage.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer,
@@ -23,8 +23,8 @@ import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import { listRuns } from '../services/runService';
 import { parseServerDate, formatTimeAgo } from '../utils/serverTime';
 import { queuedText } from '../components/workloads/runFormat';
+import usePollRuns from '../hooks/usePollRuns';
 
-const POLL_INTERVAL_MS = 5000;
 
 const STATUS_CHIP = {
   queued:  { label: 'queued',  color: 'warning' },
@@ -71,30 +71,23 @@ const RunsPage = () => {
   const [filter, setFilter] = useState('all');
   const [refreshNonce, setRefreshNonce] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchOnce = async () => {
-      try {
-        const data = await listRuns();
-        if (cancelled) return;
-        setRuns((data && data.runs) || []);
-        setError(null);
-      } catch (e) {
-        if (!cancelled) {
-          console.warn('RunsPage: unable to fetch /runs:', e.message || e);
-          setError(e.message || String(e));
-          setRuns([]);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    fetchOnce();
-    const id = setInterval(fetchOnce, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
+  usePollRuns(async (isStale) => {
+    try {
+      const data = await listRuns();
+      const list = (data && data.runs) || [];
+      if (isStale()) return null;
+      setRuns(list);
+      setError(null);
+      return list;
+    } catch (e) {
+      if (isStale()) return null;
+      console.warn('RunsPage: unable to fetch /runs:', e.message || e);
+      setError(e.message || String(e));
+      setRuns([]);
+      return null;
+    } finally {
+      if (!isStale()) setLoading(false);
+    }
   }, [refreshNonce]);
 
   const filtered = useMemo(() => {
