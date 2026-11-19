@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { isSpaNavigation } from './src/config/spaNavigation.js';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -17,6 +18,9 @@ export default defineConfig({
       '^/(auth|admin|agents|chat|data-store|demos|deployments|echo|health|log|mcp|memory|pipelines|providers|rest|runs|sessions|specs|users|workloads)(/|$|\\?)': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        // A reload of a page whose path is also an API path (/agents,
+        // /chat, ...) gets the app, as nginx does it.
+        bypass: (req) => (isSpaNavigation(req.method, req.url, req.headers.accept) ? '/index.html' : undefined),
         // Silence the wall of ECONNRESET / EPIPE / socket-hang-up
         // traces during dev. They fire when the SPA hits the proxy
         // before api is ready, when api auto-reloads, or when the
