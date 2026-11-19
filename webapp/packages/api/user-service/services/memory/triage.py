@@ -468,7 +468,10 @@ class Triage:
 
     async def decisions_since(self, domain: str, repo: str, current) -> int:
         """Guidance and dispositions newer than the accepted digest: what a
-        rebuild would add."""
+        rebuild would add. Counted as the ASVS orchestrator counts them when
+        it decides whether to draft one: guidance a scan would load, and
+        dispositions other than valid (a valid finding teaches a scan
+        nothing to skip)."""
         since = (current or {}).get("created") or ""
         rows = await asyncio.to_thread(self._rows, [domain], guidance_origins(repo), True)
         n = sum(1 for r in rows if (r.get("created") or "") > since and loads(r))
@@ -476,6 +479,7 @@ class Triage:
                                         False, False, None, "any")
         n += sum(1 for r in found
                  if repo_of(r.get("origin")) == repo
+                 and r.get("disposition") and r.get("disposition") != Kind.VALID.value
                  and ((r.get("decision") or {}).get("at") or "") > since)
         return n
 

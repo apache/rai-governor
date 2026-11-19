@@ -313,3 +313,18 @@ async def test_a_projects_scans_remember_only_their_own_triage(c, monkeypatch):
     for who, code in ((COMMITTER, 200), (ADMIN, 200), (OTHER_PMC, 404), (writer, 404)):
         _as(who)
         assert c.get(f"/memory/entries/{pf}").status_code == code
+
+
+@pytest.mark.asyncio
+async def test_the_digest_counts_only_decisions_a_draft_would_use(c):
+    # The orchestrator drafts a digest from guidance and from dispositions
+    # other than valid; the count the panel shows must agree with it.
+    a, b, d = await _finding(c, "a", repo=REPO), await _finding(c, "b", repo=REPO), await _finding(c, "d", repo=REPO)
+    _as(PMC)
+    c.post(f"/memory/entries/{a}/disposition", json={"kind": "valid"})
+    assert c.get("/memory/tooling/digest", params={"repo": REPO}).json()["pending"] == 0
+    c.post(f"/memory/entries/{b}/disposition", json={"kind": "fp_wrong"})
+    assert c.get("/memory/tooling/digest", params={"repo": REPO}).json()["pending"] == 1
+    c.post(f"/memory/entries/{d}/disposition", json={"kind": "by_design", "guidance": {"text": "Declined."}})
+    # The by-design disposition and the guidance it wrote.
+    assert c.get("/memory/tooling/digest", params={"repo": REPO}).json()["pending"] == 3
