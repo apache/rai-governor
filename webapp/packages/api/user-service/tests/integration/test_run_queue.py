@@ -139,3 +139,27 @@ def test_stop_ends_a_running_run_code_start_run(env):
     _wait(c, run_id, "running")
     assert c.post(f"/runs/{run_id}/stop").status_code == 202
     assert "AgentStopped" in _wait(c, run_id, "stopped")["error"]
+
+
+def test_admission_runs_off_the_event_loop(env, monkeypatch):
+    # Admitting a queued run reads and writes run records in CouchDB; on the
+    # event loop that would stall every request on the worker.
+    c, reg, run, release = env
+    monkeypatch.setattr(ra, "RUN_MAX_CONCURRENT", 1)
+    on_loop = []
+    real = ra.admit
+
+    def admit(registry, record):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return real(registry, record)
+
+    monkeypatch.setattr(ra, "admit", admit)
+    first = run("a")["runId"]
+    _wait(c, first, "running")
+    release["a"].set()
+    _wait(c, first, "success")
+    assert on_loop == [False]

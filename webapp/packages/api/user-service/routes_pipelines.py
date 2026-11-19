@@ -20,6 +20,7 @@ be made is reported in deployProblems; the import itself still stands.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import List, Optional
 from urllib.parse import quote
@@ -55,13 +56,13 @@ def _all_agents(db: DatabaseService) -> List[dict]:
     return db.list_all("agents")
 
 
-async def _deploy_all(result, db):
+def _deploy_all(result, db):
     """Deploy every agent the import wrote. One that can't be deployed (its
     friendly name taken by another agent, say) is reported, not raised."""
     deployed, problems = [], []
     for name, w in result["written"].items():
         try:
-            out = await deploy_agent(w["id"], db)
+            out = deploy_agent(w["id"], db)
             deployed.append({"agent": name, "endpoint": out.get("endpoint")})
         except HTTPException as e:
             problems.append({"agent": name, "reason": str(e.detail)})
@@ -110,9 +111,10 @@ async def import_from_github(
     source = {"kind": "github", "repo": body.repo, "ref": body.ref,
               "path": body.path, "commit": sha}
     label = (body.label or pio.default_label(commit_sha=sha)) if body.labeled else pio.STABLE
-    result = _run_import(files, label, source, body.dry_run, db, user, logger)
+    # The database client blocks: import and deploy on a thread.
+    result = await asyncio.to_thread(_run_import, files, label, source, body.dry_run, db, user, logger)
     if not body.dry_run and body.deploy:
-        result = await _deploy_all(result, db)
+        result = await asyncio.to_thread(_deploy_all, result, db)
     result["source"] = source
     return result
 
@@ -144,9 +146,9 @@ async def import_from_upload(
         raise HTTPException(status_code=400, detail=str(e))
     label = (label or pio.default_label()) if labeled else pio.STABLE
     source = {"kind": "upload", "files": len(file_map)}
-    result = _run_import(file_map, label, source, dry_run, db, user, logger)
+    result = await asyncio.to_thread(_run_import, file_map, label, source, dry_run, db, user, logger)
     if not dry_run and deploy:
-        result = await _deploy_all(result, db)
+        result = await asyncio.to_thread(_deploy_all, result, db)
     result["source"] = source
     return result
 

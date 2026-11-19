@@ -325,14 +325,20 @@ async def all_runs(
     else the runs they started and their projects' runs."""
     service = get_memory_service(db)
     admin = bool(user.get("is_site_admin"))
-    out = []
-    for r in await service.run_overview(await _readable_domains(user, service)):
-        info = run_summary(r["run"], user, admin_sees_all=True)
-        if info["visible"] or admin:
-            out.append({**r, "info": info})
-        if len(out) >= limit:
-            break
-    return {"runs": out}
+    overview = await service.run_overview(await _readable_domains(user, service))
+
+    def summarise():
+        # A run not cached in this worker is a database read.
+        out = []
+        for r in overview:
+            info = run_summary(r["run"], user, admin_sees_all=True)
+            if info["visible"] or admin:
+                out.append({**r, "info": info})
+            if len(out) >= limit:
+                break
+        return out
+
+    return {"runs": await asyncio.to_thread(summarise)}
 
 
 @router.get("/by-run/{run_id}")
@@ -350,7 +356,7 @@ async def run_memories(
         for d, t in sorted(tallies.items())
         if access.exists(d) and access.can_read(user, d)
     ]
-    return {"run": run_summary(run_id, user), "domains": domains}
+    return {"run": await asyncio.to_thread(run_summary, run_id, user), "domains": domains}
 
 
 @router.get("/{domain}/runs")
@@ -363,7 +369,9 @@ async def domain_runs(
     """Runs that wrote into the domain, newest first, with their entries
     counted by type and tier."""
     runs = await get_memory_service(db).runs(_domain(domain, user))
-    return {"domain": domain, "runs": [{**r, "info": run_summary(r["run"], user)} for r in runs[:limit]]}
+    rows = await asyncio.to_thread(
+        lambda: [{**r, "info": run_summary(r["run"], user)} for r in runs[:limit]])
+    return {"domain": domain, "runs": rows}
 
 
 @router.get("/entries/{entry_id}")

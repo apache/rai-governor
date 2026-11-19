@@ -633,7 +633,7 @@ def get_agent(agent_id: str, db: DatabaseService = Depends(get_db), user: dict =
 
 
 @router.get("/agents/{agent_id}/chain")
-async def get_agent_chain(
+def get_agent_chain(
     agent_id: str,
     db: DatabaseService = Depends(get_db),
     user: dict = Depends(get_author_user),
@@ -644,11 +644,11 @@ async def get_agent_chain(
     and emits an MCP-server leaf node per distinct tool URL. Used by the
     Chain View UI to show what other agents and tools this agent reaches.
     """
-    return await build_agent_chain(agent_id, db)
+    return build_agent_chain(agent_id, db)
 
 
 @router.delete("/agents/{agent_id}", status_code=204)
-async def delete_agent(
+def delete_agent(
     agent_id: str,
     req: Request,
     db: DatabaseService = Depends(get_db),
@@ -665,7 +665,7 @@ async def delete_agent(
     lists it): that agent would fail at run time and its pipeline could no
     longer be exported.
     """
-    agents = await asyncio.to_thread(db.list_all, "agents")
+    agents = db.list_all("agents")
     callers = sorted(
         f"{a.get('name') or a.get('_id')} ({a.get('_id')})" for a in agents
         if a.get("_id") != agent_id and agent_id in (a.get("gofannonAgents") or [])
@@ -680,7 +680,7 @@ async def delete_agent(
         # undeploy_agent is now idempotent and self-healing: safe to call
         # unconditionally, including when there are no deployments or when
         # the agent's friendly_name no longer matches any deployment.
-        await undeploy_agent(agent_id, db)
+        undeploy_agent(agent_id, db)
         db.delete("agents", agent_id)
         logger.log("user_action", f"Agent '{agent_id}' deleted.", user_id=user.get("uid"), metadata={"agent_id": agent_id, "request": get_sanitized_request_data(req)})
         return
@@ -758,15 +758,15 @@ async def fetch_spec_from_url(request: FetchSpecRequest, user: dict = Depends(ge
 
 
 @router.post("/agents/{agent_id}/deploy", status_code=201)
-async def deploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def deploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Registers an agent for internal REST deployment."""
-    return await deploy_agent(agent_id, db)
+    return deploy_agent(agent_id, db)
 
 
 @router.delete("/agents/{agent_id}/undeploy", status_code=204)
-async def undeploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
+def undeploy_agent_route(agent_id: str, db: DatabaseService = Depends(get_db), user: dict = Depends(get_author_user)):
     """Removes an agent from the internal REST deployment registry."""
-    await undeploy_agent(agent_id, db)
+    undeploy_agent(agent_id, db)
     return
 
 
@@ -842,7 +842,8 @@ async def run_agent_code_stream(
 
     _registry = get_run_registry()
     _queue = run_admission.applies(_registry)
-    _run_record = _registry.new_record(
+    _run_record = await asyncio.to_thread(
+        _registry.new_record,
         user_id=user.get("uid") or "anonymous",
         agent_name=request.friendly_name or "sandbox_agent",
         agent_id=request.agent_id,
@@ -853,7 +854,7 @@ async def run_agent_code_stream(
         queued=_queue,
     )
     if _queue:
-        run_admission.admit(_registry, _run_record)
+        await asyncio.to_thread(run_admission.admit, _registry, _run_record)
     # Emit into the record's own trace, so /runs/{id}/stream can replay it
     # for a page that reattaches mid-run. A separate Trace here left the
     # record empty until the run ended: a refresh showed nothing.
@@ -917,7 +918,7 @@ async def run_agent_code_stream(
             # completion. Without this, every streaming run sits as
             # 'running' until eviction at EVICTION_TTL_SECONDS (1 hour).
             try:
-                _registry.mark_complete(
+                await _registry.mark_complete_async(
                     _run_record,
                     status="success",
                     result=result,
@@ -953,7 +954,7 @@ async def run_agent_code_stream(
             if not _cancel_token.is_stopped():
                 _cancel_token.request_stop()
             try:
-                _registry.mark_complete(
+                await _registry.mark_complete_async(
                     _run_record,
                     status="stopped",
                     error="Run cancelled (SSE stream closed)",
@@ -991,7 +992,7 @@ async def run_agent_code_stream(
             # the client doesn't hang. Leaving the record as 'running'
             # is the symptom we're explicitly trying to avoid.
             try:
-                _registry.mark_complete(
+                await _registry.mark_complete_async(
                     _run_record,
                     status="stopped" if is_stop else "error",
                     error=f"{type(e).__name__}: {e}",
@@ -1158,14 +1159,15 @@ async def start_agent_run(
     project = check_project(user, request.project)
     registry = get_run_registry()
     queue = run_admission.applies(registry)
-    record = registry.new_record(
+    record = await asyncio.to_thread(
+        registry.new_record,
         user_id=user.get("uid") or "anonymous",
         agent_name=request.friendly_name or "sandbox_agent",
         project=project,
         queued=queue,
     )
     if queue:
-        run_admission.admit(registry, record)
+        await asyncio.to_thread(run_admission.admit, registry, record)
     token = _publish_stop_token(record.run_id)
 
     user_basic_info = {
@@ -1196,7 +1198,7 @@ async def start_agent_run(
                 project=project,
             ), token)
             warnings = validate_output_against_schema(result, request.output_schema)
-            registry.mark_complete(
+            await registry.mark_complete_async(
                 record,
                 status="success",
                 result=result,
@@ -1212,7 +1214,7 @@ async def start_agent_run(
                     level="ERROR",
                     metadata={"traceback": traceback.format_exc()},
                 )
-            registry.mark_complete(
+            await registry.mark_complete_async(
                 record,
                 status="stopped" if is_stop else "error",
                 error=f"{type(e).__name__}: {e}",
@@ -1338,7 +1340,7 @@ async def stream_run(run_id: str, user: dict = Depends(get_current_user)):
     """
     from services.run_registry import get_run_registry, DONE_SENTINEL, LIVE_STATUSES
     registry = get_run_registry()
-    record = registry.get(run_id)
+    record = await asyncio.to_thread(registry.get, run_id)
     if record is None or not can_see_run(user, record.user_id, record.project):
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -1565,7 +1567,7 @@ async def force_complete_run(
     from services.run_registry import get_run_registry
 
     registry = get_run_registry()
-    record = registry.get(run_id)
+    record = await asyncio.to_thread(registry.get, run_id)
     if record is None or not can_see_run(user, record.user_id, record.project):
         # Same 404-for-forbidden policy as stop_run: don't leak the
         # existence of other users' runs.
@@ -1611,7 +1613,7 @@ async def force_complete_run(
             metadata={"run_id": run_id, "idle_seconds": idle_seconds},
         )
 
-    registry.mark_complete(
+    await registry.mark_complete_async(
         record,
         status="error",
         error=(
@@ -1787,10 +1789,10 @@ async def start_deployed_agent_run(
     input_dict = await request.json()
     if not isinstance(input_dict, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
-    return start_deployment_run(friendly_name, input_dict, user, db, logger, project=project)
+    return await start_deployment_run(friendly_name, input_dict, user, db, logger, project=project)
 
 
-def start_deployment_run(
+async def start_deployment_run(
     friendly_name: str,
     input_dict: dict,
     user: dict,
@@ -1815,9 +1817,9 @@ def start_deployment_run(
     # Resolve the deployment BEFORE registering a run, so an unknown
     # friendly_name is a clean 404 rather than a run that instantly fails.
     try:
-        deployment_doc = db.get("deployments", friendly_name)
+        deployment_doc = await asyncio.to_thread(db.get, "deployments", friendly_name)
         agent_id = deployment_doc["agentId"]
-        agent_data = db.get("agents", agent_id)
+        agent_data = await asyncio.to_thread(db.get, "agents", agent_id)
         agent = Agent(**agent_data)
     except HTTPException as e:
         if e.status_code == 404:
@@ -1835,7 +1837,8 @@ def start_deployment_run(
 
     registry = get_run_registry()
     queue = run_admission.applies(registry)
-    record = registry.new_record(
+    record = await asyncio.to_thread(
+        registry.new_record,
         user_id=user.get("uid") or "anonymous",
         project=project,
         workload_id=workload_id,
@@ -1854,7 +1857,7 @@ def start_deployment_run(
             stored_inputs if stored_inputs is not None else input_dict)),
     )
     if queue:
-        run_admission.admit(registry, record)
+        await asyncio.to_thread(run_admission.admit, registry, record)
     token = _publish_stop_token(record.run_id)
     hide = secret_variants(secrets)
     record.trace.scrub_variants = hide
@@ -1889,7 +1892,7 @@ def start_deployment_run(
             warnings = validate_output_against_schema(
                 result, getattr(agent, "output_schema", None)
             )
-            registry.mark_complete(
+            await registry.mark_complete_async(
                 record,
                 status="success",
                 result=scrub(result, hide),
@@ -1907,7 +1910,7 @@ def start_deployment_run(
                               "run_id": record.run_id,
                               "friendly_name": friendly_name},
                 )
-            registry.mark_complete(
+            await registry.mark_complete_async(
                 record,
                 status="stopped" if is_stop else "error",
                 error=scrub(f"{type(e).__name__}: {e}", hide),

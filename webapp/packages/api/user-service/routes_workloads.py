@@ -12,6 +12,7 @@ alone see fixed inputs.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -220,9 +221,9 @@ async def run_workload(
     """Start the workload for a project the caller belongs to. The record
     keeps the caller's inputs and only the names of the fixed ones."""
     project = _project(user, body.project)
-    w, entry = _on_page(db, workload_id, project)
+    w, entry = await asyncio.to_thread(_on_page, db, workload_id, project)
     run_inputs, stored = ws.resolve_inputs(w, project, body.inputs, entry.get("defaults"))
-    out = start_deployment_run(
+    out = await start_deployment_run(
         w.deployment, run_inputs, user, db, logger,
         project=project, workload_id=w.id, stored_inputs=stored,
         secrets=ws.secret_values(w),

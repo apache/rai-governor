@@ -437,6 +437,9 @@ async def _execute_agent_code(
     from services.memory.service import bind_run
     bind_run(getattr(trace, "run_id", None))
 
+    # Loading the dependent agents reads the database, which blocks.
+    gofannon_client = await asyncio.to_thread(GofannonClient, gofannon_agents, db, llm_settings)
+
     exec_globals = {
         "RemoteMCPClient": RemoteMCPClient,
         "call_llm": call_llm_with_context,  # Use wrapped LLM service with user context
@@ -448,7 +451,7 @@ async def _execute_agent_code(
         "re": __import__('re'),
         "json": __import__('json'),
         "http_client": httpx.AsyncClient(follow_redirects=True),  # Follow redirects automatically
-        "gofannon_client": GofannonClient(gofannon_agents, db, llm_settings),
+        "gofannon_client": gofannon_client,
         "data_store": data_store_proxy,
         "memory": agent_memory,
         "__builtins__": __builtins__,
@@ -788,7 +791,7 @@ async def fetch_spec_content(url: str):
             raise HTTPException(status_code=400, detail=f"Error fetching from URL: {e}")
 
 
-async def deploy_agent(agent_id: str, db: DatabaseService):
+def deploy_agent(agent_id: str, db: DatabaseService):
     agent_doc = db.get("agents", agent_id)
     agent = Agent(**agent_doc)
     friendly_name = agent.friendly_name
@@ -812,7 +815,7 @@ async def deploy_agent(agent_id: str, db: DatabaseService):
         raise e
 
 
-async def undeploy_agent(agent_id: str, db: DatabaseService):
+def undeploy_agent(agent_id: str, db: DatabaseService):
     """Remove all deployment docs that point at this agent.
 
     Scans the `deployments` collection by the `agentId` field rather than
@@ -872,7 +875,7 @@ def get_agent_deployment(agent_id: str, db: DatabaseService):
         raise e
 
 
-async def build_agent_chain(
+def build_agent_chain(
     root_agent_id: str,
     db: DatabaseService,
     max_depth: int = 8,
@@ -907,7 +910,7 @@ async def build_agent_chain(
     nodes: Dict[str, Dict[str, Any]] = {}
     edges: List[Dict[str, Any]] = []
 
-    async def visit(agent_id: str, depth: int, path: set):
+    def visit(agent_id: str, depth: int, path: set):
         # Already visited (cycle): don't recurse, but let the caller still add
         # the edge. Returning None signals the caller to mark the edge cyclic.
         if agent_id in path:
@@ -991,7 +994,7 @@ async def build_agent_chain(
         # Governor agent edges (and recurse)
         for dep_id in (agent.gofannon_agents or []):
             new_path = path | {agent_id}
-            outcome = await visit(dep_id, depth + 1, new_path)
+            outcome = visit(dep_id, depth + 1, new_path)
             edges.append({
                 "from": agent_id,
                 "to": dep_id,
@@ -1001,7 +1004,7 @@ async def build_agent_chain(
 
         return "ok"
 
-    await visit(root_agent_id, 0, set())
+    visit(root_agent_id, 0, set())
     return {"root": root_agent_id, "nodes": nodes, "edges": edges}
 
 
@@ -1066,10 +1069,10 @@ async def run_deployed_agent(
     project: Optional[str] = None,
 ):
     try:
-        deployment_doc = db.get("deployments", friendly_name)
+        deployment_doc = await asyncio.to_thread(db.get, "deployments", friendly_name)
         agent_id = deployment_doc["agentId"]
 
-        agent_data = db.get("agents", agent_id)
+        agent_data = await asyncio.to_thread(db.get, "agents", agent_id)
         agent = Agent(**agent_data)
 
         result, _ops = await _execute_agent_code(

@@ -138,7 +138,8 @@ class SessionService:
             last_refresh_at=now,
             last_used_at=now,
         )
-        self.db.save(
+        await asyncio.to_thread(
+            self.db.save,
             _SESSIONS_COLLECTION,
             doc_id,
             session.model_dump(by_alias=True, mode="json"),
@@ -196,7 +197,8 @@ class SessionService:
         session.viewing_as_user = on
         session.updated_at = naive_utc_now()
         session.last_used_at = session.updated_at
-        self.db.save(_SESSIONS_COLLECTION, session.id, session.model_dump(by_alias=True, mode="json"))
+        await asyncio.to_thread(self.db.save, _SESSIONS_COLLECTION, session.id,
+                                session.model_dump(by_alias=True, mode="json"))
         return session
 
     async def delete(self, sid: Optional[str]) -> None:
@@ -265,7 +267,7 @@ class SessionService:
 
     async def _delete_doc(self, doc_id: str) -> None:
         try:
-            self.db.delete(_SESSIONS_COLLECTION, doc_id)
+            await asyncio.to_thread(self.db.delete, _SESSIONS_COLLECTION, doc_id)
         except HTTPException as e:
             if e.status_code == 404:
                 return
@@ -334,7 +336,8 @@ class SessionService:
         session.last_refresh_at = session.updated_at
         session.last_used_at = session.updated_at
 
-        self.db.save(
+        await asyncio.to_thread(
+            self.db.save,
             _SESSIONS_COLLECTION,
             session.id,
             session.model_dump(by_alias=True, mode="json"),

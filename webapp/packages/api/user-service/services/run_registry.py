@@ -668,12 +668,39 @@ class RunRegistry:
         schema_warnings: Optional[List[str]] = None,
         ops_log: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
+        if self._finish(record, status=status, result=result, error=error,
+                        schema_warnings=schema_warnings, ops_log=ops_log):
+            # Persist final state including events. This is the big write;
+            # subsequent reads from other workers see the full record.
+            self._persist(record, include_events=True)
+            record._persisted_complete = True
+
+    async def mark_complete_async(self, record: RunRecord, **kwargs) -> None:
+        """mark_complete for code on the event loop: subscribers are told on
+        the loop (their queues aren't thread-safe), and the database write,
+        which blocks, runs on a thread."""
+        if self._finish(record, **kwargs):
+            await asyncio.to_thread(self._persist, record, True)
+            record._persisted_complete = True
+
+    def _finish(
+        self,
+        record: RunRecord,
+        *,
+        status: Literal["success", "error", "stopped"],
+        result: Any = None,
+        error: Optional[str] = None,
+        schema_warnings: Optional[List[str]] = None,
+        ops_log: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """Set the final state and wake subscribers. False when the record
+        was already completed with this status: nothing to write."""
         if record._persisted_complete and record.status == status:
             # Defensive: mark_complete can be called twice in the
             # cancel-handling paths (once from the AgentStopped catch,
             # once from the CancelledError catch added in ISSUE-007).
             # Idempotent on identical second call.
-            return
+            return False
         record.status = status
         record.result = result
         record.error = error
@@ -689,10 +716,7 @@ class RunRegistry:
             except Exception:
                 pass
 
-        # Persist final state including events. This is the big write;
-        # subsequent reads from other workers see the full record.
-        self._persist(record, include_events=True)
-        record._persisted_complete = True
+        return True
 
     def request_stop(self, run_id: str, user_id: str, user: Optional[dict] = None) -> str:
         """Flag the run as stop-requested.
@@ -1056,9 +1080,11 @@ class RunRegistry:
         the short local TTL. CouchDB still holds them; subsequent
         reads fall through to from_couch_doc."""
         now = time.monotonic()
+        # A copy: reads and new records come from worker threads too, and a
+        # dict that grows while iterated raises.
         expired = [
             run_id
-            for run_id, r in self._records.items()
+            for run_id, r in list(self._records.items())
             if r._completed_at_monotonic is not None
             and (now - r._completed_at_monotonic) > LOCAL_CACHE_TTL_SECONDS
         ]
