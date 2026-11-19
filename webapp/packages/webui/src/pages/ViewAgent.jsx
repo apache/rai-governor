@@ -285,10 +285,11 @@ const ViewAgent = () => {
   };
 
   const handleExport = async () => {
+    setActionError(null);
     try {
       await pipelineService.downloadExport(agentId);
     } catch (err) {
-      setError(`Export failed: ${err.message}`);
+      setActionError(`Export failed: ${err.message}`);
     }
   };
 

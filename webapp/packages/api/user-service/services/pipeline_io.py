@@ -430,17 +430,22 @@ def apply_import(
 
 def collect_pipeline(root_id: str, get_agent) -> List[Dict[str, Any]]:
     """The root agent and every agent it reaches, root first."""
-    order, seen, stack = [], set(), [root_id]
+    order, seen, stack = [], set(), [(root_id, None)]
     while stack:
-        aid = stack.pop(0)
+        aid, caller = stack.pop(0)
         if aid in seen:
             continue
         seen.add(aid)
         doc = get_agent(aid)
         if doc is None:
-            raise PipelineError(f"agent {aid} not found")
+            if caller is None:
+                raise PipelineError(f"agent {aid} not found")
+            # Say which agent still calls it, so it can be fixed there.
+            raise PipelineError(
+                f"agent {aid} not found: {caller.get('name') or caller.get('_id')} "
+                f"({caller.get('_id')}) calls it")
         order.append(doc)
-        stack.extend(doc.get("gofannonAgents") or [])
+        stack.extend((c, doc) for c in doc.get("gofannonAgents") or [])
     return order
 
 

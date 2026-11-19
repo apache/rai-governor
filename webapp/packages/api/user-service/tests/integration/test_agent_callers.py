@@ -1,6 +1,7 @@
 """An agent other agents call (their gofannonAgents list it).
 
-Deleting it is refused while they call it, naming them.
+Deleting it is refused while they call it, naming them; exporting a
+pipeline whose agent is missing names the agent that calls it.
 """
 
 import pytest
@@ -53,3 +54,12 @@ def test_an_agent_others_call_is_not_deleted(client):
 def test_an_agent_that_calls_itself_may_be_deleted(client):
     _agent(client, "loop", "loop", calls=["loop"])
     assert client.delete("/agents/loop").status_code == 204
+
+
+def test_exporting_a_pipeline_names_a_missing_agent_and_its_caller(client):
+    # Saved before deleting was refused, or written straight to the store.
+    _agent(client, "main", "demo_main", calls=["gone"])
+    r = client.get("/agents/main/export")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "agent gone not found: demo_main (main) calls it"
+    assert client.get("/agents/nothing/export").json()["detail"] == "agent nothing not found"
