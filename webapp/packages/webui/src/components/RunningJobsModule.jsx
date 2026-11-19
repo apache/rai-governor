@@ -32,6 +32,7 @@ import StopCircleIcon from '@mui/icons-material/StopCircle';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import { listRuns, stopRun, forceCompleteRun } from '../services/runService';
 import { ageMs, formatTimeAgo } from '../utils/serverTime';
+import { LIVE_STATUSES, queuedText } from './workloads/runFormat';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_COMPLETED_SHOWN = 5;
@@ -43,6 +44,7 @@ const MAX_COMPLETED_SHOWN = 5;
 const CLEAR_AFFORDANCE_AFTER_MS = 15 * 60 * 1000;
 
 const STATUS_CHIP = {
+  queued:  { label: 'queued',  color: 'warning' },
   running: { label: 'running', color: 'info' },
   success: { label: 'success', color: 'success' },
   error:   { label: 'error',   color: 'error' },
@@ -118,8 +120,8 @@ export default function RunningJobsModule() {
     }
   };
 
-  const running = runs.filter((r) => r.status === 'running');
-  const recent  = runs.filter((r) => r.status !== 'running').slice(0, MAX_COMPLETED_SHOWN);
+  const running = runs.filter((r) => LIVE_STATUSES.includes(r.status));
+  const recent  = runs.filter((r) => !LIVE_STATUSES.includes(r.status)).slice(0, MAX_COMPLETED_SHOWN);
 
   return (
     <Paper sx={{ overflow: 'hidden' }}>
@@ -292,7 +294,7 @@ function RunRow({ run, onStop, onClear }) {
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: '0.875rem' }}>
-      <Chip size="small" label={cfg.label} color={cfg.color} />
+      <Chip size="small" label={run.status === 'queued' ? queuedText(run) : cfg.label} color={cfg.color} />
       {linkTo ? (
         <Link component={RouterLink} to={linkTo} sx={{ flex: 1, textDecoration: 'none' }}>
           {run.agentName}

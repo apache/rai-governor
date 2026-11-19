@@ -22,10 +22,12 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import { listRuns } from '../services/runService';
 import { parseServerDate, formatTimeAgo } from '../utils/serverTime';
+import { queuedText } from '../components/workloads/runFormat';
 
 const POLL_INTERVAL_MS = 5000;
 
 const STATUS_CHIP = {
+  queued:  { label: 'queued',  color: 'warning' },
   running: { label: 'running', color: 'info' },
   success: { label: 'success', color: 'success' },
   error:   { label: 'error',   color: 'error' },
@@ -34,6 +36,7 @@ const STATUS_CHIP = {
 
 const FILTERS = [
   { id: 'all',     label: 'All' },
+  { id: 'queued',  label: 'Queued' },
   { id: 'running', label: 'Running' },
   { id: 'success', label: 'Success' },
   { id: 'error',   label: 'Error' },
@@ -46,7 +49,7 @@ const FILTERS = [
 const relativeTime = formatTimeAgo;
 
 function durationOf(run) {
-  if (!run.startedAt) return '';
+  if (!run.startedAt || run.status === 'queued') return '';
   const completed = parseServerDate(run.completedAt);
   const started = parseServerDate(run.startedAt);
   if (!started) return '';
@@ -187,7 +190,7 @@ const RunsPage = () => {
                       onClick={linkTo ? () => navigate(linkTo) : undefined}
                     >
                       <TableCell>
-                        <Chip size="small" label={cfg.label} color={cfg.color} />
+                        <Chip size="small" label={run.status === 'queued' ? queuedText(run) : cfg.label} color={cfg.color} />
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" sx={{ fontWeight: 500 }}>

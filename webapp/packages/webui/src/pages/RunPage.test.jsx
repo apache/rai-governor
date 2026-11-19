@@ -16,10 +16,13 @@ vi.mock('../services/workloadService', () => ({
 vi.mock('../services/memoryService', () => ({
   default: { isEnabled: vi.fn(() => Promise.resolve(false)), forRun: vi.fn() },
 }));
-// The stream reports the run's end a moment after the page loads.
+// The stream reports the run's end a moment after the page loads (unless
+// fakeStream.ends is false).
+const fakeStream = { ends: true };
 function useFakeRun() {
   const [final, setFinal] = useState(null);
   useEffect(() => {
+    if (!fakeStream.ends) return undefined;
     const t = setTimeout(() => setFinal({ type: 'final', status: 'success' }), 20);
     return () => clearTimeout(t);
   }, []);
@@ -36,6 +39,8 @@ const RUN = {
 describe('RunPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
+    fakeStream.ends = true;
     workloadService.getRun.mockResolvedValue(RUN);
   });
 
@@ -48,5 +53,20 @@ describe('RunPage', () => {
     // The same element: the page was never swapped for the spinner.
     expect(heading.isConnected).toBe(true);
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+
+  it('shows a queued run\'s place, lets it be stopped, and notices when it starts', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeStream.ends = false;
+    const queued = { ...RUN, status: 'queued', queueAhead: 2, completedAt: null };
+    workloadService.getRun.mockResolvedValueOnce(queued).mockResolvedValue({ ...queued, status: 'running', queueAhead: undefined });
+    renderWithRouter(<Routes><Route path="/run/:runId" element={<RunPage />} /></Routes>,
+      { route: `/run/${RUN.runId}` });
+    expect(await screen.findByText('Queued — 2 ahead of you')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await screen.findByText('Running for')).toBeInTheDocument();
+    expect(screen.queryByText(/Queued/)).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 });

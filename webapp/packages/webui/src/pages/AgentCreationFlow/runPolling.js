@@ -9,6 +9,8 @@
 //     never opened): every 5 s, as before
 //   - only other runs of this agent running: every 30 s, for the list
 const LIVE = ['connecting', 'running', 'reconnecting'];
+// A queued run (admission limits) starts by itself: poll it like a running one.
+const RUN_LIVE = ['running', 'queued'];
 
 export const VIEWED_RUN_POLL_MS = 5000;
 export const OTHER_RUNS_POLL_MS = 30000;
@@ -16,11 +18,11 @@ export const OTHER_RUNS_POLL_MS = 30000;
 export function pollIntervalMs({ runId, streamStatus, fetchedRun, historicalRuns }) {
   const followed = Boolean(runId) && LIVE.includes(streamStatus);
   const viewedRunning =
-    (fetchedRun && fetchedRun.status === 'running') ||
-    (historicalRuns || []).some((r) => r.run_id === runId && r.outcome === 'running');
+    (fetchedRun && RUN_LIVE.includes(fetchedRun.status)) ||
+    (historicalRuns || []).some((r) => r.run_id === runId && RUN_LIVE.includes(r.outcome));
   if (viewedRunning && !followed) return VIEWED_RUN_POLL_MS;
   const othersRunning = (historicalRuns || []).some(
-    (r) => r.outcome === 'running' && r.run_id !== runId,
+    (r) => RUN_LIVE.includes(r.outcome) && r.run_id !== runId,
   );
   return othersRunning ? OTHER_RUNS_POLL_MS : null;
 }

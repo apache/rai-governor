@@ -39,4 +39,14 @@ describe('pollIntervalMs', () => {
       fetchedRun: { status: 'success' }, historicalRuns: [done('r1'), done('r2')],
     })).toBeNull();
   });
+
+  it('polls a queued run like a running one', () => {
+    expect(pollIntervalMs({
+      runId: 'r1', streamStatus: 'disconnected', fetchedRun: { status: 'queued' }, historicalRuns: [],
+    })).toBe(VIEWED_RUN_POLL_MS);
+    expect(pollIntervalMs({
+      runId: 'r1', streamStatus: 'running',
+      fetchedRun: null, historicalRuns: [{ run_id: 'r2', outcome: 'queued' }],
+    })).toBe(OTHER_RUNS_POLL_MS);
+  });
 });

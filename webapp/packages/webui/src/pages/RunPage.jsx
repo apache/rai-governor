@@ -18,9 +18,10 @@ import useRun from '../hooks/useRun';
 import workloadService from '../services/workloadService';
 import memoryService from '../services/memoryService';
 import { RunStatus } from '../components/workloads/runBits';
-import { duration, memoriesPath, runTarget, when } from '../components/workloads/runFormat';
+import { LIVE_STATUSES, duration, memoriesPath, runTarget, when } from '../components/workloads/runFormat';
 
 const REUSABLE = ['convention', 'method'];
+const QUEUED_POLL_MS = 5000;
 
 function Field({ label, children, wide }) {
   return (
@@ -134,6 +135,17 @@ export default function RunPage() {
     return () => { live = false; };
   }, [runId, final]);
 
+  // A queued run starts by itself: re-read it for its place and its start.
+  const queued = run?.status === 'queued';
+  useEffect(() => {
+    if (!queued) return undefined;
+    let live = true;
+    const id = setInterval(() => {
+      workloadService.getRun(runId).then((r) => { if (live) setRun(r); }, () => {});
+    }, QUEUED_POLL_MS);
+    return () => { live = false; clearInterval(id); };
+  }, [runId, queued]);
+
   useEffect(() => {
     if (!run?.project || !run?.workloadId) return;
     workloadService.list(run.project).then(
@@ -200,10 +212,10 @@ export default function RunPage() {
               </Typography>
               <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                 <RunStatus run={run} />
-                {run.status === 'running' && (
+                {LIVE_STATUSES.includes(run.status) && (
                   <Button size="small" variant="outlined" color="error" onClick={stop} sx={{ textTransform: 'none' }}>Stop</Button>
                 )}
-                {!failed && run.status !== 'running' && run.workloadId && run.project && (
+                {!failed && !LIVE_STATUSES.includes(run.status) && run.workloadId && run.project && (
                   <Button size="small" variant="outlined" onClick={runAgain} sx={{ textTransform: 'none', color: '#18181b', borderColor: '#d4d4d8' }}>Run again</Button>
                 )}
               </Box>
@@ -213,7 +225,9 @@ export default function RunPage() {
               <Field label="Project">{run.project || '—'}</Field>
               <Field label="Started by">{run.userId}</Field>
               <Field label="Started">{when(run.startedAt)}</Field>
-              <Field label={run.status === 'running' ? 'Running for' : 'Took'}>{duration(run.startedAt, run.completedAt)}</Field>
+              {run.status !== 'queued' && (
+                <Field label={run.status === 'running' ? 'Running for' : 'Took'}>{duration(run.startedAt, run.completedAt)}</Field>
+              )}
               {inputs.map(([k, v]) => (
                 <Field key={k} label={k}>
                   <span style={{ fontFamily: typeof v === 'string' && !v.startsWith('(') ? 'monospace' : 'inherit', color: typeof v === 'string' && v.startsWith('(') ? '#71717a' : 'inherit' }}>

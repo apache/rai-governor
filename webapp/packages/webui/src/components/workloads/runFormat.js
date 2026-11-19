@@ -10,6 +10,18 @@ export function duration(startIso, endIso) {
   return `${Math.floor(mins / 60)} h ${mins % 60} m`;
 }
 
+// A run waiting for a slot (RUN_MAX_CONCURRENT / RUN_MAX_PER_USER) is as
+// live as a running one: it starts by itself.
+export const LIVE_STATUSES = ['running', 'queued'];
+
+// "Queued — 3 ahead of you" from a run summary's queueAhead.
+export function queuedText(run) {
+  const n = run?.queueAhead;
+  if (n === 0) return 'Queued — next in line';
+  if (typeof n === 'number') return `Queued — ${n} ahead of you`;
+  return 'Queued';
+}
+
 export function when(iso) {
   const d = parseServerDate(iso);
   if (!d) return '';
