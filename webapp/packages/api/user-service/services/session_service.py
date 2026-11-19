@@ -275,8 +275,13 @@ class SessionService:
 
     async def refresh_workspaces(
         self, session: Session
-    ) -> Tuple[Session, "RefreshDiff"]:
+    ) -> Tuple[Optional[Session], "RefreshDiff"]:
         """Re-query the provider for current memberships; update the session.
+
+        It applies refresh_if_stale's rules first: a user banned since login,
+        or one the provider would now refuse, loses the session (None).
+        Otherwise calling this before every refresh interval would put
+        those checks off for the session's whole life.
 
         Implements the soft-fail policy: when the provider returns an
         empty membership list AND the existing session has memberships,
@@ -307,7 +312,16 @@ class SessionService:
             display_name=session.display_name,
             email=session.email,
         )
-        new_memberships = await provider.get_workspace_memberships(user_info)
+        refreshed = await provider.refresh_memberships(user_info)
+        if refreshed is not None and (refreshed.banned or refreshed.refused):
+            logger.warning("session for %s ended: %s since login", session.user_uid,
+                           "banned" if refreshed.banned else "refused")
+            await self._delete_doc(session.id)
+            return None, RefreshDiff()
+        if refreshed is not None:
+            new_memberships = refreshed.memberships
+        else:
+            new_memberships = await provider.get_workspace_memberships(user_info)
         was_site_admin = session.is_site_admin
         now_site_admin = session.user_uid in self._site_admins
 

@@ -192,6 +192,27 @@ def test_a_user_the_provider_would_now_refuse_is_logged_out(client, session, mon
     assert _me(client, session).status_code == 401
 
 
+def _refresh_by_hand(client, sid):
+    return client.post("/auth/refresh-workspaces", cookies={"gofannon_sid": sid})
+
+
+def test_refreshing_by_hand_reads_the_new_memberships(client, session, monkeypatch):
+    _provider_returns(monkeypatch, MembershipRefresh(memberships=[
+        Membership(workspace_id="project:other", role="member", display_name="Other", source="dev_stub")]))
+    r = _refresh_by_hand(client, session)
+    assert r.status_code == 200 and "project:other" in r.json()["added"]
+
+
+@pytest.mark.parametrize("result", [MembershipRefresh(memberships=[], banned=True),
+                                    MembershipRefresh(memberships=[], refused=True)])
+def test_refreshing_by_hand_does_not_put_off_a_ban(client, session, monkeypatch, result):
+    # Each manual refresh restarts the interval, so without this check a
+    # client refreshing often would never meet refresh_if_stale's.
+    _provider_returns(monkeypatch, result)
+    assert _refresh_by_hand(client, session).status_code == 401
+    assert _me(client, session).status_code == 401
+
+
 def test_a_provider_that_cannot_refresh_leaves_the_session_alone(client, session):
     from auth.base import AuthProvider
     from auth import get_registry

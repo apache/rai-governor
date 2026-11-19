@@ -362,7 +362,10 @@ async def refresh_workspaces(
     if not session:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    _, diff = await session_svc.refresh_workspaces(session)
+    session, diff = await session_svc.refresh_workspaces(session)
+    if session is None:
+        # Banned, or no longer admitted, since login: the session is gone.
+        raise HTTPException(status_code=401, detail="Not authenticated")
     return RefreshWorkspacesDiff(
         added=diff.added,
         removed=diff.removed,
