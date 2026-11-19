@@ -40,6 +40,8 @@ A well-formed value isn't enough when it names something:
 | Request body (Apache) | 64 MB | `LimitRequestBody` in the vhost |
 | Pipeline upload | 500 files; a file over 2 MB is skipped without being read | No |
 | Trace events per run | 2,000, each message up to 4,096 bytes | No |
+| Agent runs going at once, site-wide (all workers) | Unlimited; past the limit a run queues | `RUN_MAX_CONCURRENT` (0 = unlimited) |
+| Agent runs going at once, per person | Unlimited; past the limit a run queues | `RUN_MAX_PER_USER` (0 = unlimited) |
 | Memory recall | 5 entries, 6,000 characters | `MEMORY_RECALL_MAX_ENTRIES`, `MEMORY_RECALL_MAX_CHARS` |
 | Memory search hits | 1,000 | No |
 | Session lifetime | 24 hours | `session_ttl_hours` in `auth.yaml` |
@@ -65,10 +67,14 @@ A well-formed value isn't enough when it names something:
 
 | Operation | What protects availability |
 |---|---|
-| Agent runs (LLM calls, data store, memory) | Only authors run agent code. Spend allowance. LLM timeouts and retry budgets. A streamed run gets its own thread: at most `AGENT_MAX_THREADS` (20) per worker, and past that a run fails at once instead of queueing |
+| Agent runs (LLM calls, data store, memory) | Only authors run agent code. Spend allowance. LLM timeouts and retry budgets. `RUN_MAX_CONCURRENT` and `RUN_MAX_PER_USER` queue runs (below). A streamed run gets its own thread: at most `AGENT_MAX_THREADS` (20) per worker, and past that a run fails at once |
 | Long requests holding a worker | 4 gunicorn workers (`WEB_CONCURRENCY`) of async uvicorn. Blocking database calls run on worker threads |
 | Pipeline import | Author only; the file count and size limits above |
 | Uploads | Apache's 64 MB body limit |
 | Memory recall and search | The entry, character and hit caps above |
+
+### Run queue
+
+With `RUN_MAX_CONCURRENT` or `RUN_MAX_PER_USER` set, a run that would go over is recorded as `queued` and starts by itself when a slot frees, oldest first; a queued run of someone at their own limit is passed over, not made to hold up the others. The run pages show how many queued runs are ahead. Stopping a queued run takes it off the queue. The count is kept in the run records in CouchDB, so it holds across all workers. Every recorded run counts: workloads, `/rest/{name}/start`, `/agents/run-code/start` and `/stream`. A pipeline's calls to its sub-agents run inside its run and do not count. The synchronous `/rest/{name}` and `/agents/run-code` keep no record and are not limited. If a worker dies, its queued and running runs are closed by the orphan sweep once its heartbeat is `WORKER_DEAD_AFTER_SECONDS` (120 s) old, which frees their slots. Keep `RUN_MAX_CONCURRENT` at or below `AGENT_MAX_THREADS` times the worker count.
 
 Rate limiting isn't done anywhere, neither in Apache nor in the app. Where to add it (Apache `mod_ratelimit`/`mod_evasive`, or per user in the app) is not decided yet. Neither are a circuit breaker for providers that keep failing, nor alerting on resource exhaustion beyond the logs.

@@ -101,6 +101,14 @@ ORPHANED_RUN_ERROR = (
     "The API worker running this agent stopped (restart, deploy or crash) "
     "before the run finished. Nothing more will arrive; run it again."
 )
+ORPHANED_QUEUED_ERROR = (
+    "The API worker holding this queued run stopped (restart, deploy or crash) "
+    "before the run started. Start it again."
+)
+
+# A run in one of these states is not over: a queued run (run_admission) is
+# waiting for a slot on the worker that accepted it.
+LIVE_STATUSES = ("running", "queued")
 
 
 # Indexes created on first persistence call. Idempotent at the
@@ -116,7 +124,7 @@ LIST_SCAN_CAP = 10000
 # What a run list reads of each document: the summary, not the trace or result.
 LIST_FIELDS = ["run_id", "user_id", "agent_name", "agent_id", "project", "workload_id",
                "input_dict", "started_at", "completed_at", "status", "worker_id",
-               "stop_requested", "error"]
+               "stop_requested", "error", "queued_at"]
 
 
 def _ensure_indexes(db) -> None:
@@ -235,7 +243,7 @@ class RunRecord:
     # The published workload it was launched from (B11), if any.
     workload_id: Optional[str] = None
     started_at: datetime = field(default_factory=naive_utc_now)
-    status: Literal["running", "success", "error", "stopped"] = "running"
+    status: Literal["queued", "running", "success", "error", "stopped"] = "running"
     trace: _FanoutTrace = field(default_factory=_FanoutTrace)
     task: Optional[asyncio.Task] = None  # Set by the registry on register
     result: Optional[Any] = None
@@ -269,6 +277,10 @@ class RunRecord:
     # when its worker_id is this worker's (a run from before a cache
     # eviction, or one this process no longer runs).
     _from_store: bool = False
+    # Set when the run was queued by the admission limits (run_admission).
+    queued_at: Optional[datetime] = None
+    # Queued runs ahead of this one; filled in by the routes, not stored.
+    queue_ahead: Optional[int] = None
 
     def to_summary(self) -> Dict[str, Any]:
         """Subset suitable for list endpoints — no events, no result body.
@@ -277,7 +289,7 @@ class RunRecord:
         can render an input preview and inline error message without
         firing N+1 full-record fetches for each row.
         """
-        return {
+        out = {
             "runId": self.run_id,
             "userId": self.user_id,
             "agentId": self.agent_id,
@@ -290,6 +302,10 @@ class RunRecord:
             "inputDict": self.input_dict,
             "error": self.error,
         }
+        if self.status == "queued":
+            out["queuedAt"] = self.queued_at.isoformat() if self.queued_at else None
+            out["queueAhead"] = self.queue_ahead
+        return out
 
     def to_full(self) -> Dict[str, Any]:
         return {
@@ -337,6 +353,8 @@ class RunRecord:
             "schema_warnings": self.schema_warnings,
             "ops_log": self.ops_log,
         }
+        if self.queued_at is not None:
+            doc["queued_at"] = self.queued_at.isoformat()
         if include_events:
             doc["events"] = list(self.trace.events)
         return doc
@@ -366,6 +384,8 @@ class RunRecord:
         rec.started_at = _dt.fromisoformat(doc["started_at"])
         if doc.get("completed_at"):
             rec.completed_at = _dt.fromisoformat(doc["completed_at"])
+        if doc.get("queued_at"):
+            rec.queued_at = _dt.fromisoformat(doc["queued_at"])
         rec.status = doc.get("status", "running")
         rec.worker_id = doc.get("worker_id", "")
         rec.stop_requested = bool(doc.get("stop_requested", False))
@@ -521,9 +541,12 @@ class RunRegistry:
         input_dict: Optional[Dict[str, Any]] = None,
         project: Optional[str] = None,
         workload_id: Optional[str] = None,
+        queued: bool = False,
     ) -> RunRecord:
         """Create a record with a fresh run_id, cache locally, and
-        persist a stub to CouchDB so other workers can see it."""
+        persist a stub to CouchDB so other workers can see it.
+
+        ``queued`` records it as waiting for a slot (run_admission)."""
         run_id = str(uuid.uuid4())
         record = RunRecord(
             run_id=run_id,
@@ -537,6 +560,9 @@ class RunRegistry:
         # worker_id is set by the dataclass default to WORKER_ID, so
         # this record is implicitly owned by this worker.
         record.trace.run_id = run_id
+        if queued:
+            record.status = "queued"
+            record.queued_at = record.started_at
         self._records[run_id] = record
         self._persist(record, include_events=False)
         return record
@@ -549,7 +575,7 @@ class RunRegistry:
         fallback. Returns None if not found in either."""
         self._evict_expired_local()
         rec = self._records.get(run_id)
-        if rec is not None and not (rec._from_store and rec.status == "running"):
+        if rec is not None and not (rec._from_store and rec.status in LIVE_STATUSES):
             return rec
         # A stored copy of a run still going elsewhere goes stale: re-read it.
         # Fall back to CouchDB. This handles cross-worker read
@@ -722,6 +748,13 @@ class RunRegistry:
                 if stored is None:
                     return None
                 stored["stop_requested"] = True
+                if stored.get("status") == "queued":
+                    # Never started: off the queue at once, whether or not
+                    # its worker is still there to notice.
+                    from services.run_admission import STOPPED_WHILE_QUEUED
+                    stored["status"] = "stopped"
+                    stored["error"] = STOPPED_WHILE_QUEUED
+                    stored["completed_at"] = naive_utc_now().isoformat()
                 return stored
             try:
                 persist_ok = self._update_run_doc(run_id, flag)
@@ -732,6 +765,9 @@ class RunRegistry:
         elif db_read_failed:
             persist_ok = False
 
+        if local is not None and local.status == "queued":
+            # Its waiter (run_admission.wait_turn) sees this on its next poll.
+            local.stop_requested = True
         # Local fast-path: if this worker owns the live cancel token,
         # flip it immediately so stop latency on the owning-worker
         # case is effectively zero.
@@ -800,6 +836,18 @@ class RunRegistry:
             and not record._from_store
             and self._records.get(record.run_id) is record
         )
+
+    def fetch_doc(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """The stored run doc, or None when there is none. Other failures raise."""
+        db = self._get_db()
+        if db is None:
+            return None
+        try:
+            return db.get(RUN_REGISTRY_DB, run_id)
+        except Exception as e:
+            if getattr(e, "status_code", None) == 404:
+                return None
+            raise
 
     def fetch_persisted(self, run_id: str) -> Optional[RunRecord]:
         """Read the run from the database, bypassing the local cache.
@@ -880,7 +928,7 @@ class RunRegistry:
             print(f"[run_registry] heartbeat failed: {e}", flush=True)
 
     def reconcile_orphans(self, now=None) -> int:
-        """Mark running runs owned by dead workers as error. Returns the count.
+        """Mark running and queued runs owned by dead workers as error. Returns the count.
 
         A worker is alive when its heartbeat is newer than
         WORKER_DEAD_AFTER_SECONDS. Runs owned by this worker are never
@@ -895,6 +943,9 @@ class RunRegistry:
         now = now or naive_utc_now()
         try:
             running = db.find(RUN_REGISTRY_DB, selector={"status": "running"}, limit=None)
+            # A queued run waits on its worker; with the worker gone it would
+            # never start and would hold its place in the queue.
+            running += db.find(RUN_REGISTRY_DB, selector={"status": "queued"}, limit=None)
             workers = db.find(WORKERS_DB, selector={"type": "worker"}, limit=None)
         except Exception as e:
             print(f"[run_registry] orphan sweep query failed: {e}", flush=True)
@@ -937,14 +988,16 @@ class RunRegistry:
                 continue
             run_id = doc["_id"]
             worker_id = doc.get("worker_id") or ""
+            was = doc.get("status")
+            message = ORPHANED_QUEUED_ERROR if was == "queued" else ORPHANED_RUN_ERROR
 
-            def close(stored, worker_id=worker_id):
+            def close(stored, worker_id=worker_id, was=was, message=message):
                 # Decide again on the latest revision: the run may have
                 # finished, or its worker may have come back.
-                if not stored or stored.get("status") != "running" or not closable(stored):
+                if not stored or stored.get("status") != was or not closable(stored):
                     return None
                 stored["status"] = "error"
-                stored["error"] = stored.get("error") or ORPHANED_RUN_ERROR
+                stored["error"] = stored.get("error") or message
                 stored["completed_at"] = now.isoformat()
                 stored["orphaned_from_worker"] = worker_id or None
                 return stored
@@ -958,7 +1011,7 @@ class RunRegistry:
             cached = self._records.get(run_id)
             if cached is not None and cached._from_store:
                 cached.status = "error"
-                cached.error = ORPHANED_RUN_ERROR
+                cached.error = message
                 cached.completed_at = now
                 cached._persisted_complete = True
             closed += 1
@@ -977,7 +1030,8 @@ class RunRegistry:
                 RUN_REGISTRY_DB,
                 selector={
                     "type": "run",
-                    "status": {"$ne": "running"},
+                    # A queued run has no completed_at either.
+                    "status": {"$nin": list(LIVE_STATUSES)},
                     "completed_at": {"$lt": cutoff},
                 },
                 limit=500,

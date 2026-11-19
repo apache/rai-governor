@@ -801,8 +801,10 @@ async def run_agent_code_stream(
     from services.cancel_token import CancelToken, bind_token, AgentStopped
     from services.agent_executor import execute_in_thread
     from services.log_redaction import redact_in_place
+    from services import run_admission
 
     _registry = get_run_registry()
+    _queue = run_admission.applies(_registry)
     _run_record = _registry.new_record(
         user_id=user.get("uid") or "anonymous",
         agent_name=request.friendly_name or "sandbox_agent",
@@ -811,7 +813,10 @@ async def run_agent_code_stream(
         # /rest/{name}/start does. The run itself gets the inputs as sent.
         input_dict=redact_in_place(copy.deepcopy(request.input_dict)),
         project=project,
+        queued=_queue,
     )
+    if _queue:
+        run_admission.admit(_registry, _run_record)
     # Emit into the record's own trace, so /runs/{id}/stream can replay it
     # for a page that reattaches mid-run. A separate Trace here left the
     # record empty until the run ended: a refresh showed nothing.
@@ -831,6 +836,9 @@ async def run_agent_code_stream(
 
     async def run_agent_task():
         try:
+            if not await run_admission.wait_turn(_registry, _run_record, _cancel_token):
+                final["error"] = run_admission.STOPPED_WHILE_QUEUED
+                return
             # Path A: run the agent in a separate OS thread with its
             # own event loop. This keeps THIS worker\'s loop free to
             # serve other requests while the agent does sync CouchDB
@@ -973,7 +981,7 @@ async def run_agent_code_stream(
         # ISSUE-007 follow-up: emit run_id as the first frame so the
         # client can render the Stop button without waiting for the
         # first trace event.
-        yield f"event: run_id\ndata: {json.dumps({'runId': _run_record.run_id, 'status': 'running'})}\n\n"
+        yield f"event: run_id\ndata: {json.dumps({'runId': _run_record.run_id, 'status': _run_record.status})}\n\n"
 
         # Kick off the agent. The task runs concurrently with this
         # generator; events flow through the queue.
@@ -1078,14 +1086,19 @@ async def start_agent_run(
     to receive trace events with replay-then-live semantics.
     """
     from services.run_registry import get_run_registry
+    from services import run_admission
 
     project = check_project(user, request.project)
     registry = get_run_registry()
+    queue = run_admission.applies(registry)
     record = registry.new_record(
         user_id=user.get("uid") or "anonymous",
         agent_name=request.friendly_name or "sandbox_agent",
         project=project,
+        queued=queue,
     )
+    if queue:
+        run_admission.admit(registry, record)
 
     user_basic_info = {
         "email": user.get("email"),
@@ -1096,6 +1109,8 @@ async def start_agent_run(
 
     async def runner():
         try:
+            if not await run_admission.wait_turn(registry, record):
+                return
             result, ops_log = await _execute_agent_code(
                 code=request.code,
                 input_dict=request.input_dict,
@@ -1209,7 +1224,19 @@ def list_runs(
     else:
         records = registry.list_for_user(uid, agent_id=agent_id, projects=member_projects(user),
                                          workload_id=workload_id, limit=limit)
+    _fill_queue_positions(registry, records)
     return {"runs": [r.to_summary() for r in records]}
+
+
+def _fill_queue_positions(registry, records) -> None:
+    """Tell each queued run how many queued runs are ahead of it."""
+    queued = [r for r in records if r.status == "queued"]
+    if not queued:
+        return
+    from services import run_admission
+    ahead = run_admission.positions(registry, [r.run_id for r in queued])
+    for r in queued:
+        r.queue_ahead = ahead.get(r.run_id)
 
 
 @router.get("/runs/{run_id}")
@@ -1221,6 +1248,7 @@ def get_run(run_id: str, user: dict = Depends(get_current_user)):
     if record is None or not can_see_run(user, record.user_id, record.project):
         # 404 not 403 — don't leak existence to non-owners.
         raise HTTPException(status_code=404, detail="Run not found")
+    _fill_queue_positions(registry, [record])
     return record.to_full()
 
 
@@ -1233,7 +1261,7 @@ async def stream_run(run_id: str, user: dict = Depends(get_current_user)):
     final ``done`` frame when the run completes. Disconnecting does
     NOT terminate the underlying run.
     """
-    from services.run_registry import get_run_registry, DONE_SENTINEL
+    from services.run_registry import get_run_registry, DONE_SENTINEL, LIVE_STATUSES
     registry = get_run_registry()
     record = registry.get(run_id)
     if record is None or not can_see_run(user, record.user_id, record.project):
@@ -1270,7 +1298,7 @@ async def stream_run(run_id: str, user: dict = Depends(get_current_user)):
         # 3. If the run already finished, drain any "missed" tail from
         #    the queue (the fanout might have placed events while we
         #    were replaying), then emit done and exit.
-        if record.status != "running":
+        if record.status not in LIVE_STATUSES:
             # Send any queued items that arrived during replay.
             while not queue.empty():
                 item = queue.get_nowait()
@@ -1381,7 +1409,7 @@ async def _follow_stored_run(registry, run_id: str):
             for ev in events[sent:]:
                 yield f"event: trace\ndata: {json.dumps(ev, default=str)}\n\n"
             sent = max(sent, len(events))
-        if rec.status != "running":
+        if rec.status not in ("running", "queued"):
             yield _done_frame(rec)
             return
         await asyncio.sleep(FOLLOW_POLL_SECONDS)
@@ -1707,6 +1735,7 @@ def start_deployment_run(
     from services.agent_trace import scrub, secret_variants
     from services.log_redaction import redact_in_place
     from services.run_registry import get_run_registry
+    from services import run_admission
 
     # Resolve the deployment BEFORE registering a run, so an unknown
     # friendly_name is a clean 404 rather than a run that instantly fails.
@@ -1730,10 +1759,12 @@ def start_deployment_run(
         )
 
     registry = get_run_registry()
+    queue = run_admission.applies(registry)
     record = registry.new_record(
         user_id=user.get("uid") or "anonymous",
         project=project,
         workload_id=workload_id,
+        queued=queue,
         agent_name=friendly_name,
         agent_id=agent_id,
         # The registry persists input_dict to CouchDB verbatim and returns it
@@ -1747,6 +1778,8 @@ def start_deployment_run(
         input_dict=redact_in_place(copy.deepcopy(
             stored_inputs if stored_inputs is not None else input_dict)),
     )
+    if queue:
+        run_admission.admit(registry, record)
     hide = secret_variants(secrets)
     record.trace.scrub_variants = hide
 
@@ -1759,6 +1792,8 @@ def start_deployment_run(
 
     async def runner():
         try:
+            if not await run_admission.wait_turn(registry, record):
+                return
             result, ops_log = await _execute_agent_code(
                 code=agent.code,
                 input_dict=input_dict,
