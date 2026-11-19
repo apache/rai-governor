@@ -58,6 +58,8 @@ A well-formed value isn't enough when it names something:
 | LLM retries | Each kind has its own budget: timeouts 2, rate limits 5, overloaded 5, auth re-mint 1, unrouted model 4. Backoff is capped at 60 s | `LLM_*_RETRIES`, `LLM_RATE_LIMIT_BACKOFF_CAP` |
 | LLM connections | litellm sends over aiohttp: at most 1,000 connections per worker process, 500 to one host. A call that finds the pool full waits for a connection inside its own timeout, then fails as a timeout and takes the timeout retries. Pipelines' own concurrency settings keep real use far below the limit | `AIOHTTP_CONNECTOR_LIMIT`, `AIOHTTP_CONNECTOR_LIMIT_PER_HOST` |
 | `/specs/fetch` | 5 s | No |
+| CouchDB | 300 s, connecting and each wait for data (python-couchdb has one socket timeout for both). Long because CouchDB answers a view or indexed query only once its index is built, which takes minutes on this data after a design doc changes | `COUCHDB_TIMEOUT_SECONDS` |
+| Object store (S3/SeaweedFS) | connect 10 s, read 60 s. The read timeout is the wait for the next bytes, not the whole transfer; the objects are memory entries of tens of KB. botocore retries a timed-out call up to 4 times | `STORAGE_CONNECT_TIMEOUT_SECONDS`, `STORAGE_READ_TIMEOUT_SECONDS` |
 
 ## The operations that cost the most
 

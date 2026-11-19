@@ -20,7 +20,7 @@ Packages come from PyPI and the npm registry, and images from Docker Hub. Depend
 |---|---|---|
 | `litellm` | Large, fast-moving. It sees every prompt and every provider key | Pinned to a minor range (`>=1.100.4,<1.106`). The lock is updated deliberately, and retries and timeouts are Governor's own |
 | `fastmcp` | Connects to servers an author names, possibly with a token | Author only. URL and token length caps. A token only over https or to localhost. Pinned `<4` |
-| `CouchDB` (python-couchdb) | Little maintenance, and no socket timeout, so a stalled database blocks the calling thread | Session lookups run off the event loop, but some calls still block it. gunicorn restarts a worker whose loop stops answering for 30 minutes (`GUNICORN_TIMEOUT`) |
+| `CouchDB` (python-couchdb) | Little maintenance, and no socket timeout of its own, so a stalled database blocked the calling thread | Governor sets one: 300 s (`COUCHDB_TIMEOUT_SECONDS`). Session lookups run off the event loop, but some calls still block it. gunicorn restarts a worker whose loop stops answering for 30 minutes (`GUNICORN_TIMEOUT`) |
 | `ldap3` | Every ASF sign-in and membership refresh goes through it | LDAPS. A failure keeps the session's memberships instead of revoking them |
 | `PyYAML` | Parses pipeline manifests and memory entries from users | `safe_load` everywhere |
 | `firebase-admin` | Legacy sign-in path | Used only when `APP_ENV=firebase`; production isn't |

@@ -80,7 +80,10 @@ class CouchDBService(DatabaseService):
 
     def __init__(self, url: str, user: str, password: str, settings):
         try:
-            self.server = couchdb.Server(url)
+            # One socket timeout covers connect and each read: python-couchdb
+            # has no separate connect timeout (config: COUCHDB_TIMEOUT_SECONDS).
+            timeout = getattr(settings, "COUCHDB_TIMEOUT_SECONDS", 300)
+            self.server = couchdb.Server(url, session=couchdb.http.Session(timeout=timeout))
             self.server.resource.credentials = (user, password)
             # Check if server is up
             self.server.version()

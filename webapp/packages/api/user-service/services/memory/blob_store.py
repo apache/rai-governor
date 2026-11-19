@@ -157,7 +157,11 @@ def get_blob_store() -> BlobStore:
         endpoint_url=settings.S3_ENDPOINT_URL,
         aws_access_key_id=settings.S3_ACCESS_KEY_ID,
         aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
-        config=Config(signature_version="s3v4"),
+        config=Config(
+            signature_version="s3v4",
+            connect_timeout=settings.STORAGE_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=settings.STORAGE_READ_TIMEOUT_SECONDS,
+        ),
         region_name=settings.AWS_DEFAULT_REGION,
     )
     bucket = os.getenv("MEMORY_S3_BUCKET") or settings.S3_BUCKET_NAME

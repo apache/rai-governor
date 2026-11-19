@@ -70,12 +70,23 @@ class Settings:
     S3_SECRET_ACCESS_KEY: str | None = os.getenv("S3_SECRET_ACCESS_KEY")
     AWS_DEFAULT_REGION: str | None = os.getenv("AWS_DEFAULT_REGION")
     S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", "local-bucket")
+    # Without these botocore waits 60 s for each; set here so a stalled
+    # object store is a known bound, not a default. The read timeout is the
+    # wait for the next bytes, not for the whole object.
+    STORAGE_CONNECT_TIMEOUT_SECONDS: float = float(os.getenv("STORAGE_CONNECT_TIMEOUT_SECONDS", "10"))
+    STORAGE_READ_TIMEOUT_SECONDS: float = float(os.getenv("STORAGE_READ_TIMEOUT_SECONDS", "60"))
 
     # Database Settings
     DATABASE_PROVIDER: str = os.getenv("DATABASE_PROVIDER", "memory") # Default to memory if not set
     COUCHDB_URL: str | None = os.getenv("COUCHDB_URL")
     COUCHDB_USER: str | None = os.getenv("COUCHDB_USER")
     COUCHDB_PASSWORD: str | None = os.getenv("COUCHDB_PASSWORD")
+    # Socket timeout for every CouchDB call: connecting, and each wait for
+    # data. python-couchdb has none by default, so a stalled database held a
+    # worker until gunicorn killed it. Long because CouchDB answers a view
+    # query only once the view's index is built, which takes minutes on a
+    # large database after a design doc changes.
+    COUCHDB_TIMEOUT_SECONDS: float = float(os.getenv("COUCHDB_TIMEOUT_SECONDS", "300"))
     
     # DynamoDB Settings
     DYNAMODB_REGION: str | None = os.getenv("DYNAMODB_REGION")
