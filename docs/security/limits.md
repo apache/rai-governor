@@ -67,14 +67,34 @@ A well-formed value isn't enough when it names something:
 
 | Operation | What protects availability |
 |---|---|
-| Agent runs (LLM calls, data store, memory) | Only authors run agent code. Spend allowance. LLM timeouts and retry budgets. `RUN_MAX_CONCURRENT` and `RUN_MAX_PER_USER` queue runs (below). A streamed run gets its own thread: at most `AGENT_MAX_THREADS` (20) per worker, and past that a run fails at once |
+| Agent runs (LLM calls, data store, memory) | Only authors run agent code. Starting runs is rate limited. Spend allowance. LLM timeouts and retry budgets. `RUN_MAX_CONCURRENT` and `RUN_MAX_PER_USER` queue runs (below). A streamed run gets its own thread: at most `AGENT_MAX_THREADS` (20) per worker, and past that a run fails at once |
 | Long requests holding a worker | 4 gunicorn workers (`WEB_CONCURRENCY`) of async uvicorn. Blocking database calls run on worker threads |
-| Pipeline import | Author only; the file count and size limits above |
+| Pipeline import | Author only; the file count and size limits above; a rate limit |
 | Uploads | Apache's 64 MB body limit |
-| Memory recall and search | The entry, character and hit caps above |
+| Memory recall and search | The entry, character and hit caps above; rate limits |
 
 ### Run queue
 
 With `RUN_MAX_CONCURRENT` or `RUN_MAX_PER_USER` set, a run that would go over is recorded as `queued` and starts by itself when a slot frees, oldest first; a queued run of someone at their own limit is passed over, not made to hold up the others. The run pages show how many queued runs are ahead. Stopping a queued run takes it off the queue. The count is kept in the run records in CouchDB, so it holds across all workers. Every recorded run counts: workloads, `/rest/{name}/start`, `/agents/run-code/start` and `/stream`. A pipeline's calls to its sub-agents run inside its run and do not count. The synchronous `/rest/{name}` and `/agents/run-code` keep no record and are not limited. If a worker dies, its queued and running runs are closed by the orphan sweep once its heartbeat is `WORKER_DEAD_AFTER_SECONDS` (120 s) old, which frees their slots. Keep `RUN_MAX_CONCURRENT` at or below `AGENT_MAX_THREADS` times the worker count.
 
-Rate limiting isn't done anywhere, neither in Apache nor in the app. Where to add it (Apache `mod_ratelimit`/`mod_evasive`, or per user in the app) is not decided yet. Neither are a circuit breaker for providers that keep failing, nor alerting on resource exhaustion beyond the logs.
+There is no circuit breaker for providers that keep failing, and no alerting on resource exhaustion beyond the logs.
+
+## Rate limits
+
+The app limits sign-in, client log events and the routes that start work or write data (`services/rate_limit.py`). Apache doesn't. LLM use is limited by the spend allowance and by the LLM gateway, not here.
+
+| What | Default | Per | Setting |
+|---|---|---|---|
+| Sign-in start and callback (`/auth/login`, `/auth/callback`); a sign-in is two requests | 30/minute | Client IP | `RATE_LIMIT_LOGIN` |
+| Client log events (`/log/client`) | 120/minute | Session user, else client IP | `RATE_LIMIT_CLIENT_LOG` |
+| Starting an agent run, a deployed agent or a workload | 60/hour | User | `RATE_LIMIT_RUN_START` |
+| Memory search | 120/minute | User | `RATE_LIMIT_MEMORY_SEARCH` |
+| Memory recall | 30/minute | User | `RATE_LIMIT_MEMORY_RECALL` |
+| Memory writes, reviews and triage decisions | 60/minute | User | `RATE_LIMIT_MEMORY_WRITE` |
+| Data-store writes and deletes | 120/minute | User | `RATE_LIMIT_DATA_STORE_WRITE` |
+| Pipeline import | 60/hour | User | `RATE_LIMIT_PIPELINE_IMPORT` |
+
+- Limits are written `<count>/<second|minute|hour|day>`. An invalid value logs a warning and the default applies. `RATE_LIMIT_ENABLED=false` turns them all off.
+- Counts are fixed windows. A request over a limit gets 429 with `Retry-After` (seconds until the window ends), and the first refusal per window is logged as `rate_limited`.
+- Counters live in each gunicorn worker's memory, so with 4 workers a client can get up to 4 times a limit, and counts restart when a worker does. Each worker keeps at most `RATE_LIMIT_MAX_KEYS` (10,000) keys and drops the least recently used.
+- The client IP is the `X-Forwarded-For` entry appended by the outermost of `RATE_LIMIT_PROXY_HOPS` proxies (2: Apache, then nginx). Entries to its left come from the client and are ignored. uvicorn's own client address is the leftmost entry, so logs can show a forged one.
