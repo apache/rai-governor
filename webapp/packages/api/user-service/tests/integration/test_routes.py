@@ -1,5 +1,7 @@
 from unittest.mock import Mock
 
+import pytest
+
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
@@ -117,7 +119,8 @@ def test_user_routes_use_dependency_overrides():
     fake_user_service = FakeUserService()
 
     def override_current_user(request: Request):
-        user = {"uid": "user-123", "email": "user@example.com"}
+        # Changing the allowance or usage is for site admins.
+        user = {"uid": "user-123", "email": "user@example.com", "is_site_admin": True}
         request.state.user = user
         return user
 
@@ -148,6 +151,35 @@ def test_user_routes_use_dependency_overrides():
         )
         assert response.status_code == 200
         assert response.json()["usageInfo"]["spendRemaining"] == 92.5
+    finally:
+        app.dependency_overrides = {}
+
+
+SPEND_ROUTES = [
+    ("put", "/users/me/monthly-allowance", {"monthlyAllowance": 1e9}),
+    ("put", "/users/me/allowance-reset-date", {"allowanceResetDate": 10.0}),
+    ("put", "/users/me/spend-remaining", {"spendRemaining": 1e9}),
+    ("post", "/users/me/reset-allowance", None),
+    ("post", "/users/me/usage", {"responseCost": -1e9}),
+]
+
+
+@pytest.mark.parametrize("who", [
+    {"uid": "user-123"},
+    # A site admin viewing as a regular user is one.
+    {"uid": "root", "is_site_admin": False, "viewing_as_user": True},
+])
+@pytest.mark.parametrize("method,path,body", SPEND_ROUTES)
+def test_users_cannot_change_their_own_allowance_or_usage(who, method, path, body):
+    app = create_app()
+    fake_user_service = FakeUserService()
+    app.dependency_overrides[get_current_user] = lambda: who
+    app.dependency_overrides[get_user_service_dep] = lambda: fake_user_service
+    try:
+        r = getattr(TestClient(app), method)(path, **({"json": body} if body is not None else {}))
+        assert r.status_code == 403
+        assert "site administrators" in r.json()["detail"]
+        assert fake_user_service.calls == []
     finally:
         app.dependency_overrides = {}
 

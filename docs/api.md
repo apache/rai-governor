@@ -61,6 +61,8 @@ Most routes rely on dependency injection for authorization (`get_current_user`);
   - Effect: Appends usage entry and updates spend remaining.
 - `POST /users/me/reset-allowance` → Resets usage tracking for the current user.
 
+The five routes that change the allowance or usage are for site admins (403 for anyone else, including a site admin viewing as a user): the allowance caps LLM spend, so users can't set their own. The LLM service records usage itself, not through `POST /users/me/usage`.
+
 ### Admin users
 - `GET /admin/users` → Lists all users (admin-only dependency).
 - `PUT /admin/users/{user_id}`

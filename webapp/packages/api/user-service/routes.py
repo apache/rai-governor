@@ -220,6 +220,22 @@ _run_start_limit = [per_user("run_start", get_agent_exec_user)]
 _data_store_write_limit = [per_user("data_store_write", get_current_user)]
 
 
+SPEND_DENIED_DETAIL = (
+    "Your spend allowance and usage are set by site administrators. Ask one "
+    "if you need more."
+)
+
+
+async def get_spend_admin_user(user: dict = Depends(get_current_user)) -> dict:
+    """``get_current_user`` for the /users/me routes that change the spend
+    allowance or usage. The allowance is the only cap on LLM spend, so a
+    user who could set it could spend without limit. Usage is recorded by
+    the LLM service itself, not through these routes."""
+    if not user.get("is_site_admin"):
+        raise HTTPException(status_code=403, detail=SPEND_DENIED_DETAIL)
+    return user
+
+
 class ListMcpToolsRequest(BaseModel):
     mcp_url: str
     auth_token: Optional[str] = None
@@ -379,7 +395,7 @@ def update_user_allowances(
 @router.put("/users/me/monthly-allowance", response_model=PublicUser)
 def set_monthly_allowance(
     request: UpdateMonthlyAllowanceRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_spend_admin_user),
     user_service: UserService = Depends(get_user_service_dep),
 ):
     return user_service.set_monthly_allowance(user.get("uid", "anonymous"), request.monthly_allowance, user)
@@ -388,21 +404,21 @@ def set_monthly_allowance(
 @router.put("/users/me/allowance-reset-date", response_model=PublicUser)
 def set_allowance_reset_date(
     request: UpdateResetDateRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_spend_admin_user),
     user_service: UserService = Depends(get_user_service_dep),
 ):
     return user_service.set_reset_date(user.get("uid", "anonymous"), request.allowance_reset_date, user)
 
 
 @router.post("/users/me/reset-allowance", response_model=PublicUser)
-def reset_allowance(user: dict = Depends(get_current_user), user_service: UserService = Depends(get_user_service_dep)):
+def reset_allowance(user: dict = Depends(get_spend_admin_user), user_service: UserService = Depends(get_user_service_dep)):
     return user_service.reset_allowance(user.get("uid", "anonymous"), user)
 
 
 @router.put("/users/me/spend-remaining", response_model=PublicUser)
 def update_spend_remaining(
     request: UpdateSpendRemainingRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_spend_admin_user),
     user_service: UserService = Depends(get_user_service_dep),
 ):
     return user_service.update_spend_remaining(user.get("uid", "anonymous"), request.spend_remaining, user)
@@ -411,7 +427,7 @@ def update_spend_remaining(
 @router.post("/users/me/usage", response_model=PublicUser)
 def add_usage_entry(
     request: AddUsageRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_spend_admin_user),
     user_service: UserService = Depends(get_user_service_dep),
 ):
     return user_service.add_usage(user.get("uid", "anonymous"), request.response_cost, request.metadata, user)

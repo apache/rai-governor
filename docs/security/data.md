@@ -18,7 +18,7 @@ Three levels:
 | Run inputs, outputs and traces | CouchDB `gofannon_runs` | Restricted | Inputs are stored with tokens redacted; trace lines (`print`, logging, errors) go through `redact()` |
 | Agent data store | CouchDB `agent_data_store` | Restricted | Per user (or project) and namespace |
 | Memory entries | S3 (SeaweedFS in production), `memory/` in the bucket; index in CouchDB `memory_index`, `memory_reviews`, `memory_usage` | Restricted | Per domain (see below); written by agents' runs and by reviewers |
-| Profile and usage | CouchDB `users` | Restricted | Name, email, spend |
+| Profile and usage | CouchDB `users` | Restricted | Name, email, spend. A user reads their own; only admins change the allowance and usage |
 | Chat sessions | CouchDB `sessions` | Restricted | Owner only |
 | Workers, workload catalogue | CouchDB `gofannon_workers`, `project_workloads` | Internal | |
 | Logs | stdout, or CloudWatch/GCP when configured | Internal | Passed through `redact()`; no session cookies or authorization headers. Text that `redact()` fails on is replaced with `[redaction failed]`, never passed through; the first failure is logged, later ones counted |

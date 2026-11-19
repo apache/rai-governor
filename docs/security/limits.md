@@ -47,7 +47,7 @@ A well-formed value isn't enough when it names something:
 | Session lifetime | 24 hours | `session_ttl_hours` in `auth.yaml` |
 | Session idle timeout | 8 hours, to within the membership refresh interval | `session_idle_hours` in `auth.yaml` (0 = off) |
 | Membership refresh | Every 15 minutes | `workspace_refresh_minutes` in `auth.yaml` |
-| Spend | A per-user monthly allowance, checked before each LLM call | Per user, by an admin |
+| Spend | A per-user monthly allowance, checked before each LLM call; the LLM service records each call's cost | Per user, by an admin: the admin panel, or a site admin's own `/users/me` allowance and usage routes. Users can't change their own allowance, spend remaining or usage |
 
 ## Timeouts and retries
 
