@@ -1,5 +1,6 @@
 """Workload runs over RUN_MAX_CONCURRENT queue, show their place, and start
-when a slot frees. With the limits unset a run starts as before."""
+when a slot frees. With the limits unset a run starts as before. A detached
+run that is going stops on POST /runs/{id}/stop."""
 
 import asyncio
 import threading
@@ -26,6 +27,10 @@ WORKLOAD = {
 }
 
 
+# Who the requests are from.
+WHO = {}
+
+
 @pytest.fixture
 def env(monkeypatch):
     db = MemoryDBService()
@@ -50,7 +55,8 @@ def env(monkeypatch):
         return {"done": kw["input_dict"]["commit"]}, []
 
     monkeypatch.setattr(routes, "_execute_agent_code", fake_execute)
-    user = {"u": {"uid": "asf:root", "is_site_admin": True, "workspaces": []}}
+    user = WHO
+    user["u"] = {"uid": "asf:root", "is_site_admin": True, "workspaces": []}
     app = create_app()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: user["u"]
@@ -110,3 +116,26 @@ def test_a_run_over_the_limit_waits_its_turn(env, monkeypatch):
     _wait(c, third["runId"], "running")
     release["three"].set()
     assert _wait(c, third["runId"], "success")
+
+
+def test_stop_ends_a_running_workload_run(env):
+    c, _, run, release = env
+    out = run("held")
+    _wait(c, out["runId"], "running")
+    assert c.post(f"/runs/{out['runId']}/stop").status_code == 202
+    got = _wait(c, out["runId"], "stopped")
+    assert "AgentStopped" in got["error"]
+    assert not release["held"].is_set()   # it ended without being let go
+
+
+def test_stop_ends_a_running_run_code_start_run(env):
+    c, _, _, release = env
+    WHO["u"] = {"uid": "asf:root", "is_site_admin": True, "workspaces": []}
+    release["sandbox"] = threading.Event()
+    r = c.post("/agents/run-code/start", json={
+        "code": "x", "inputDict": {"commit": "sandbox"}, "tools": {}, "gofannonAgents": []})
+    assert r.status_code == 202, r.text
+    run_id = r.json()["runId"]
+    _wait(c, run_id, "running")
+    assert c.post(f"/runs/{run_id}/stop").status_code == 202
+    assert "AgentStopped" in _wait(c, run_id, "stopped")["error"]

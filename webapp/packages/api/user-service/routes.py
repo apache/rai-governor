@@ -1070,6 +1070,36 @@ async def run_agent_code_stream(
     )
 
 
+def _publish_stop_token(run_id: str):
+    """A cancel token for a detached run, findable by POST /runs/{id}/stop,
+    as the streaming endpoint publishes one."""
+    from services.cancel_token import CancelToken
+    from services.run_cancel_registry import publish
+    token = CancelToken()
+    publish(run_id, token)
+    return token
+
+
+async def _await_stoppable(coro, token):
+    """Await the agent as its own task, so a stop interrupts it at the await
+    it is on, as execute_in_thread does for a streamed run. A stop surfaces
+    as AgentStopped; the bound token also stops it at structural checks."""
+    from services.cancel_token import AgentStopped
+    task = asyncio.create_task(coro)
+    loop = asyncio.get_running_loop()
+    token.set_on_stop(lambda: loop.call_soon_threadsafe(task.cancel))
+    if token.is_stopped():
+        task.cancel()
+    try:
+        return await task
+    except asyncio.CancelledError:
+        if token.is_stopped():
+            raise AgentStopped("Run was cancelled by stop request")
+        raise
+    finally:
+        token.set_on_stop(None)
+
+
 @router.post("/agents/run-code/start", status_code=202)
 async def start_agent_run(
     request: RunCodeRequest,
@@ -1099,6 +1129,7 @@ async def start_agent_run(
     )
     if queue:
         run_admission.admit(registry, record)
+    token = _publish_stop_token(record.run_id)
 
     user_basic_info = {
         "email": user.get("email"),
@@ -1108,10 +1139,13 @@ async def start_agent_run(
     }
 
     async def runner():
+        from services.cancel_token import AgentStopped, bind_token
+        from services.run_cancel_registry import clear as clear_token
+        bind_token(token)
         try:
-            if not await run_admission.wait_turn(registry, record):
+            if not await run_admission.wait_turn(registry, record, token):
                 return
-            result, ops_log = await _execute_agent_code(
+            result, ops_log = await _await_stoppable(_execute_agent_code(
                 code=request.code,
                 input_dict=request.input_dict,
                 tools=request.tools,
@@ -1123,7 +1157,7 @@ async def start_agent_run(
                 agent_name=record.agent_name,
                 trace=record.trace,
                 project=project,
-            )
+            ), token)
             warnings = validate_output_against_schema(result, request.output_schema)
             registry.mark_complete(
                 record,
@@ -1132,18 +1166,22 @@ async def start_agent_run(
                 schema_warnings=warnings or None,
                 ops_log=ops_log or None,
             )
-        except Exception as e:
-            logger.log(
-                "run_failure",
-                f"Run {record.run_id} failed: {type(e).__name__}",
-                level="ERROR",
-                metadata={"traceback": traceback.format_exc()},
-            )
+        except (Exception, AgentStopped) as e:
+            is_stop = isinstance(e, AgentStopped) or token.is_stopped()
+            if not is_stop:
+                logger.log(
+                    "run_failure",
+                    f"Run {record.run_id} failed: {type(e).__name__}",
+                    level="ERROR",
+                    metadata={"traceback": traceback.format_exc()},
+                )
             registry.mark_complete(
                 record,
-                status="error",
+                status="stopped" if is_stop else "error",
                 error=f"{type(e).__name__}: {e}",
             )
+        finally:
+            clear_token(record.run_id)
 
     task = asyncio.create_task(runner())
     registry.bind_task(record, task)
@@ -1780,6 +1818,7 @@ def start_deployment_run(
     )
     if queue:
         run_admission.admit(registry, record)
+    token = _publish_stop_token(record.run_id)
     hide = secret_variants(secrets)
     record.trace.scrub_variants = hide
 
@@ -1791,10 +1830,13 @@ def start_deployment_run(
     }
 
     async def runner():
+        from services.cancel_token import AgentStopped, bind_token
+        from services.run_cancel_registry import clear as clear_token
+        bind_token(token)
         try:
-            if not await run_admission.wait_turn(registry, record):
+            if not await run_admission.wait_turn(registry, record, token):
                 return
-            result, ops_log = await _execute_agent_code(
+            result, ops_log = await _await_stoppable(_execute_agent_code(
                 code=agent.code,
                 input_dict=input_dict,
                 tools=agent.tools,
@@ -1806,7 +1848,7 @@ def start_deployment_run(
                 agent_name=friendly_name,
                 trace=record.trace,
                 project=project,
-            )
+            ), token)
             warnings = validate_output_against_schema(
                 result, getattr(agent, "output_schema", None)
             )
@@ -1817,20 +1859,24 @@ def start_deployment_run(
                 schema_warnings=warnings or None,
                 ops_log=scrub(ops_log, hide) or None,
             )
-        except Exception as e:
-            logger.log(
-                "deployed_run_failure",
-                f"Deployed run {record.run_id} ({friendly_name}) failed: {type(e).__name__}",
-                level="ERROR",
-                metadata={"traceback": traceback.format_exc(),
-                          "run_id": record.run_id,
-                          "friendly_name": friendly_name},
-            )
+        except (Exception, AgentStopped) as e:
+            is_stop = isinstance(e, AgentStopped) or token.is_stopped()
+            if not is_stop:
+                logger.log(
+                    "deployed_run_failure",
+                    f"Deployed run {record.run_id} ({friendly_name}) failed: {type(e).__name__}",
+                    level="ERROR",
+                    metadata={"traceback": traceback.format_exc(),
+                              "run_id": record.run_id,
+                              "friendly_name": friendly_name},
+                )
             registry.mark_complete(
                 record,
-                status="error",
+                status="stopped" if is_stop else "error",
                 error=scrub(f"{type(e).__name__}: {e}", hide),
             )
+        finally:
+            clear_token(record.run_id)
 
     task = asyncio.create_task(runner())
     # Strong reference; see the note at the streaming endpoint. Without this
