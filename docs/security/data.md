@@ -21,7 +21,7 @@ Three levels:
 | Profile and usage | CouchDB `users` | Restricted | Name, email, spend |
 | Chat sessions | CouchDB `sessions` | Restricted | Owner only |
 | Workers, workload catalogue | CouchDB `gofannon_workers`, `project_workloads` | Internal | |
-| Logs | stdout, or CloudWatch/GCP when configured | Internal | Passed through `redact()`; no session cookies or authorization headers |
+| Logs | stdout, or CloudWatch/GCP when configured | Internal | Passed through `redact()`; no session cookies or authorization headers. Text that `redact()` fails on is replaced with `[redaction failed]`, never passed through; the first failure is logged, later ones counted |
 
 ## Who sees which fields
 

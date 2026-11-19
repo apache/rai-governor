@@ -504,3 +504,54 @@ def test_production_patterns_all_compile():
         f"some patterns failed to compile: "
         f"defined={len(_PATTERN_DEFS)}, compiled={len(_COMPILED)}"
     )
+
+
+# ---------------------------------------------------------------------
+# Failing closed: when redaction itself raises, the text is replaced,
+# never passed through, and the failure is flagged once without it.
+# ---------------------------------------------------------------------
+
+
+class _Exploding:
+    def sub(self, repl, text):
+        raise RuntimeError(f"boom on {text}")
+
+
+def test_a_redaction_failure_logs_a_placeholder_not_the_text(monkeypatch, caplog):
+    import logging
+
+    from services import log_redaction as lr
+
+    monkeypatch.setattr(lr, "_COMPILED", [("explodes", _Exploding())])
+    monkeypatch.setattr(lr, "_failures", 0, raising=False)
+    secret = "token=" + _gh_pat()
+
+    with caplog.at_level(logging.WARNING, logger="services.log_redaction"):
+        assert redact(secret) == "[redaction failed]"
+        assert redact_in_place({"m": [secret]}) == {"m": ["[redaction failed]"]}
+
+    assert lr.redaction_failures() == 2
+    # Flagged once, with the exception type only.
+    warnings = [r.getMessage() for r in caplog.records if r.name == "services.log_redaction"]
+    assert len(warnings) == 1 and "RuntimeError" in warnings[0]
+    assert secret not in caplog.text and "boom" not in caplog.text
+
+
+def test_a_redaction_failure_reaches_the_log_providers_as_a_placeholder(monkeypatch):
+    from services import log_redaction as lr
+    from services import observability_service as obs
+
+    monkeypatch.setattr(lr, "_COMPILED", [("explodes", _Exploding())])
+    monkeypatch.setattr(obs.ObservabilityService, "_initialize_providers", lambda self: None)
+    seen = []
+
+    class Provider:
+        async def log(self, payload):
+            seen.append(payload)
+
+    service = obs.ObservabilityService()
+    service.providers = [Provider()]
+    secret = "token=" + _gh_pat()
+    service.log("evt", f"oops {secret}", metadata={"detail": secret})
+    assert seen[0]["message"] == "[redaction failed]"
+    assert seen[0]["metadata"] == {"detail": "[redaction failed]"}

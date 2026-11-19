@@ -23,15 +23,12 @@ Failure modes:
     one broken regex to disable redaction wholesale or to crash the
     log pipeline.
 
-  * The redactor must never raise from inside ``redact()``. Errors at
-    apply-time (e.g. malformed input that confuses ``re.sub``)
-    fall through to returning the original input unchanged. That's a
-    deliberate fail-open in the *availability* sense (logs always
-    flow) at the cost of fail-closed in the *security* sense (a
-    secret could in principle survive a redactor crash). The
-    alternative — dropping log lines entirely on redactor failure —
-    is worse for debuggability and creates an attractive
-    denial-of-logging vector.
+  * The redactor must never raise from inside ``redact()``, and must
+    never pass text through that it failed to check. An error at
+    apply-time returns ``[redaction failed]`` in place of the text: the
+    log line still flows (no denial-of-logging), but without the value.
+    Failures are counted (``redaction_failures()``) and the first one
+    is logged as a warning, with the exception type only.
 
 The function is pure (no I/O, no global state beyond the compiled
 patterns), so it's safe to call from any context.
@@ -140,6 +137,17 @@ def _compile_patterns(defs: List[Tuple[str, str]]) -> List[Tuple[str, "re.Patter
 _COMPILED = _compile_patterns(_PATTERN_DEFS)
 
 
+# What a string becomes when redacting it raised.
+REDACTION_FAILED = "[redaction failed]"
+
+_failures = 0
+
+
+def redaction_failures() -> int:
+    """How many times redact() has failed in this process."""
+    return _failures
+
+
 def _placeholder(kind: str) -> str:
     """Stable placeholder that's grep-friendly and obviously synthetic."""
     return f"[REDACTED:{kind}]"
@@ -172,9 +180,9 @@ def _sub_for(kind: str, match: re.Match) -> str:
 def redact(text: str) -> str:
     """Scrub known secret shapes from `text`, returning the redacted version.
 
-    Returns the original text unchanged if anything goes wrong inside —
-    the contract is "never break the log pipeline." Returns the input
-    unchanged for non-string inputs and empty strings.
+    Returns REDACTION_FAILED if anything goes wrong inside: the contract
+    is "never break the log pipeline, never let unchecked text through."
+    Returns the input unchanged for non-string inputs and empty strings.
     """
     if not text or not isinstance(text, str):
         return text
@@ -184,9 +192,17 @@ def redact(text: str) -> str:
             # functools.partial would also work; closure is simpler.
             result = pattern.sub(lambda m, _kind=kind: _sub_for(_kind, m), result)
         return result
-    except Exception as exc:  # pragma: no cover — defensive only
-        logger.warning("log_redaction: redact() raised %s; passing input through", exc)
-        return text
+    except Exception as exc:
+        global _failures
+        _failures += 1
+        if _failures == 1:
+            # The type only: the message could quote the text.
+            logger.warning(
+                "log_redaction: redact() raised %s; logging %r in its place. "
+                "Later failures are counted, not logged.",
+                type(exc).__name__, REDACTION_FAILED,
+            )
+        return REDACTION_FAILED
 
 
 def redact_in_place(obj):
