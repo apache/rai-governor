@@ -20,6 +20,12 @@ can end all of anyone's (``delete_all_for_user``).
 Expiry is a hard wall: the ``expires_at`` field is checked on every
 access, and expired sessions are returned as "not authenticated" even
 if the cookie hasn't been cleared on the client.
+
+A session unused for ``session_idle_hours`` is refused the same way. Last
+use is recorded only when the doc is written anyway, at the membership
+refresh on the first request after ``workspace_refresh_minutes``, so it
+can lag real use by up to that interval and a session can be refused
+that much early.
 """
 import asyncio
 import hashlib
@@ -72,6 +78,12 @@ class SessionService:
         auth_cfg = settings.AUTH_CONFIG or {}
         self._ttl_hours: int = auth_cfg.get("session_ttl_hours", 24)
         self._refresh_minutes: int = auth_cfg.get("workspace_refresh_minutes", 15)
+        idle_hours = float(auth_cfg.get("session_idle_hours", 8) or 0)
+        # Last use is only as fresh as the last refresh, so an idle limit
+        # at or under the refresh interval would refuse sessions in use.
+        self._idle: Optional[timedelta] = (
+            max(timedelta(hours=idle_hours), timedelta(minutes=2 * self._refresh_minutes))
+            if idle_hours > 0 else None)
         self._site_admins: List[str] = list(auth_cfg.get("site_admins") or [])
 
     # --- Cookie name ------------------------------------------------------
@@ -117,6 +129,7 @@ class SessionService:
             updated_at=now,
             expires_at=expires,
             last_refresh_at=now,
+            last_used_at=now,
         )
         self.db.save(
             _SESSIONS_COLLECTION,
@@ -158,7 +171,7 @@ class SessionService:
                 pass
             return None
 
-        if session.expires_at <= naive_utc_now():
+        if session.expires_at <= naive_utc_now() or self.is_idle(session):
             # Best-effort eviction; ignore errors.
             try:
                 self.db.delete(_SESSIONS_COLLECTION, doc_id)
@@ -175,6 +188,7 @@ class SessionService:
             raise HTTPException(status_code=403, detail="Only site admins can view as a regular user")
         session.viewing_as_user = on
         session.updated_at = naive_utc_now()
+        session.last_used_at = session.updated_at
         self.db.save(_SESSIONS_COLLECTION, session.id, session.model_dump(by_alias=True, mode="json"))
         return session
 
@@ -262,6 +276,7 @@ class SessionService:
         session.is_site_admin = now_site_admin
         session.updated_at = naive_utc_now()
         session.last_refresh_at = session.updated_at
+        session.last_used_at = session.updated_at
 
         self.db.save(
             _SESSIONS_COLLECTION,
@@ -303,7 +318,10 @@ class SessionService:
                 session.workspaces = _to_workspace_memberships(user_info, refreshed.memberships)
                 session.is_site_admin = session.user_uid in self._site_admins
                 session.updated_at = now
+            # Written at every refresh, whether or not anything changed: it
+            # is also the record of last use the idle timeout reads.
             session.last_refresh_at = now
+            session.last_used_at = now
             await asyncio.to_thread(
                 self.db.save, _SESSIONS_COLLECTION, session.id,
                 session.model_dump(by_alias=True, mode="json"))
@@ -314,6 +332,13 @@ class SessionService:
         return session
 
     # --- Introspection ---------------------------------------------------
+
+    def is_idle(self, session: Session) -> bool:
+        """Unused for longer than ``session_idle_hours`` (never when 0)."""
+        if self._idle is None:
+            return False
+        last_used = session.last_used_at or session.last_refresh_at
+        return naive_utc_now() - last_used > self._idle
 
     def needs_refresh(self, session: Session) -> bool:
         """Whether the session's workspaces are stale enough to warrant a refresh."""

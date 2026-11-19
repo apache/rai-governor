@@ -32,7 +32,8 @@ The `redirect_uri` sent to the provider is `AUTH_CALLBACK_BASE_URL` + `/auth/cal
 |---|---|
 | Cookie | `gofannon_sid`: 32 random bytes, `HttpOnly`, `SameSite=Lax`, `Secure` when the request came over HTTPS (uvicorn reads that from `X-Forwarded-Proto`) |
 | Stored as | A doc in `user_sessions` whose id is the SHA-256 of the cookie value. The value itself is not stored, so reading the database doesn't give anyone a session |
-| Lifetime | `session_ttl_hours` in `auth.yaml` (default 24), counted from login. There is no idle timeout |
+| Lifetime | `session_ttl_hours` in `auth.yaml` (default 24), counted from login |
+| Idle timeout | `session_idle_hours` in `auth.yaml` (default 8; 0 turns it off). A session unused that long is refused and deleted. To avoid a write on every request, last use is recorded only when the session is written anyway, at the membership refresh (every `workspace_refresh_minutes`, whether or not anything changed), so it is accurate to about 15 minutes: a session can end that much before it has been idle for the full time. The limit is never shorter than two refresh intervals |
 | Concurrent sessions | Unlimited. Signing in elsewhere doesn't end other sessions |
 | Ending all of a user's sessions | "Sign out everywhere" in the profile menu (`POST /auth/logout-everywhere`) deletes every session of the signed-in user, this one included, and clears the cookie as logout does. A site admin can end every session of any uid with `POST /auth/admin/users/{uid}/end-sessions` (API only; there is no page for it); anyone else gets 403, including a site admin viewing as a regular user. Both are recorded as `auth_sessions_ended` with who, whose sessions and how many. Sessions are found by an index on `userUid` |
 | Memberships | Read at login, then read again on the first request after `workspace_refresh_minutes` (default 15). This applies only to providers that can look them up without the user present: ASF (through LDAP) and `dev_stub`. GitHub, Google and Microsoft keep no token to do it with, so their sessions keep the memberships they logged in with. When LDAP fails, the session keeps what it had. A user banned since login has their session deleted |
@@ -46,7 +47,6 @@ Governor's session and the provider's session are independent. Signing out of Go
 
 ### Not decided yet
 
-- Whether to add an idle timeout, and its length.
 - A way for a user or an admin to list sessions and end one of them (ending all of a user's sessions at once is done).
 - Step-up authentication for site-admin actions.
 - A periodic sweep of expired sessions.

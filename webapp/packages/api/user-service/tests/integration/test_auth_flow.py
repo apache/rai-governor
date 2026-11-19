@@ -208,6 +208,67 @@ def test_logout_deletes_the_stored_session(client, session):
     assert client.db.dbs["user_sessions"] == {}
 
 
+# --- Idle timeout -----------------------------------------------------------
+
+from datetime import datetime  # noqa: E402
+
+
+def _unused_for(client, sid, hours, refreshed_minutes_ago=None):
+    """Last used `hours` ago; last refreshed then too, unless said otherwise."""
+    doc = client.db.get("user_sessions", session_doc_id(sid))
+    doc["lastUsedAt"] = (naive_utc_now() - timedelta(hours=hours)).isoformat()
+    ago = timedelta(minutes=refreshed_minutes_ago) if refreshed_minutes_ago is not None else timedelta(hours=hours)
+    doc["lastRefreshAt"] = (naive_utc_now() - ago).isoformat()
+    client.db.save("user_sessions", session_doc_id(sid), doc)
+
+
+def _stored(client, sid):
+    return client.db.dbs["user_sessions"].get(session_doc_id(sid))
+
+
+def test_a_session_unused_past_the_idle_limit_is_refused_and_deleted(client, session):
+    _unused_for(client, session, hours=8.5)
+    assert client.get("/users/me", cookies={"gofannon_sid": session}).status_code == 401
+    assert _stored(client, session) is None
+
+
+def test_a_session_used_within_the_idle_limit_goes_on(client, session):
+    _unused_for(client, session, hours=7.5)
+    assert client.get("/users/me", cookies={"gofannon_sid": session}).status_code == 200
+    # The refresh that request made recorded the use.
+    used = datetime.fromisoformat(_stored(client, session)["lastUsedAt"])
+    assert naive_utc_now() - used < timedelta(minutes=1)
+
+
+def test_use_is_recorded_at_each_refresh_even_when_nothing_changed(client, session):
+    # dev_stub returns the same memberships; last use is still written.
+    _unused_for(client, session, hours=1, refreshed_minutes_ago=20)
+    client.get("/users/me", cookies={"gofannon_sid": session})
+    used = datetime.fromisoformat(_stored(client, session)["lastUsedAt"])
+    assert naive_utc_now() - used < timedelta(minutes=1)
+
+
+def test_use_is_not_written_between_refreshes(client, session):
+    _unused_for(client, session, hours=1, refreshed_minutes_ago=5)
+    before = _stored(client, session)["lastUsedAt"]
+    client.get("/users/me", cookies={"gofannon_sid": session})
+    assert _stored(client, session)["lastUsedAt"] == before
+
+
+def test_an_idle_limit_of_zero_turns_it_off(client, session, monkeypatch):
+    monkeypatch.setattr(settings, "AUTH_CONFIG", {**AUTH_CONFIG, "session_idle_hours": 0})
+    _unused_for(client, session, hours=20)
+    assert client.get("/users/me", cookies={"gofannon_sid": session}).status_code == 200
+
+
+def test_a_session_from_before_last_use_was_recorded_goes_by_its_last_refresh(client, session):
+    doc = client.db.get("user_sessions", session_doc_id(session))
+    doc.pop("lastUsedAt", None)
+    doc["lastRefreshAt"] = (naive_utc_now() - timedelta(hours=9)).isoformat()
+    client.db.save("user_sessions", session_doc_id(session), doc)
+    assert _me(client, session).status_code == 401
+
+
 # --- The OAuth redirect_uri ------------------------------------------------
 
 def test_the_callback_url_comes_from_the_request_by_default(client, monkeypatch):

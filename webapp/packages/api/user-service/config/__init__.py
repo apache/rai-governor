@@ -15,7 +15,8 @@ def _load_auth_config() -> dict:
     """Load auth config from AUTH_CONFIG_PATH (YAML) if set.
 
     Returns a dict with keys: providers (list), site_admins (list),
-    session_ttl_hours (int), workspace_refresh_minutes (int),
+    session_ttl_hours (int), session_idle_hours (number, 0 = no idle
+    timeout), workspace_refresh_minutes (int),
     legacy_firebase_enabled (bool). When no config file is present, returns
     an empty/default config that keeps Phase B disabled — pre-Phase-B
     deployments work without any auth config file.
@@ -24,6 +25,7 @@ def _load_auth_config() -> dict:
         "providers": [],
         "site_admins": [],
         "session_ttl_hours": 24,
+        "session_idle_hours": 8,
         "workspace_refresh_minutes": 15,
         "legacy_firebase_enabled": True,
     }

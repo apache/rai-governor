@@ -43,6 +43,7 @@ A well-formed value isn't enough when it names something:
 | Memory recall | 5 entries, 6,000 characters | `MEMORY_RECALL_MAX_ENTRIES`, `MEMORY_RECALL_MAX_CHARS` |
 | Memory search hits | 1,000 | No |
 | Session lifetime | 24 hours | `session_ttl_hours` in `auth.yaml` |
+| Session idle timeout | 8 hours, to within the membership refresh interval | `session_idle_hours` in `auth.yaml` (0 = off) |
 | Membership refresh | Every 15 minutes | `workspace_refresh_minutes` in `auth.yaml` |
 | Spend | A per-user monthly allowance, checked before each LLM call | Per user, by an admin |
 

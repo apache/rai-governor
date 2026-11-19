@@ -132,6 +132,11 @@ auth:
   # don't slide. Re-login is required after this.
   session_ttl_hours: 24
 
+  # A session unused this long is ended, sooner than session_ttl_hours.
+  # Last use is recorded at the membership refresh, so this is accurate
+  # to about workspace_refresh_minutes. 0 turns it off.
+  session_idle_hours: 8
+
   # How often the background refresher re-queries providers for
   # workspace memberships. Also the minimum gap between on-demand
   # refreshes via POST /auth/refresh-workspaces.
