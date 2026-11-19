@@ -21,6 +21,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from config import settings
+
 from ..base import (
     AuthProvider,
     LoginAllow,
@@ -31,6 +33,13 @@ from ..base import (
     UserInfo,
 )
 from ..ldap_client import LdapClient
+
+# Shown to a committer none of whose projects is in ``allowed_projects``.
+# Names no project: neither theirs nor the pilot's.
+NOT_IN_PILOT = (
+    "Governor is open to a few pilot projects for now, and you are not a "
+    "committer or PMC member of one of them."
+)
 
 # Default endpoints; overridable via provider config.
 OAUTH_URL_INIT = "https://oauth.apache.org/auth"
@@ -61,6 +70,12 @@ class AsfProvider(AuthProvider):
             **DEFAULT_PROJECT_DISPLAY_NAMES,
             **(config.get("project_display_names") or {}),
         }
+        # The pilot: projects whose committers and PMC members may sign in.
+        # Empty means site admins only.
+        allowed = config.get("allowed_projects") or []
+        if not isinstance(allowed, list):
+            raise ValueError("asf: allowed_projects must be a list of project names")
+        self.allowed_projects = {str(p).strip().lower() for p in allowed if str(p).strip()}
         # LDAP config; the client's defaults match production ldap-eu.apache.org.
         ldap_cfg = config.get("ldap") or {}
         self._ldap = LdapClient(
@@ -149,11 +164,25 @@ class AsfProvider(AuthProvider):
         # that preserves existing memberships when query_succeeded=False.
         if not snapshot.query_succeeded:
             return []
-        return self._memberships_from(snapshot)
+        return self._memberships_from(snapshot, user_info.uid)
 
-    def _memberships_from(self, snapshot) -> List[Membership]:
+    def _in_pilot(self, project: str) -> bool:
+        return project in self.allowed_projects
+
+    @staticmethod
+    def _site_admin(uid: str) -> bool:
+        return uid in ((settings.AUTH_CONFIG or {}).get("site_admins") or [])
+
+    def _memberships_from(self, snapshot, uid: str) -> List[Membership]:
+        """The user's projects as workspaces. For anyone but a site admin,
+        only the pilot's: a pilot member's other projects get no runs,
+        workloads or memory here."""
+        site_admin = self._site_admin(uid)
         memberships: List[Membership] = []
-        for project in sorted(snapshot.committer_groups):
+        # A PMC member is normally in the committer group too; either counts.
+        for project in sorted(snapshot.committer_groups | snapshot.pmc_groups):
+            if not site_admin and not self._in_pilot(project):
+                continue
             # Intersection with PMC groups upgrades role to admin.
             role = "admin" if project in snapshot.pmc_groups else "member"
             source = "ldap_pmc" if role == "admin" else "ldap_committer"
@@ -175,7 +204,11 @@ class AsfProvider(AuthProvider):
             return None
         if snapshot.is_banned:
             return MembershipRefresh(memberships=[], banned=True)
-        return MembershipRefresh(memberships=self._memberships_from(snapshot))
+        memberships = self._memberships_from(snapshot, user_info.uid)
+        # No longer in a pilot project (or the pilot changed): login would
+        # be refused now, so the session ends.
+        return MembershipRefresh(memberships=memberships,
+                                 refused=not memberships and not self._site_admin(user_info.uid))
 
     async def evaluate_login(
         self,
@@ -192,6 +225,8 @@ class AsfProvider(AuthProvider):
             site-admin) are denied with a specific message
           - site admin without memberships: allowed with site_admin=True
             (so ASF infra can still log in even if they're not on any PMC)
+          - anyone else only as a committer or PMC member of a project in
+            ``allowed_projects`` (the pilot); none listed, nobody else
         """
         # Re-query the banned group. We already did the full snapshot in
         # get_workspace_memberships, but we don't have the is_banned
@@ -209,9 +244,11 @@ class AsfProvider(AuthProvider):
 
         if user_info.uid in site_admins:
             return LoginAllow(site_admin=True)
-        # TODO: Admin-only for testing
-        # if memberships:
-        #     return LoginAllow(site_admin=False)
+        # Memberships are already only the pilot's projects (_memberships_from).
+        if any(self._in_pilot(m.workspace_id.split(":", 1)[-1]) for m in memberships):
+            return LoginAllow(site_admin=False)
+        if snapshot.query_succeeded and (snapshot.committer_groups or snapshot.pmc_groups):
+            return LoginDeny(reason=NOT_IN_PILOT)
         return LoginDeny(
             reason=(
                 "Your apache.org account is valid, but you're not currently "

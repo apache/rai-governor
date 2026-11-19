@@ -69,9 +69,12 @@ class LoginDeny:
 
 @dataclass
 class MembershipRefresh:
-    """Current memberships, looked up without the user present."""
+    """Current memberships, looked up without the user present. ``banned``
+    or ``refused`` (the provider would refuse this login now) ends the
+    session."""
     memberships: List[Membership]
     banned: bool = False
+    refused: bool = False
 
 
 # Type alias for provider login decisions.

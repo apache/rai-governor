@@ -184,6 +184,14 @@ def test_a_user_banned_since_login_is_logged_out(client, session, monkeypatch):
     assert _me(client, session).status_code == 401
 
 
+def test_a_user_the_provider_would_now_refuse_is_logged_out(client, session, monkeypatch):
+    # An ASF user no longer in a pilot project.
+    _provider_returns(monkeypatch, MembershipRefresh(memberships=[], refused=True))
+    _age_session(client, session)
+    assert client.get("/users/me", cookies={"gofannon_sid": session}).status_code == 401
+    assert _me(client, session).status_code == 401
+
+
 def test_a_provider_that_cannot_refresh_leaves_the_session_alone(client, session):
     from auth.base import AuthProvider
     from auth import get_registry

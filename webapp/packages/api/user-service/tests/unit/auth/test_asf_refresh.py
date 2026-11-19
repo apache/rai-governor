@@ -19,7 +19,7 @@ class FakeLdap:
 
 
 def _refresh(snapshot):
-    p = AsfProvider({})
+    p = AsfProvider({"allowed_projects": ["tooling", "httpd"]})
     p._ldap = FakeLdap(snapshot)
     import asyncio
     out = asyncio.run(p.refresh_memberships(UserInfo(provider_type="asf", external_id="akm",

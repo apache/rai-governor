@@ -331,7 +331,8 @@ class SessionService:
         """Bring a session's memberships and site-admin flag up to date once
         they are older than ``workspace_refresh_minutes``; called on every
         authenticated request. Returns the session to use, or None when the
-        user has been banned since login (the session is deleted).
+        user has been banned since login, or the provider would now refuse
+        their login (the session is deleted).
 
         Only providers that can look memberships up without the user
         (``refresh_memberships``) take part; for the others, and when the
@@ -351,8 +352,9 @@ class SessionService:
                     email=session.email,
                 )
                 refreshed = await provider.refresh_memberships(user_info)
-            if refreshed is not None and refreshed.banned:
-                logger.warning("session for %s ended: banned since login", session.user_uid)
+            if refreshed is not None and (refreshed.banned or refreshed.refused):
+                logger.warning("session for %s ended: %s since login", session.user_uid,
+                               "banned" if refreshed.banned else "refused")
                 await self._delete_doc(session.id)
                 return None
             now = naive_utc_now()

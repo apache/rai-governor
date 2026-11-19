@@ -42,6 +42,11 @@ auth:
       enabled: false
       config:
         display_name: "Apache Software Foundation"
+        # Projects whose committers and PMC members may sign in (the
+        # pilot). Empty or absent: only site_admins.
+        allowed_projects:
+          - tooling
+          - whimsy
         # Optional: override endpoints for staging or testing.
         # oauth_init_url: https://oauth.apache.org/auth
         # oauth_callback_url: https://oauth.apache.org/token
