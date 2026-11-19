@@ -60,6 +60,11 @@ class Session(BaseModel):
     # The last time we re-queried the provider for workspace memberships.
     # The background refresher uses this to decide whether it needs to run.
     last_refresh_at: datetime = Field(default_factory=naive_utc_now, alias="lastRefreshAt")
+    # When the session was last used, to within workspace_refresh_minutes:
+    # written only when the doc is written anyway (login, the membership
+    # refresh), never on every request. None on sessions from before it
+    # existed; last_refresh_at stands in for it.
+    last_used_at: Optional[datetime] = Field(default=None, alias="lastUsedAt")
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 

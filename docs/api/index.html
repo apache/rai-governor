@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://www.googletagmanager.com">
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-S4YL0CG31S"></script>
 <script>function gtag(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],gtag("js",new Date),gtag("config","G-S4YL0CG31S",{anonymize_ip:!0})</script><link rel="stylesheet" href="/rai-governor/assets/css/styles.327e4110.css">
-<script src="/rai-governor/assets/js/runtime~main.a96a7a96.js" defer="defer"></script>
+<script src="/rai-governor/assets/js/runtime~main.7bf67d51.js" defer="defer"></script>
 <script src="/rai-governor/assets/js/main.58eb16e2.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -95,6 +95,7 @@
 </li>
 <li class=""><code>POST /users/me/reset-allowance</code> → Resets usage tracking for the current user.</li>
 </ul>
+<p>The five routes that change the allowance or usage are for site admins (403 for anyone else, including a site admin viewing as a user): the allowance caps LLM spend, so users can&#x27;t set their own. The LLM service records usage itself, not through <code>POST /users/me/usage</code>.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="admin-users">Admin users<a href="#admin-users" class="hash-link" aria-label="Direct link to Admin users" title="Direct link to Admin users" translate="no">​</a></h3>
 <ul>
 <li class=""><code>GET /admin/users</code> → Lists all users (admin-only dependency).</li>
