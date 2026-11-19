@@ -644,7 +644,22 @@ async def delete_agent(
     Always runs undeploy_agent first, which scans the deployments collection
     by the `agentId` field and removes every matching deployment doc. That
     covers friendly_name renames and pre-existing orphans.
+
+    Refused (409) while another saved agent calls it (its gofannonAgents
+    lists it): that agent would fail at run time and its pipeline could no
+    longer be exported.
     """
+    agents = await asyncio.to_thread(db.list_all, "agents")
+    callers = sorted(
+        f"{a.get('name') or a.get('_id')} ({a.get('_id')})" for a in agents
+        if a.get("_id") != agent_id and agent_id in (a.get("gofannonAgents") or [])
+    )
+    if callers:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This agent is called by {', '.join(callers)}. "
+                   "Remove it from those agents before deleting it.",
+        )
     try:
         # undeploy_agent is now idempotent and self-healing: safe to call
         # unconditionally, including when there are no deployments or when

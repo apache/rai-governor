@@ -78,6 +78,9 @@ const ViewAgent = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);  
+  // A failed action (delete, export) shows by the buttons, not at the top
+  // of a long page where it would be out of view.
+  const [actionError, setActionError] = useState(null);
   const [viewingSpec, setViewingSpec] = useState({ open: false, name: '', content: '' });
   
   // State for deployment
@@ -760,14 +763,14 @@ const ViewAgent = () => {
   const handleDeleteAgent = async () => {
     if (!agentId) return;
     setDeleteConfirmationOpen(false);
-    setError(null);
+    setActionError(null);
     setIsSaving(true);
 
     try {
       await agentService.deleteAgent(agentId);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err.message || 'Failed to delete agent.');
+      setActionError(`Delete failed: ${err.message || 'unknown error'}`);
     } finally {
       setIsSaving(false);
     }
@@ -1256,7 +1259,9 @@ const ViewAgent = () => {
         )}
 
         {/* Action Buttons */}
-        <Stack direction="row" spacing={2} justifyContent="flex-end" sx={{mt: 3}} flexWrap="wrap" useFlexGap>
+        {actionError && <Alert severity="error" sx={{ mt: 3 }} onClose={() => setActionError(null)}>{actionError}</Alert>}
+        <Stack direction="row" spacing={2} justifyContent="flex-end" sx={{mt: 3}} flexWrap="wrap" useFlexGap
+               role="group" aria-label="Agent actions">
             {!isCreationFlow && (
                 <Button
                     variant="outlined"
