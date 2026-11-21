@@ -530,7 +530,11 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
             "request": request.dict(by_alias=True),
             "user_id": user.get("uid"),
         }
-        db_service.save("tickets", ticket_id, dict(ticket_data))
+        # CouchDB's save needs the current _rev to update a document; each
+        # later save of this ticket carries the one the last save returned.
+        saved = db_service.save("tickets", ticket_id, dict(ticket_data)) or {}
+        if saved.get("rev"):
+            ticket_data["_rev"] = saved["rev"]
 
         messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
 
@@ -645,8 +649,11 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
             metadata={"traceback": traceback.format_exc(), "request": get_sanitized_request_data(req)},
             user_id=log_user_id,
         )
-        if "ticket_data" not in locals():
+        try:
+            # The stored ticket, with its current _rev, whatever saved it last.
             ticket_data = db_service.get("tickets", ticket_id)
+        except Exception:
+            ticket_data = {"user_id": user.get("uid")}
 
         ticket_data.update(
             {
@@ -655,7 +662,15 @@ async def process_chat(ticket_id: str, request: ChatRequest, user: dict, req: Re
                 "error": str(e),
             }
         )
-        db_service.save("tickets", ticket_id, ticket_data)
+        try:
+            db_service.save("tickets", ticket_id, ticket_data)
+        except Exception:
+            # A background task that raises after the response has gone out
+            # only adds "response already started" to the log.
+            logger.log("background_task_failure",
+                       f"Could not record the failure of chat ticket {ticket_id}",
+                       level="ERROR", metadata={"traceback": traceback.format_exc()},
+                       user_id=log_user_id)
 
 
 def get_available_providers(user_id: Optional[str] = None, user_basic_info: Optional[Dict[str, Any]] = None):

@@ -465,3 +465,72 @@ class TestProvidersReadEachThingOnce:
         assert sorted(providers["gofannon"]["models"]) == ["one", "two"]
         # An orphan is still removed; a deployment with no agent is left alone.
         assert sorted(d["_id"] for d in db.list_all("deployments")) == ["odd", "one", "two"]
+
+
+class _RevStore:
+    """Saves the way CouchDB does: updating a document needs its current
+    _rev, and a save without it is a 409."""
+
+    def __init__(self):
+        self.docs, self.n = {}, 0
+
+    def save(self, collection, key, data):
+        from fastapi import HTTPException
+        cur = self.docs.get((collection, key))
+        if cur is not None and data.get("_rev") != cur["_rev"]:
+            raise HTTPException(status_code=409, detail="Document update conflict")
+        self.n += 1
+        self.docs[(collection, key)] = {**data, "_id": key, "_rev": f"{self.n}-x"}
+        return {"id": key, "rev": f"{self.n}-x"}
+
+    def get(self, collection, key):
+        return dict(self.docs[(collection, key)])
+
+
+def _chat_env(monkeypatch, store, llm):
+    class FakeLogger:
+        def __init__(self):
+            self.calls = []
+
+        def log(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+
+    logger = FakeLogger()
+    monkeypatch.setattr(dependencies_module, "get_database_service", lambda _settings: store)
+    monkeypatch.setattr(dependencies_module, "get_user_service", lambda _db: Mock())
+    monkeypatch.setattr(dependencies_module, "get_observability_service", lambda: logger)
+    monkeypatch.setattr(dependencies_module, "call_llm", llm)
+    return logger
+
+
+@pytest.mark.asyncio
+async def test_a_chat_answer_is_saved_where_saves_need_the_revision(monkeypatch):
+    # On CouchDB the finished ticket was saved without the _rev of the
+    # "processing" save: a 409, so the answer was lost and the page waited.
+    store = _RevStore()
+
+    async def llm(**kwargs):
+        return "hello back", None
+
+    _chat_env(monkeypatch, store, llm)
+    request = ChatRequest(messages=[ChatMessage(role="user", content="hello")],
+                          provider="llmao", model="gemma4-26b", parameters={})
+    await process_chat("t-1", request, {"uid": "asf:akm"}, _build_request())
+    doc = store.get("tickets", "t-1")
+    assert doc["status"] == "completed" and doc["result"]["content"] == "hello back"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_chat_is_recorded_and_never_raises(monkeypatch):
+    store = _RevStore()
+
+    async def llm(**kwargs):
+        raise RuntimeError("model unavailable")
+
+    logger = _chat_env(monkeypatch, store, llm)
+    request = ChatRequest(messages=[ChatMessage(role="user", content="hello")],
+                          provider="llmao", model="gemma4-26b", parameters={})
+    await process_chat("t-2", request, {"uid": "asf:akm"}, _build_request())
+    doc = store.get("tickets", "t-2")
+    assert doc["status"] == "failed" and "model unavailable" in doc["error"]
+    assert [c[0][0] for c in logger.calls].count("background_task_failure") == 1
