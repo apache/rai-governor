@@ -4,7 +4,7 @@
 // blank and showed again.
 import React, { useEffect, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { renderWithRouter } from '../test/testUtils';
 import RunPage from './RunPage';
@@ -64,7 +64,8 @@ describe('RunPage', () => {
       { route: `/run/${RUN.runId}` });
     expect(await screen.findByText('Queued — 2 ahead of you')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
-    await vi.advanceTimersByTimeAsync(5000);
+    // The poll's state updates land inside act, as React expects in tests.
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(await screen.findByText('Running for')).toBeInTheDocument();
     expect(screen.queryByText(/Queued/)).not.toBeInTheDocument();
     vi.useRealTimers();
