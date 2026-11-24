@@ -19,7 +19,7 @@
     "test:coverage:backend": "cd packages/api/user-service && python -m pytest tests/unit --cov=. --cov-report=html --cov-report=term-missing"
   },
   "devDependencies": {
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "pnpm": "10.34.9"
   },
   "engines": {
